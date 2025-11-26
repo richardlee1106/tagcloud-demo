@@ -1,0 +1,26 @@
+{
+  "name": "vite-project",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@types/d3": "^7.4.3",
+    "axios": "^1.13.2",
+    "d3": "^7.9.0",
+    "d3-cloud": "^1.2.7",
+    "element-plus": "^2.11.7",
+    "ol": "^10.7.0",
+    "rbush": "^4.0.1",
+    "regl": "^2.1.1",
+    "vue": "^3.5.22"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.1",
+    "vite": "^7.1.7"
+  }
+}
