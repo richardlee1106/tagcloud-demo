@@ -19,9 +19,7 @@ self.onmessage = event => {
     runDynamicGravityLayout(tags, width, height, userConfig);
 };
 
-// ============================================================================
 // 动态重心算法（基础布局）
-// ============================================================================
 function runDynamicGravityLayout(tags, width, height, configOverrides) {
     if (!tags || tags.length === 0) {
         self.postMessage([]);
@@ -79,7 +77,6 @@ function runDynamicGravityLayout(tags, width, height, configOverrides) {
     // 2. 状态定义
     const placedTags = [];
     // 使用 RBush 空间索引树来加速碰撞检测
-    // RBush 是一个高性能的 2D 空间索引库，适合大量矩形的查询
     const tree = new RBush();
     let currentCentroid = { x: width / 2, y: height / 2 };
 
@@ -87,13 +84,12 @@ function runDynamicGravityLayout(tags, width, height, configOverrides) {
     for (let i = 0; i < processedTags.length; i++) {
         const tag = processedTags[i];
 
-        // 步骤 A：确定搜索起点
+        // 确定搜索起点
         // 第一个词放置在画布中心，后续词放置在当前已放置词的重心位置
-        // 这种策略（动态重心）有助于形成更紧凑、类圆形的布局
         const startX = i === 0 ? width / 2 : currentCentroid.x;
         const startY = i === 0 ? height / 2 : currentCentroid.y;
 
-        // 步骤 B：径向搜索（寻找最近的无碰撞位置）
+        // 径向搜索（寻找最近的无碰撞位置）
         const position = findPositionRadial(tag, startX, startY, tree, config, width, height);
 
         if (position) {
@@ -101,7 +97,7 @@ function runDynamicGravityLayout(tags, width, height, configOverrides) {
             tag.y = position.y;
             tag.placed = true;
 
-            // 步骤 C：更新状态
+            // 更新状态
             placedTags.push(tag);
 
             // 将新放置的标签插入 RBush 索引树

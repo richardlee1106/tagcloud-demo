@@ -1,10 +1,24 @@
 <template>
-  <div ref="mapContainer" class="map-container"></div>
+  <div class="map-wrapper">
+    <div ref="mapContainer" class="map-container"></div>
+    
+    <!-- Real-time Filter Control -->
+    <div class="map-filter-control">
+      <span class="filter-label">实时过滤</span>
+      <el-switch 
+        v-model="filterEnabled" 
+        @change="toggleFilter"
+        inline-prompt
+        active-text="开启"
+        inactive-text="关闭"
+      />
+    </div>
+  </div>
 </template>
 
 <script setup>
 import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue';
-import Map from 'ol/Map';
+import OlMap from 'ol/Map';
 import View from 'ol/View';
 import TileLayer from 'ol/layer/Tile';
 import XYZ from 'ol/source/XYZ';
@@ -16,14 +30,21 @@ import Point from 'ol/geom/Point';
 import { fromLonLat, toLonLat } from 'ol/proj';
 import { Style, Fill, Stroke, Circle as CircleStyle } from 'ol/style';
 
-const emit = defineEmits(['polygon-completed', 'map-ready']);
+const emit = defineEmits(['polygon-completed', 'map-ready', 'hover-feature', 'map-move-end', 'toggle-filter']);
 const props = defineProps({
   poiFeatures: { type: Array, default: () => [] },
+  hoveredFeatureId: { type: Object, default: null }, // We use the feature object itself as ID
 });
 
 const mapContainer = ref(null);
 const map = ref(null);
 let drawInteraction = null;
+let hoveredFeature = null; // Internal track of currently hovered feature on map
+const filterEnabled = ref(false);
+
+const toggleFilter = (val) => {
+  emit('toggle-filter', val);
+};
 
 // Layers
 const polygonLayerSource = new VectorSource();
@@ -47,8 +68,23 @@ const highlightLayer = new VectorLayer({
   }),
 });
 
+// Special layer for single hover highlight
+const hoverLayerSource = new VectorSource();
+const hoverLayer = new VectorLayer({
+  source: hoverLayerSource,
+  style: new Style({
+    image: new CircleStyle({
+      radius: 9, // 1.5x size
+      fill: new Fill({ color: 'rgba(255, 165, 0, 0.8)' }), // Orange
+      stroke: new Stroke({ color: '#fff', width: 2 }),
+    }),
+    zIndex: 999
+  }),
+});
+
 // Cached OL features for POIs
 let olPoiFeatures = [];
+let rawToOlMap = new Map();
 
 onMounted(() => {
   // Base layer: Gaode (Amap) XYZ tiles with key; fallback to OSM if blocked
@@ -59,14 +95,18 @@ onMounted(() => {
     source: new XYZ({ url: gaodeUrl, crossOrigin: 'anonymous' })
   });
 
-  map.value = new Map({
+  map.value = new OlMap({
     target: mapContainer.value,
-    layers: [baseLayer, polygonLayer, highlightLayer],
+    layers: [baseLayer, polygonLayer, highlightLayer, hoverLayer],
     view: new View({
       center: fromLonLat([114.307, 30.549]),
       zoom: 13,
     }),
   });
+
+  // Event Listeners
+  map.value.on('moveend', onMapMoveEnd);
+  map.value.on('pointermove', onPointerMove);
 
   rebuildPoiOlFeatures();
 
@@ -75,6 +115,69 @@ onMounted(() => {
     emit('map-ready', map.value);
   });
 });
+
+// Watch for external hover (from TagCloud)
+watch(() => props.hoveredFeatureId, (newVal) => {
+  hoverLayerSource.clear();
+  if (newVal && rawToOlMap.has(newVal)) {
+    const olFeature = rawToOlMap.get(newVal);
+    // We clone it to display in the hover layer
+    const clone = olFeature.clone();
+    hoverLayerSource.addFeature(clone);
+  }
+});
+
+function onMapMoveEnd() {
+  if (!map.value) return;
+  const extent = map.value.getView().calculateExtent(map.value.getSize());
+  const bl = toLonLat([extent[0], extent[1]]);
+  const tr = toLonLat([extent[2], extent[3]]);
+  // [minLon, minLat, maxLon, maxLat]
+  emit('map-move-end', [bl[0], bl[1], tr[0], tr[1]]);
+}
+
+// Debounce helper
+function debounce(func, wait) {
+  let timeout;
+  return function(...args) {
+    const context = this;
+    clearTimeout(timeout);
+    timeout = setTimeout(() => func.apply(context, args), wait);
+  };
+}
+
+const emitHover = debounce((feature) => {
+  emit('hover-feature', feature);
+}, 50); // 50ms debounce
+
+function onPointerMove(evt) {
+  if (evt.dragging) return;
+  
+  const pixel = map.value.getEventPixel(evt.originalEvent);
+  const hit = map.value.forEachFeatureAtPixel(pixel, (feature) => {
+    return feature;
+  }, { layerFilter: (layer) => layer === highlightLayer || layer === hoverLayer }); 
+  // Only detect hover on highlighted features (the ones selected)? 
+  // Or all features? User said "Map red point". Red points are in highlightLayer.
+  // But wait, `highlightLayer` contains the selected points.
+  // If we want to hover ALL points, we need to render all points.
+  // Currently `olPoiFeatures` are NOT added to the map unless selected (highlightLayer).
+  // The user says "Left map corresponding red point". Red points are the selected ones.
+  
+  // If we are hovering over a red point (highlightLayer)
+  
+  if (hit) {
+    const raw = hit.get('__raw');
+    if (raw) {
+      map.value.getTargetElement().style.cursor = 'pointer';
+      emitHover(raw);
+      return;
+    }
+  }
+  
+  map.value.getTargetElement().style.cursor = '';
+  emitHover(null);
+}
 
 onBeforeUnmount(() => {
   if (map.value) map.value.setTarget(null);
@@ -86,6 +189,7 @@ watch(() => props.poiFeatures, () => {
 
 function rebuildPoiOlFeatures() {
   olPoiFeatures = [];
+  rawToOlMap.clear();
   const poiCoordSys = import.meta.env.VITE_POI_COORD_SYS || 'gcj02';
   for (const f of (props.poiFeatures || [])) {
     let [lon, lat] = f.geometry.coordinates;
@@ -97,7 +201,33 @@ function rebuildPoiOlFeatures() {
       __raw: f,
     });
     olPoiFeatures.push(feat);
+    rawToOlMap.set(f, feat);
   }
+}
+
+function flyTo(feature) {
+  if (!map.value || !feature) return;
+  const [lon, lat] = feature.geometry.coordinates;
+  // Assuming coordinates are already consistent with map projection (GCJ02 handling needed?)
+  // rebuildPoiOlFeatures handles the conversion for display.
+  // But feature.geometry.coordinates are likely original.
+  // We should check how they are stored.
+  // In rebuildPoiOlFeatures, we convert.
+  // We should use the stored OL feature position if possible.
+  
+  let center;
+  if (rawToOlMap.has(feature)) {
+    center = rawToOlMap.get(feature).getGeometry().getCoordinates();
+  } else {
+     // Fallback
+     center = fromLonLat([lon, lat]);
+  }
+  
+  map.value.getView().animate({
+    center: center,
+    duration: 1000,
+    zoom: 17
+  });
 }
 
 function openPolygonDraw() {
@@ -118,10 +248,21 @@ function openPolygonDraw() {
 
 function closePolygonDraw() {
   if (!map.value) return;
+  
+  // 1. Remove specific interaction if reference exists
   if (drawInteraction) {
     map.value.removeInteraction(drawInteraction);
     drawInteraction = null;
   }
+  
+  // 2. Robust cleanup: Iterate all interactions and remove any active Draw interactions
+  // This fixes the issue where "Stop Drawing" didn't work if the reference was lost or mismatched
+  const interactions = map.value.getInteractions().getArray().slice();
+  interactions.forEach((interaction) => {
+    if (interaction instanceof Draw) {
+      map.value.removeInteraction(interaction);
+    }
+  });
 }
 
 function clearHighlights() {
@@ -138,9 +279,17 @@ function showHighlights(features, options = {}) {
     subset = subset.filter((_, i) => i % step === 0);
   }
   const toFeature = (raw) => {
-    if (raw.getGeometry) return raw;
+    if (raw instanceof Feature) return raw; // If it's already an OL feature
+    
+    // Try to find cached feature first
+    if (rawToOlMap.has(raw)) {
+      return rawToOlMap.get(raw);
+    }
+
     const [lon, lat] = raw.geometry.coordinates;
-    return new Feature({ geometry: new Point(fromLonLat([lon, lat])) });
+    const f = new Feature({ geometry: new Point(fromLonLat([lon, lat])) });
+    f.set('__raw', raw); // Ensure raw data is attached
+    return f;
   };
   const feats = subset.map(toFeature);
   highlightLayerSource.addFeatures(feats);
@@ -203,7 +352,7 @@ function clearPolygon() {
   clearHighlights();
 }
 
-defineExpose({ map, openPolygonDraw, closePolygonDraw, showHighlights, clearHighlights, clearPolygon });
+defineExpose({ map, openPolygonDraw, closePolygonDraw, showHighlights, clearHighlights, clearPolygon, flyTo });
 
 // WGS84 -> GCJ-02 transform (approximate, China region only)
 function wgs84ToGcj02(lon, lat) {
@@ -243,9 +392,36 @@ function transformLon(x, y) {
 </script>
 
 <style scoped>
+.map-wrapper {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
 .map-container {
   width: 100%;
   height: 100%;
+}
+
+.map-filter-control {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 1000;
+  background-color: rgba(255, 255, 255, 0.9);
+  padding: 6px 12px;
+  border-radius: 4px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.filter-label {
+  font-size: 14px;
+  color: #333;
+  font-weight: 500;
+  white-space: nowrap;
 }
 </style>
 

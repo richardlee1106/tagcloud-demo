@@ -1,16 +1,9 @@
-# Role
-你是一位精通计算几何、图形渲染算法的高级前端工程师。
-
-# Task
-请使用 Vue 3 和 Canvas API，为我编写一个**自定义算法**的地名标签云（Word Cloud）组件。
-实现一套基于**“动态重心引力（Dynamic Gravity Center）”**的贪心装箱算法。
-
 # Tech Stack
 1. **Framework:** VUE 3
 2. **Spatial Index:** `rbush` (必需，用于高性能碰撞检测)
 3. **Rendering:** HTML5 Canvas API (用于测量文字尺寸和最终绘制)
 # Algorithmic Logic (Critical)
-请严格遵循我设计的“动态重心”布局逻辑
+“动态重心”布局逻辑
 
 1. **预处理 (Preprocessing)：**
    - 输入一个地名数组，使用 Canvas `measureText` 计算每个词的宽(w)和高(h)。

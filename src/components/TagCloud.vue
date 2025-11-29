@@ -34,6 +34,7 @@ import BasicWorker from '../workers/basic.worker.js?worker';
 import SpiralWorker from '../workers/spiral.worker.js?worker';
 import { fromLonLat } from 'ol/proj';
 
+const emit = defineEmits(['hover-feature', 'locate-feature']);
 const props = defineProps({
   data: Array,
   map: Object,
@@ -42,6 +43,7 @@ const props = defineProps({
   polygonCenter: Object,
   spiralConfig: Object,
   boundaryPolygon: Array,
+  hoveredFeatureId: Object, // Pass the feature object
 });
 
 const tagCloudContainer = ref(null);
@@ -79,6 +81,7 @@ function initWorker(algorithm) {
 
     const svg = d3.select(tagCloudContainer.value).select('svg');
     const root = svg.select('g.main-group');
+    rootGroupRef = root; // Update reference
     const zoomGroup = svg.select('g.zoom-group');
 
     if (svg.empty() || root.empty() || zoomGroup.empty()) {
@@ -88,7 +91,7 @@ function initWorker(algorithm) {
 
     const texts = root
       .selectAll('text')
-      .data(tags, (d, i) => (d.name ? `${d.name}-${i}` : `${i}`));
+      .data(tags, (d) => (d.name ? `${d.name}-${d.originalIndex}` : `${d.originalIndex}`));
 
     texts.join(
       enter => enter.append('text')
@@ -98,17 +101,60 @@ function initWorker(algorithm) {
         .style('font-size', d => `${(d.fontSize || (8 + (1 - d.normalizedDensity) * (24 - 8)))}px`)
         .style('fill', d => d.selected ? '#d23' : '#bfeaf1')
         .style('font-weight', d => d.selected ? '700' : '400')
-        .attr('transform', d => `translate(${d.x}, ${d.y}) rotate(${d.rotation || 0})`),
+        .style('cursor', 'pointer') // Add pointer cursor
+        .attr('transform', d => `translate(${d.x}, ${d.y}) rotate(${d.rotation || 0})`)
+        .on('mouseover', (event, d) => {
+           const feature = props.data[d.originalIndex];
+           emit('hover-feature', feature);
+        })
+        .on('mouseout', () => {
+           emit('hover-feature', null);
+        })
+        .on('click', (event, d) => {
+           event.stopPropagation();
+           const feature = props.data[d.originalIndex];
+           emit('locate-feature', feature);
+        }),
       update => update
         .transition().duration(250)
         .style('font-size', d => `${(d.fontSize || (8 + (1 - d.normalizedDensity) * (24 - 8)))}px`)
         .style('fill', d => d.selected ? '#d23' : '#bfeaf1')
         .style('font-weight', d => d.selected ? '700' : '400')
-        .attr('transform', d => `translate(${d.x}, ${d.y}) rotate(${d.rotation || 0})`),
+        .attr('transform', d => `translate(${d.x}, ${d.y}) rotate(${d.rotation || 0})`)
+        // Re-attach listeners if needed, but D3 preserves them on update usually. 
+        // However, data might change, so it's safer to ensure they are correct.
+        // Actually join update selection keeps listeners.
+        ,
       exit => exit.remove()
     );
+    
+    // Apply current hover highlight if any
+    if (props.hoveredFeatureId) {
+      updateHighlight(props.hoveredFeatureId);
+    }
   };
 }
+
+function updateHighlight(hoveredFeature) {
+  if (!rootGroupRef || rootGroupRef.empty()) return;
+  
+  rootGroupRef.selectAll('text')
+    .transition().duration(200)
+    .style('fill', d => {
+      const feature = props.data[d.originalIndex];
+      const isHovered = feature === hoveredFeature;
+      return isHovered ? 'orange' : (d.selected ? '#d23' : '#bfeaf1');
+    })
+    .style('font-weight', d => {
+      const feature = props.data[d.originalIndex];
+      const isHovered = feature === hoveredFeature;
+      return isHovered ? 'bold' : (d.selected ? '700' : '400');
+    });
+}
+
+watch(() => props.hoveredFeatureId, (newVal) => {
+  updateHighlight(newVal);
+});
 
 const runLayout = (algorithm) => {
   console.log('runLayout called. Props.data:', props.data, 'Props.map:', props.map); // 检查传入的data和map
@@ -156,7 +202,7 @@ const runLayout = (algorithm) => {
   }
 
   // Compute tag positions and selection flag
-  let tags = (props.data || []).map(feature => {
+  let tags = (props.data || []).map((feature, index) => {
     const name = feature?.properties?.['名称'] ?? feature?.properties?.name ?? feature?.properties?.Name ?? '';
     const weight = feature?.properties?.weight; // Extract weight if available
     return {
@@ -164,6 +210,7 @@ const runLayout = (algorithm) => {
       weight, // Pass weight to worker
       x: width / 2,
       y: height / 2,
+      originalIndex: index, // Keep track of index in props.data
     };
   }).filter(t => t.name && t.name.trim() !== '');
 

@@ -17,9 +17,7 @@ self.onmessage = event => {
     runSpiralLayout(tags, width, height, userConfig);
 };
 
-// ============================================================================
 // 阿基米德螺旋算法（高级布局）
-// ============================================================================
 function runSpiralLayout(tags, width, height, configOverrides) {
     if (!tags || tags.length === 0) {
         self.postMessage([]);
@@ -130,7 +128,7 @@ function findBestPosition(tag, placedTags, centerX, centerY, canvasWidth, canvas
 
         for (let i = 0; i < phase.maxAttempts; i++) {
             // 阿基米德螺旋线公式: r = a + b * theta
-            // 这里我们引入了 density 参数来控制螺旋线的疏密
+            // 引入 density 参数来控制螺旋线的疏密
             const r = a + (b * theta / density);
 
             if (r > maxRadius) {

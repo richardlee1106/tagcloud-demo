@@ -24,10 +24,15 @@ a:hover {
 
 body {
   margin: 0;
+  padding: 0;
   min-width: 320px;
   min-height: 100vh;
   overflow: hidden;
   display: block;
+}
+
+* {
+  box-sizing: border-box;
 }
 
 h1 {
