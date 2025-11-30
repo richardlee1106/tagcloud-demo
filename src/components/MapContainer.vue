@@ -288,7 +288,7 @@ function flyTo(feature) {
   map.value.getView().animate({
     center: center,
     duration: 1000,
-    zoom: 17
+    zoom: 16
   });
 }
 

@@ -149,14 +149,15 @@ const handleFeatureHover = (id) => {
 };
 
 const handleFeatureClick = (feature) => {
-  // 1. Update highlight
-  hoveredFeatureId.value = feature;
-  
-  // 2. Center tag cloud on feature
-  if (tagCloudRef.value) {
-    tagCloudRef.value.centerOnFeature(feature);
-  }
-};
+    console.log('[App] handleFeatureClick:', feature);
+    // 1. Update highlight
+    hoveredFeatureId.value = feature;
+    
+    // 2. Center tag cloud on feature
+      if (tagCloudRef.value) {
+        tagCloudRef.value.centerOnFeature(feature);
+      }
+    };
 
 const handleFeatureLocate = (feature) => {
   if (mapComponent.value) {
@@ -196,9 +197,11 @@ function handleDebugShow(groupName) {
   if (!allPoiFeatures.value.length) {
     ElMessage.warning('请先加载地理语义分组数据');
     return;
-    }
+  }
   mapComponent.value.showHighlights(allPoiFeatures.value, { full: true });
-  ElMessage.success(`调试显示：${groupName} 的POI已在地图中高亮`);
+  // Auto-update TagCloud data for debug view
+  // tagData.value = allPoiFeatures.value;
+  selectedFeatures.value = allPoiFeatures.value;
 }
 
 // 初始化：清空所有数据

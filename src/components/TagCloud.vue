@@ -34,6 +34,8 @@ import BasicWorker from '../workers/basic.worker.js?worker';
 import SpiralWorker from '../workers/spiral.worker.js?worker';
 import { fromLonLat } from 'ol/proj';
 
+import { ElMessage } from 'element-plus';
+
 const emit = defineEmits(['hover-feature', 'locate-feature']);
 const props = defineProps({
   data: Array,
@@ -51,6 +53,7 @@ let worker = null;
 let svgRef = null;
 let rootGroupRef = null;
 let zoomGroupRef = null;
+let zoomBehavior = null; // Store zoom behavior instance
 let debounceTimer = null;
 const MAX_TAGS = 1000; // 增加标签显示上限
 const RESIZE_DEBOUNCE_MS = 120;
@@ -143,8 +146,22 @@ function updateHighlight(hoveredFeature) {
     .style('fill', d => {
       if (!props.data || !props.data[d.originalIndex]) return d.selected ? '#d23' : '#bfeaf1';
       const feature = props.data[d.originalIndex];
-      // Use reference equality check as feature objects are shared
-      const isHovered = feature === hoveredFeature;
+      // Robust matching
+      let isHovered = feature === hoveredFeature;
+      if (!isHovered && feature && hoveredFeature) {
+         const getName = (f) => f?.properties?.['名称'] ?? f?.properties?.name ?? f?.properties?.Name ?? '';
+         const n1 = getName(feature);
+         const n2 = getName(hoveredFeature);
+         if (n1 && n2 && n1 === n2) {
+            const c1 = feature.geometry?.coordinates;
+            const c2 = hoveredFeature.geometry?.coordinates;
+            if (c1 && c2) {
+               const dx = Math.abs(c1[0] - c2[0]);
+               const dy = Math.abs(c1[1] - c2[1]);
+               if (dx < 0.000001 && dy < 0.000001) isHovered = true;
+            }
+         }
+      }
       return isHovered ? 'orange' : (d.selected ? '#d23' : '#bfeaf1');
     })
     .style('font-weight', d => {
@@ -191,18 +208,18 @@ const runLayout = (algorithm) => {
      .style('background-color', 'rgba(255, 255, 255, 0.1)'); // Debug background
 
   // Set up zoom behavior if not already set up
-  if (!svgRef || !zoomGroupRef) {
-    const zoom = d3.zoom()
-      .scaleExtent([MIN_SCALE, MAX_SCALE])
-      .on('zoom', (event) => {
-        currentTransform = event.transform;
-        zoomGroup.attr('transform', currentTransform);
-      });
+    if (!svgRef || !zoomGroupRef) {
+      zoomBehavior = d3.zoom()
+        .scaleExtent([MIN_SCALE, MAX_SCALE])
+        .on('zoom', (event) => {
+          currentTransform = event.transform;
+          zoomGroup.attr('transform', currentTransform);
+        });
 
-    svg.call(zoom);
-    svgRef = svg;
-    zoomGroupRef = zoomGroup;
-  }
+      svg.call(zoomBehavior);
+      svgRef = svg;
+      zoomGroupRef = zoomGroup;
+    }
 
   // Compute tag positions and selection flag
   let tags = (props.data || []).map((feature, index) => {
@@ -404,29 +421,52 @@ const centerOnFeature = (feature) => {
     const feat = props.data[d.originalIndex];
     if (feat === feature) {
       targetD = d;
-    } else if (feat && feature && feat.properties && feature.properties && 
-               feat.properties.name === feature.properties.name &&
-               feat.geometry.coordinates[0] === feature.geometry.coordinates[0] &&
-               feat.geometry.coordinates[1] === feature.geometry.coordinates[1]) {
-      // Fallback: content matching if reference differs
-       targetD = d;
+    } else if (feat && feature) {
+      // Helper to get name
+      const getName = (f) => f?.properties?.['名称'] ?? f?.properties?.name ?? f?.properties?.Name ?? '';
+      const name1 = getName(feat);
+      const name2 = getName(feature);
+      
+      if (name1 && name2 && name1 === name2) {
+         // Secondary check on coordinates with epsilon
+         const c1 = feat.geometry?.coordinates;
+         const c2 = feature.geometry?.coordinates;
+         if (c1 && c2) {
+            const dx = Math.abs(c1[0] - c2[0]);
+            const dy = Math.abs(c1[1] - c2[1]);
+            // Use a small epsilon for float comparison
+            if (dx < 0.000001 && dy < 0.000001) {
+               targetD = d;
+            }
+         }
+      }
     }
   });
   
   if (targetD) {
     console.log('[TagCloud] Found target tag:', targetD.name);
+    // ElMessage.success(`Locating: ${targetD.name}`); // Optional feedback
     const width = tagCloudContainer.value.clientWidth;
     const height = tagCloudContainer.value.clientHeight;
-    const scale = 2.5; 
+    // Increased scale to 4.0 and duration to 1000ms per user request
+    const scale = 4.0; 
+    const duration = 1000; 
     
     const t = d3.zoomIdentity
       .translate(width / 2, height / 2)
       .scale(scale)
       .translate(-targetD.x, -targetD.y);
       
-    svgRef.transition().duration(750).call(
-      d3.zoom().transform, t
-    );
+    if (zoomBehavior) {
+      svgRef.transition().duration(duration).call(
+        zoomBehavior.transform, t
+      );
+    } else {
+      // Fallback if behavior not stored
+      svgRef.transition().duration(duration).call(
+        d3.zoom().transform, t
+      );
+    }
   } else {
     console.warn('[TagCloud] Could not find tag for feature in cloud');
   }
