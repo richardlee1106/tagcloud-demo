@@ -715,4 +715,22 @@ function transformLon(x, y) {
   font-weight: 500;
   white-space: nowrap;
 }
+
+@media (max-width: 768px) {
+  .map-filter-control {
+    top: 50px;
+    right: 5px;
+    min-width: auto;
+    padding: 8px;
+    gap: 6px;
+  }
+  
+  .filter-label {
+    font-size: 12px;
+  }
+
+  .control-row {
+    gap: 8px;
+  }
+}
 </style>

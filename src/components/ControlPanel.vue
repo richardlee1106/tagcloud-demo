@@ -166,4 +166,50 @@ defineExpose({ setDrawEnabled });
 .control-btn {
   min-width: 80px;
 }
+
+@media (max-width: 768px) {
+  .control-panel {
+    flex-direction: column;
+    height: auto;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .left-controls, .right-controls {
+    flex: unset;
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0;
+    gap: 8px;
+    flex-wrap: nowrap; /* 保持单行，利用 flex-grow */
+  }
+
+  .group-select, .algorithm-select {
+    flex: 1;
+    width: auto !important; /* 覆盖内联样式或类样式 */
+    min-width: 0; /* 允许缩小 */
+  }
+
+  .control-btn {
+    flex: 1;
+    min-width: 0;
+    width: auto !important;
+    padding: 8px 4px; /* 减小内边距防止溢出 */
+    font-size: 13px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+
+  /* 必须放在 control-btn 之后以覆盖样式 */
+  .draw-select {
+    flex: 2; /* 绘制按钮稍微宽一点 */
+    width: auto !important;
+    min-width: 90px; /* 确保能显示下Placeholder */
+    display: block; /* 重置 display，避免 flex 破坏 el-select 内部布局 */
+    padding: 0; /* 重置 padding */
+  }
+}
 </style>

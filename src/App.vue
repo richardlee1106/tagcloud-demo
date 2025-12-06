@@ -345,6 +345,16 @@ html, body, #app {
   position: relative;
 }
 
+@media (max-width: 768px) {
+  .top-controls {
+    flex: 0 0 auto; /* 允许高度自适应 */
+    height: auto;
+    min-height: 56px;
+    padding: 8px;
+    flex-wrap: wrap;
+  }
+}
+
 .bottom-split {
   flex: 1;
   display: flex;
@@ -356,4 +366,15 @@ html, body, #app {
 .left-panel, .right-panel { flex: 1; height: 100%; overflow: hidden; }
 .left-panel { background: #000; }
 .right-panel { background: #001018; }
+
+@media (max-width: 768px) {
+  .bottom-split {
+    flex-direction: column;
+  }
+  .left-panel, .right-panel {
+    width: 100%;
+    height: auto;
+    flex: 1;
+  }
+}
 </style>
