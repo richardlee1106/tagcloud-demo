@@ -10,7 +10,6 @@ import 'dotenv/config';
 import fs from 'fs/promises';
 import path from 'path';
 import { glob } from 'glob';
-import Geohash from 'latlon-geohash';
 import { initDatabase, query, closeDatabase } from '../services/database.js';
 import { initMilvus, batchInsertEmbeddings, closeMilvus, isMilvusAvailable } from '../services/vectordb.js';
 
@@ -49,125 +48,110 @@ async function generateEmbeddings(texts) {
  * 解析单个 POI Feature
  */
 function parsePOIFeature(feature) {
-  const props = feature.properties;
-  const coords = feature.geometry.coordinates;
-  
-  // 优先使用 WGS84 坐标
-  const lon = props['wgs84经ti'] || coords[0];
-  const lat = props['wgs84纬ti'] || coords[1];
-  
-  // 生成 GeoHash (精度 7，约 76m x 110m)
-  const geohash = Geohash.encode(lat, lon, 7);
-  
-  // 构造搜索文本
-  const searchText = [
-    props.name,
-    props.type,
-    props.address,
-    props.business_a,
-    props.adname,
-    props.cityname,
-  ].filter(Boolean).join(' ');
-  
-  // 解析爬取时间
-  let fetchTime = null;
-  if (props.fetch_time) {
-    try {
-      // 格式: "19/1/2025 06:21:44"
-      const [datePart, timePart] = props.fetch_time.split(' ');
-      const [day, month, year] = datePart.split('/');
-      fetchTime = new Date(`${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}T${timePart}`);
-    } catch (e) {
-      // 忽略解析错误
-    }
-  }
-  
+  const props = feature.properties || {};
+  const coords = feature.geometry?.coordinates || [];
+
+  const lon = Number(
+    props.wgs84_lon ??
+    props.wgs84_lng ??
+    props.lon ??
+    props.longitude ??
+    props['wgs84\u7ecf\u5ea6'] ??
+    coords[0]
+  );
+  const lat = Number(
+    props.wgs84_lat ??
+    props.wgs84_latitude ??
+    props.lat ??
+    props.latitude ??
+    props['wgs84\u7eac\u5ea6'] ??
+    coords[1]
+  );
+  if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null;
+
+  const name = props.name ?? props['\u540d\u79f0'] ?? null;
+  const address = props.address ?? props['\u5730\u5740'] ?? null;
+  const type = props.type ?? null;
+  const category_big = props.category_big ?? props['\u5927\u7c7b'] ?? null;
+  const category_mid = props.category_mid ?? props['\u4e2d\u7c7b'] ?? null;
+  const category_small = props.category_small ?? props['\u5c0f\u7c7b'] ?? null;
+  const rating = typeof props.rating === 'number' ? props.rating : null;
+
+  const searchText = [name, type, address, category_big, category_mid, category_small]
+    .filter(Boolean)
+    .join(' ');
+
   return {
-    poiid: props.poiid || props.OBJECTID?.toString(),
-    name: props.name,
-    address: props.address,
-    type: props.type,
-    typecode: props.typecode,
-    category_big: props['大类'],
-    category_mid: props['中类'],
-    category_small: props['小类'],
-    province: props.pname,
-    city: props.cityname,
-    district: props.adname,
-    business_area: props.business_a?.trim() || null,
+    name,
+    address,
+    type,
+    category_big,
+    category_mid,
+    category_small,
+    rating,
     lon,
     lat,
-    geohash,
-    tel: props.tel,
-    search_text: searchText,
-    fetch_time: fetchTime,
+    searchText
   };
 }
 
-/**
- * 批量插入 POI 到 PostgreSQL
- */
 async function insertPOIBatch(pois) {
   if (pois.length === 0) return [];
-  
+
   const insertedIds = [];
-  
+
   for (const poi of pois) {
+    if (!Number.isFinite(poi.lon) || !Number.isFinite(poi.lat)) {
+      console.warn(`Skip invalid coordinates: ${poi.name || 'unknown'}`);
+      continue;
+    }
+
     try {
       const sql = `
         INSERT INTO pois (
-          poiid, name, address, type, typecode,
+          name, address, type,
           category_big, category_mid, category_small,
-          province, city, district, business_area,
-          geom, geohash, tel, search_text, fetch_time
+          rating, lon, lat, geom
         ) VALUES (
-          $1, $2, $3, $4, $5,
-          $6, $7, $8,
-          $9, $10, $11, $12,
-          ST_SetSRID(ST_MakePoint($13, $14), 4326), $15, $16, $17, $18
+          $1, $2, $3,
+          $4, $5, $6,
+          $7, $8, $9, ST_SetSRID(ST_MakePoint($8, $9), 4326)
         )
-        ON CONFLICT (poiid) DO UPDATE SET
-          name = EXCLUDED.name,
+        ON CONFLICT (name, lon, lat) DO UPDATE SET
           address = EXCLUDED.address,
           type = EXCLUDED.type,
-          geom = EXCLUDED.geom,
-          updated_at = CURRENT_TIMESTAMP
+          category_big = EXCLUDED.category_big,
+          category_mid = EXCLUDED.category_mid,
+          category_small = EXCLUDED.category_small,
+          rating = EXCLUDED.rating,
+          geom = EXCLUDED.geom
         RETURNING id
       `;
-      
+
       const result = await query(sql, [
-        poi.poiid,
         poi.name,
         poi.address,
         poi.type,
-        poi.typecode,
         poi.category_big,
         poi.category_mid,
         poi.category_small,
-        poi.province,
-        poi.city,
-        poi.district,
-        poi.business_area,
+        poi.rating,
         poi.lon,
-        poi.lat,
-        poi.geohash,
-        poi.tel,
-        poi.search_text,
-        poi.fetch_time,
+        poi.lat
       ]);
-      
+
       if (result.rows.length > 0) {
         insertedIds.push({
           id: result.rows[0].id,
           name: poi.name,
-          searchText: poi.search_text,
+          searchText: poi.searchText
         });
       }
     } catch (err) {
-      console.error(`插入 POI 失败: ${poi.name}`, err.message);
+      console.error(`Insert POI failed: ${poi.name}`, err.message);
     }
   }
-  
+
   return insertedIds;
 }
 
@@ -212,7 +196,7 @@ async function main() {
       }
       
       // 解析 POI
-      const pois = geojson.features.map(parsePOIFeature);
+      const pois = geojson.features.map(parsePOIFeature).filter(Boolean);
       totalPOIs += pois.length;
       
       // 批量插入 PostgreSQL

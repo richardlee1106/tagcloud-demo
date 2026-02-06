@@ -35,6 +35,8 @@ npm install
 npm start
 ```
 
+> Note: Local dev uses Fastify `/api/*` via the Vite proxy (http://localhost:3200). The root `/api/ai/*` serverless mocks are for Vercel only.
+
 ### 3. 前端启动
 
 ```bash

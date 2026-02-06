@@ -62,6 +62,11 @@ const EXECUTOR_CONFIG = {
   }
 }
 
+const EXECUTOR_FLAGS = {
+  enableClustering: process.env.ENABLE_CLUSTERING === 'true',
+  enableFuzzyRegion: process.env.ENABLE_FUZZY_REGION === 'true'
+}
+
 /**
  * Phase 1 优化：动态选择 H3 分辨率
  * 
@@ -793,6 +798,7 @@ async function execBasicMode(plan, frontendPOIs, options = {}) {
   // 识别商业热点和语义模糊区域
   // 优化：大数据集时降采样以提升性能
   // =============================================
+  if (EXECUTOR_FLAGS.enableClustering || EXECUTOR_FLAGS.enableFuzzyRegion) {
   try {
     const allPOIs = candidates.length > 0 ? candidates : safeFrontendPOIs;
     // 大数据集时降采样，限制聚类分析的点数
@@ -806,6 +812,7 @@ async function execBasicMode(plan, frontendPOIs, options = {}) {
     }
     
     if (analysisPOIs.length >= 10) {
+      if (EXECUTOR_FLAGS.enableClustering) {
       console.log(`[Executor] 🔥 启动空间聚类分析，POI数量: ${analysisPOIs.length}`);
       
       // 执行热点识别
@@ -877,6 +884,8 @@ async function execBasicMode(plan, frontendPOIs, options = {}) {
         console.log(`[Executor] ✅ 语义区域生成完成: ${vernacularRegions.length} 个类别`);
       }
       
+      }
+      if (EXECUTOR_FLAGS.enableFuzzyRegion) {
       // Phase 5: 生成模糊区域（三层边界模型）- Native PostGIS Mode
       console.log(`[Executor] 🔥 启动模糊区域生成 (Native)...`);
       
@@ -920,9 +929,11 @@ async function execBasicMode(plan, frontendPOIs, options = {}) {
       } else {
           console.log('[Executor] ⚠️ 缺少空间边界 (WKT)，跳过模糊区域计算');
       }
+      }
     }
   } catch (clusterErr) {
     console.warn('[Executor] 空间聚类分析失败:', clusterErr.message);
+  }
   }
   
   return result
@@ -1141,6 +1152,7 @@ async function execAggregatedAnalysisMode(plan, frontendPOIs, options = {}) {
   // Phase 4 增强：聚合模式下的空间聚类分析
   // 优化：降采样以提升性能
   // =============================================
+  if (EXECUTOR_FLAGS.enableClustering) {
   try {
     // 聚合模式下限制分析点数
     const MAX_AGG_CLUSTER_POIS = 2000;
@@ -1225,6 +1237,7 @@ async function execAggregatedAnalysisMode(plan, frontendPOIs, options = {}) {
   } catch (clusterErr) {
     console.warn('[Executor] 聚合模式空间聚类分析失败:', clusterErr.message);
   }
+  }
   
   // 提取地标
   if (plan.need_landmarks && searchCenter) {
@@ -1232,7 +1245,7 @@ async function execAggregatedAnalysisMode(plan, frontendPOIs, options = {}) {
   }
 
   // Phase 5 增强：Narrative Mode 专属模糊区域 (Three-Layer Model)
-  if ((plan.need_narrative || plan.need_global_context || options.quickMode) && candidates.length >= 10) {
+  if (EXECUTOR_FLAGS.enableFuzzyRegion && (plan.need_narrative || plan.need_global_context || options.quickMode) && candidates.length >= 10) {
     try {
       console.log(`[Executor] 🌌 生成 Narrative Mode 模糊区域 (Fuzzy Regions), 全量参与: count=${candidates.length}`);
       
@@ -1948,6 +1961,22 @@ async function searchFromDatabase(anchor, radius, plan, geometryWKT = null) {
       throw new Error('Database service or findPOIsFiltered method is missing')
     }
 
+    const direction = plan.anchor?.direction;
+    if (direction && anchor && typeof db.findPOIsByDirection === 'function' && !geometryWKT) {
+      console.log(`[Executor] Direction filter enabled: ${direction}`);
+      let candidates = await db.findPOIsByDirection(anchor.lon, anchor.lat, direction, radius);
+      if (plan.categories && plan.categories.length > 0) {
+        candidates = candidates.filter(p => matchesCategories(p, plan.categories));
+      }
+      if (plan.rating_range && (plan.rating_range[0] !== null || plan.rating_range[1] !== null)) {
+        candidates = candidates.filter(p => matchesRating(p, plan.rating_range));
+      }
+      const limit = plan.limit || EXECUTOR_CONFIG.maxCandidates;
+      return candidates.slice(0, limit);
+    } else if (direction && geometryWKT) {
+      console.log('[Executor] Direction provided with geometry boundary; falling back to spatial filter');
+    }
+
     // 统一调用 db.findPOIsFiltered，它已经封装了 WKT/Radius 和强大的类别过滤逻辑
     return await db.findPOIsFiltered({
       anchor: anchor, 
@@ -1964,12 +1993,37 @@ async function searchFromDatabase(anchor, radius, plan, geometryWKT = null) {
   }
 }
 
+
+function matchesCategories(poi, categories) {
+  if (!categories || categories.length == 0) return true;
+  const props = poi.properties || poi;
+  const text = [
+    props.name,
+    props.category_big,
+    props.category_mid,
+    props.category_small,
+    props.type
+  ].filter(Boolean).join(' ').toLowerCase();
+  return categories.some(cat => text.includes(String(cat).toLowerCase()));
+}
+
+function matchesRating(poi, ratingRange) {
+  if (!ratingRange || ratingRange.length !== 2) return true;
+  const [minRating, maxRating] = ratingRange;
+  const props = poi.properties || poi;
+  const rating = props.rating;
+  if (minRating !== null && (rating === null || rating === undefined || rating < minRating)) return false;
+  if (maxRating !== null && (rating === null || rating === undefined || rating > maxRating)) return false;
+  return true;
+}
+
 /**
  * 从前端 POI 数据中过滤
  * @param {Array} pois - 前端 POI 列表
  * @param {Object} plan - 查询计划
  * @param {Object} [anchorCoords] - 锚点坐标 {lat, lon} (可选，用于距离过滤)
  */
+
 function filterFromFrontendPOIs(pois, plan, anchorCoords = null) {
   let filtered = [...pois]
   
@@ -2533,7 +2587,8 @@ async function queryPoisInRegion(boundaryWKT, categories = []) {
   const db = await import('../../services/db.js').then(m => m.default)
   
   let sql = `
-    SELECT id, name, category, "大类", "中类", "小类", 
+    SELECT id, name, type,
+           category_big, category_mid, category_small,
            ST_X(geom) as lon, ST_Y(geom) as lat
     FROM pois
     WHERE ST_Within(geom, ST_GeomFromText($1, 4326))
@@ -2541,7 +2596,7 @@ async function queryPoisInRegion(boundaryWKT, categories = []) {
   const params = [boundaryWKT]
   
   if (categories.length > 0) {
-    sql += ` AND ("小类" = ANY($2) OR "中类" = ANY($2) OR "大类" = ANY($2))`
+    sql += ` AND (category_small = ANY($2) OR category_mid = ANY($2) OR category_big = ANY($2))`
     params.push(categories)
   }
   

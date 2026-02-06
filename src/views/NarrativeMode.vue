@@ -249,6 +249,9 @@ const activeRegionIndex = ref(-1); // 当前激活的模糊区域索引
 const regionNarrativeSteps = ref([]); // 基于模糊区域的解说步骤
 
 let frameId = null;
+let boundaryDashStart = 0;
+let boundaryDashTotal = 0;
+const BOUNDARY_DASH_DURATION = 3.6;
 
 const formattedAiResponse = computed(() => {
   // 1. 移除 JSON 代码块 (包括 ```json ... ``` 和 纯 JSON 文本)
@@ -401,9 +404,23 @@ const syncThreeWithMap = () => {
     
     positions.needsUpdate = true;
     
-    // 更新 Uniforms 时间
-    if (boundaryMaterial.value) {
-      boundaryMaterial.value.uniforms.uTime.value = clock.value.getElapsedTime();
+    // 更新描边动画（dash）
+    if (boundaryMesh.value) {
+      boundaryMesh.value.computeLineDistances();
+      const lineDistance = boundaryMesh.value.geometry.attributes.lineDistance;
+      if (lineDistance && lineDistance.array && lineDistance.array.length > 0) {
+        const total = lineDistance.array[lineDistance.array.length - 1];
+        if (Number.isFinite(total) && total > 0) {
+          boundaryDashTotal = total;
+          if (boundaryMaterial.value?.uniforms) {
+            boundaryMaterial.value.uniforms.uDashSize.value = total;
+            boundaryMaterial.value.uniforms.uTotalSize.value = total * 2.0;
+            const elapsed = clock.value.getElapsedTime() - boundaryDashStart;
+            const t = (elapsed % BOUNDARY_DASH_DURATION) / BOUNDARY_DASH_DURATION;
+            boundaryMaterial.value.uniforms.uDashOffset.value = total * (1.0 - t);
+          }
+        }
+      }
     }
 
     // 更新遮罩中心
@@ -467,28 +484,33 @@ const updateBoundaryLine = () => {
   
   // 确保材质存在 (复用之前的 Shader 逻辑)
   if (!boundaryMaterial.value) {
-     boundaryMaterial.value = new THREE.ShaderMaterial({
+    boundaryMaterial.value = new THREE.ShaderMaterial({
       uniforms: {
-        uTime: { value: 0 },
-        uColor: { value: new THREE.Color('#00f2ff') }
+        uColor: { value: new THREE.Color('#38bdf8') },
+        uDashOffset: { value: 0 },
+        uDashSize: { value: 1 },
+        uTotalSize: { value: 2 },
+        uOpacity: { value: 0.95 }
       },
       vertexShader: `
-        varying vec3 vPos;
+        attribute float lineDistance;
+        varying float vLineDistance;
         void main() {
-          vPos = position;
+          vLineDistance = lineDistance;
           gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
         }
       `,
       fragmentShader: `
-        uniform float uTime;
         uniform vec3 uColor;
-        varying vec3 vPos;
+        uniform float uDashOffset;
+        uniform float uDashSize;
+        uniform float uTotalSize;
+        uniform float uOpacity;
+        varying float vLineDistance;
         void main() {
-          // 极光流动颜色变换
-          float flow = sin(vPos.x * 0.005 + vPos.y * 0.005 + uTime * 2.0);
-          float intensity = 0.5 + 0.5 * flow;
-          vec3 finalColor = mix(uColor, vec3(0.5, 0.0, 1.0), 0.3 * flow);
-          gl_FragColor = vec4(finalColor, 0.8 * intensity);
+          float d = mod(vLineDistance + uDashOffset, uTotalSize);
+          if (d > uDashSize) discard;
+          gl_FragColor = vec4(uColor, uOpacity);
         }
       `,
       transparent: true,
@@ -498,6 +520,17 @@ const updateBoundaryLine = () => {
   }
 
   const mesh = new THREE.LineLoop(geometry, boundaryMaterial.value);
+  mesh.computeLineDistances();
+  boundaryDashStart = clock.value.getElapsedTime();
+  const lineDistance = mesh.geometry.attributes.lineDistance;
+  if (lineDistance && lineDistance.array && lineDistance.array.length > 0) {
+    boundaryDashTotal = lineDistance.array[lineDistance.array.length - 1];
+    if (boundaryMaterial.value?.uniforms) {
+      boundaryMaterial.value.uniforms.uDashSize.value = boundaryDashTotal;
+      boundaryMaterial.value.uniforms.uTotalSize.value = boundaryDashTotal * 2.0;
+      boundaryMaterial.value.uniforms.uDashOffset.value = boundaryDashTotal;
+    }
+  }
   // 不再 frustumCulled，避免因为点在屏幕外被剔除导致的闪烁
   mesh.frustumCulled = false; 
   boundaryMesh.value = mesh;

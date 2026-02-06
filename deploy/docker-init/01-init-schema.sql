@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS pois (
 -- 空间索引
 CREATE INDEX IF NOT EXISTS pois_geom_idx ON pois USING GIST(geom);
 CREATE INDEX IF NOT EXISTS pois_category_idx ON pois(category_big, category_mid);
+CREATE UNIQUE INDEX IF NOT EXISTS pois_name_lon_lat_uniq ON pois(name, lon, lat);
 
 -- 向量表
 CREATE TABLE IF NOT EXISTS poi_embeddings (

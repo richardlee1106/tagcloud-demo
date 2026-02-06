@@ -129,16 +129,13 @@ export async function findPOIsWithinRadius(lon, lat, radiusMeters, filters = {})
   let sql = `
     SELECT 
       p.id,
-      p.poiid,
       p.name,
       p.address,
       p.type,
       p.category_big,
       p.category_mid,
       p.category_small,
-      p.business_area,
-      p.district,
-      p.tel,
+      p.rating,
       ST_Distance(
         p.geom::geography,
         ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography
@@ -170,13 +167,6 @@ export async function findPOIsWithinRadius(lon, lat, radiusMeters, filters = {})
   params.push(limit > 2000 ? limit : 500000);
   
   const result = await query(sql, params);
-  
-  if (result.rows.length < 50 && categories.length > 0) {
-     console.log('⚠️ Low result count detected!');
-     console.log('SQL:', sql);
-     console.log('Params:', params);
-  }
-  
   return result.rows;
 }
 
@@ -203,12 +193,13 @@ export async function findPOIsByDirection(centerLon, centerLat, direction, radiu
   const sql = `
     SELECT 
       p.id,
-      p.poiid,
       p.name,
       p.address,
       p.type,
+      p.category_big,
       p.category_mid,
       p.category_small,
+      p.rating,
       ST_Distance(
         p.geom::geography,
         ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography
@@ -594,9 +585,9 @@ export async function findPOIsFiltered(options) {
   
   let sql = `
     SELECT 
-      p.id, p.poiid, p.name, p.address, p.type,
+      p.id, p.name, p.address, p.type,
       p.category_big, p.category_mid, p.category_small,
-      p.business_area, p.district,
+      p.rating,
       ST_X(p.geom) AS lon, ST_Y(p.geom) AS lat
   `;
 
@@ -887,6 +878,69 @@ export async function findPOIsTwoStageFilter(options) {
   }
 }
 
+/**
+ * Spatial filter by WKT with optional term matching.
+ * @param {Object} options
+ * @param {string} options.wkt
+ * @param {string[]|string|null} options.terms
+ * @param {number} options.limit
+ * @returns {Promise<Array>}
+ */
+export async function findPOIsBySpatialFilter(options = {}) {
+  const { wkt, terms, limit = 100 } = options;
+  if (!wkt) return [];
+
+  const termList = Array.isArray(terms)
+    ? terms.filter(Boolean)
+    : (typeof terms === 'string' && terms ? [terms] : []);
+
+  let sql = `
+    SELECT
+      p.id,
+      p.name,
+      p.address,
+      p.type,
+      p.category_big,
+      p.category_mid,
+      p.category_small,
+      p.rating,
+      ST_X(p.geom) AS lon,
+      ST_Y(p.geom) AS lat
+    FROM pois p
+    WHERE ST_Within(p.geom, ST_GeomFromText($1, 4326))
+  `;
+
+  const params = [wkt];
+  let paramIndex = 2;
+
+  if (termList.length > 0) {
+    const termConditions = termList.map((_, i) => {
+      const idx = paramIndex + i;
+      return `(
+        p.name ILIKE $${idx} OR
+        p.category_big ILIKE $${idx} OR
+        p.category_mid ILIKE $${idx} OR
+        p.category_small ILIKE $${idx} OR
+        p.type ILIKE $${idx}
+      )`;
+    });
+    sql += ` AND (${termConditions.join(' OR ')})`;
+    termList.forEach(t => params.push(`%${t}%`));
+    paramIndex += termList.length;
+  }
+
+  sql += ` LIMIT $${paramIndex}`;
+  params.push(limit);
+
+  try {
+    const result = await query(sql, params);
+    return result.rows;
+  } catch (err) {
+    console.error('[DB] Spatial filter query failed:', err.message);
+    return [];
+  }
+}
+
 export default {
   initDatabase,
   getPool,
@@ -900,6 +954,7 @@ export default {
   getCategoryStatsByGeometry,
   getRepresentativeLandmarks,
   findPOIsFiltered,
+  findPOIsBySpatialFilter,
   quickSearch,
   findPOIsTwoStageFilter
 };
