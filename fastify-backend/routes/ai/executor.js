@@ -777,29 +777,15 @@ async function execBasicMode(plan, frontendPOIs, options = {}) {
   }
   
   // =============================================
-  // 核心增强：生成动态几何边界 (Convex Hull)
-  // 用于前端 Three.js 极光描边
+  // 核心增强：生成动态几何边界 (已下推至 PostGIS)
   // =============================================
-  try {
-    // 优先使用全量 candidates 计算边界，使范围更准
-    const boundaryPoints = (candidates.length > 0 ? candidates : safeFrontendPOIs).map(p => ({
-        lat: p.lat || (p.geometry?.coordinates ? p.geometry.coordinates[1] : 0),
-        lon: p.lon || (p.geometry?.coordinates ? p.geometry.coordinates[0] : 0)
-    })).filter(p => p.lat !== 0 && p.lon !== 0)
-
-    if (boundaryPoints.length >= 3) {
-        const hull = geometry.calculateConvexHull(boundaryPoints)
-        const ring = geometry.hullToGeoJSONRing(hull)
-        if (ring.length > 3) {
-            result.boundary = {
-                type: "Polygon",
-                coordinates: [ring]
-            }
-            console.log(`[Executor] ✅ 动态边界生成成功: ${hull.length} 个顶点`)
-        }
-    }
-  } catch (geoErr) {
-    console.warn('[Executor] 边界生成失败:', geoErr.message)
+  // 原有的 JS ConvexHull 计算已移除，以减少 Node.js 计算压力。
+  // 现在的策略是：
+  // 1. 如果是 Fuzzy Region 模式，由 identifyFuzzyRegions 直接返回精确的 Concave Hull。
+  // 2. 如果是普通搜索，前端已有足够信息绘制点集，或后续添加轻量级 BBox。
+  if (candidates.length >= 3 && !result.boundary) {
+      // 仅在必要时生成一个简单的 BBox 作为视图参考，不再做复杂的 Hull 计算
+      // 或者留空，交给前端 turf.js 处理轻量级视觉效果
   }
   
   // =============================================
@@ -891,24 +877,48 @@ async function execBasicMode(plan, frontendPOIs, options = {}) {
         console.log(`[Executor] ✅ 语义区域生成完成: ${vernacularRegions.length} 个类别`);
       }
       
-      // Phase 5: 生成模糊区域（三层边界模型）
-      console.log(`[Executor] 🔥 启动模糊区域生成...`);
-      const fuzzyRegions = fuzzyRegion.identifyFuzzyRegions(analysisPOIs, {
-        eps: 200,
-        minPoints: 5
-      });
+      // Phase 5: 生成模糊区域（三层边界模型）- Native PostGIS Mode
+      console.log(`[Executor] 🔥 启动模糊区域生成 (Native)...`);
       
-      if (fuzzyRegions && fuzzyRegions.length > 0) {
-        result.fuzzy_regions = fuzzyRegions.map(r => ({
-          id: r.id,
-          name: r.name || `${r.theme}区域`,
-          theme: r.theme,
-          center: r.center,
-          layers: r.layers,
-          pointCount: r.pointCount,
-          dominantCategories: r.dominantCategories
-        }));
-        console.log(`[Executor] ✅ 模糊区域生成完成: ${fuzzyRegions.length} 个区域`);
+      // 优先使用 hardBoundaryWKT，如果没有则尝试从 POI 构建 BBox WKT
+      let targetWKT = hardBoundaryWKT;
+      if (!targetWKT && analysisPOIs.length >= 3) {
+          try {
+             const lons = analysisPOIs.map(p => p.lon || p.properties?.lon).filter(n => n !== undefined);
+             const lats = analysisPOIs.map(p => p.lat || p.properties?.lat).filter(n => n !== undefined);
+             if (lons.length > 0) {
+               const minLon = Math.min(...lons);
+               const maxLon = Math.max(...lons);
+               const minLat = Math.min(...lats);
+               const maxLat = Math.max(...lats);
+               targetWKT = `POLYGON((${minLon} ${minLat}, ${minLon} ${maxLat}, ${maxLon} ${maxLat}, ${maxLon} ${minLat}, ${minLon} ${minLat}))`;
+             }
+          } catch(e) {}
+      }
+
+      if (targetWKT) {
+          const fuzzyRegions = await fuzzyRegion.identifyFuzzyRegions(null, {
+            viewportWkt: targetWKT,
+            categories: plan.categories, // 传递当前查询的类别上下文
+            eps: 0.003, // ~300m
+            minPoints: 5
+          });
+          
+          if (fuzzyRegions && fuzzyRegions.length > 0) {
+            result.fuzzy_regions = fuzzyRegions.map(r => ({
+              id: r.id,
+              name: r.name || `${r.theme} (AI识别)`,
+              theme: r.theme,
+              center: r.center,
+              layers: r.layers,
+              pointCount: r.pointCount,
+              dominantCategories: r.dominantCategories,
+              promptContext: fuzzyRegion.generateRegionPrompt(r) // 预生成 Prompt 上下文
+            }));
+            console.log(`[Executor] ✅ 模糊区域生成完成: ${fuzzyRegions.length} 个区域`);
+          }
+      } else {
+          console.log('[Executor] ⚠️ 缺少空间边界 (WKT)，跳过模糊区域计算');
       }
     }
   } catch (clusterErr) {
@@ -1123,36 +1133,9 @@ async function execAggregatedAnalysisMode(plan, frontendPOIs, options = {}) {
   result.area_profile = globalProfile
   result.pois = compressPOIs(representativePOIs, result.anchor?.name) // 这里的 POIs 是代表点
   
-  // Phase 3 优化：自动生成区域边界 (凸包)
-  try {
-    if (candidates.length >= 3) {
-      const points = candidates.map(p => {
-         // 兼容 GeoJSON 和 扁平结构
-         const lon = p.lon || p.geometry?.coordinates?.[0]
-         const lat = p.lat || p.geometry?.coordinates?.[1]
-         if (typeof lon === 'number' && typeof lat === 'number') {
-           return { lon, lat }
-         }
-         return null
-      }).filter(Boolean)
-      
-      // 降采样：如果点太多，只取前 500 个分布均匀的点来算凸包，提升性能
-      const samplePoints = points.length > 500 ? points.slice(0, 500) : points;
-      
-      const hull = geometry.calculateConvexHull(samplePoints)
-      const ring = geometry.hullToGeoJSONRing(hull)
-      
-      if (ring.length > 0) {
-        result.boundary = {
-          type: 'Polygon',
-          coordinates: [ring]
-        }
-        console.log(`[Executor] 自动生成区域边界: ${ring.length} 个顶点`)
-      }
-    }
-  } catch (err) {
-    console.warn('[Executor] 边界生成失败:', err.message)
-  }
+  // Phase 3 优化：自动生成区域边界
+  // 已移除 JS 端几何计算，避免性能瓶颈。
+  // 聚合模式主要依赖 H3 网格（spatial_analysis）进行表达。
   
   // =============================================
   // Phase 4 增强：聚合模式下的空间聚类分析

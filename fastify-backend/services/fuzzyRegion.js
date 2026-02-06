@@ -308,80 +308,94 @@ export async function generateFuzzyRegionLayers(clusterPoints, clusterCenter, re
  * 3. 内存友好：直接在 SQL 中完成聚类，Node 仅处理聚合后的结果。
  */
 export async function identifyFuzzyRegions(pois, options = {}) {
-  if (!pois || pois.length < 5) return [];
+  // 如果没有 viewportWkt，尝试兜底构建
+  let wkt = options.viewportWkt;
+  
+  if (!wkt && pois && pois.length >= 3) {
+    // 简单的 BBox 构建，作为兜底
+    try {
+      const lons = pois.map(p => p.lon || p.properties?.lon).filter(n => n !== undefined);
+      const lats = pois.map(p => p.lat || p.properties?.lat).filter(n => n !== undefined);
+      if (lons.length > 0) {
+        const minLon = Math.min(...lons);
+        const maxLon = Math.max(...lons);
+        const minLat = Math.min(...lats);
+        const maxLat = Math.max(...lats);
+        // 稍微外扩一点点以防边界点遗漏
+        wkt = `POLYGON((${minLon} ${minLat}, ${minLon} ${maxLat}, ${maxLon} ${maxLat}, ${maxLon} ${minLat}, ${minLon} ${minLat}))`;
+      }
+    } catch (e) {
+      console.warn('[FuzzyRegion] 无法构建 WKT:', e);
+    }
+  }
 
-  const eps = options.eps || options.dbscanEps || FUZZY_CONFIG.dbscanEps;
-  const minPoints = options.minPoints || options.dbscanMinPoints || FUZZY_CONFIG.dbscanMinPoints;
+  if (!wkt) {
+     // 如果实在没有空间范围，无法进行空间聚类
+     return [];
+  }
 
-  // 1. 提取 POI ID 列表，推送到 DB 进行聚类
-  // 注意：如果 pois 已经是 ID 数组则直接使用，如果是对象数组则提取 ID
-  const poiIds = pois.map(p => p.id).filter(id => id);
-  if (poiIds.length < minPoints) return [];
+  const eps = options.eps || 0.003; // 默认约 300m
+  const categories = options.categories || [];
 
   try {
     const startTime = Date.now();
-    
-    // 核心 SQL：在数据库中完成 聚类 + 街区关联
-    // 步骤：
-    // a. 针对输入的 POI 集合执行 ST_ClusterDBSCAN (使用投影坐标 4547 计算米制距离)
-    // b. 按集簇 ID 分组，对每个簇生成边界并推断地标
+
+    // 这一步是将计算压力完全转移给 PostgreSQL
     const sql = `
-      WITH InputPois AS (
-          SELECT id, name, properties, geom 
-          FROM pois 
-          WHERE id = ANY($1)
-      ),
-      Clusters AS (
-          SELECT 
-              *,
-              ST_ClusterDBSCAN(ST_Transform(geom, 4547), $2, $3) OVER() AS cid
-          FROM InputPois
-      ),
-      ValidClusters AS (
-          SELECT cid, array_agg(id) as ids
-          FROM Clusters
-          WHERE cid IS NOT NULL
-          GROUP BY cid
-          HAVING COUNT(*) >= $3
+      SELECT * FROM identify_fuzzy_regions_native(
+        $1, -- viewport_wkt
+        $2, -- categories
+        $3, -- eps 
+        5   -- min_points
       )
-      SELECT vc.cid, vc.ids
-      FROM ValidClusters vc;
     `;
-
-    const res = await query(sql, [poiIds, eps, minPoints]);
     
-    // 2. 将 DB 返回的 ID 集合映射回 POI 对象
-    const idToPoiMap = new Map();
-    pois.forEach(p => idToPoiMap.set(p.id, p));
-
-    const clusters = res.rows.map(row => row.ids.map(id => idToPoiMap.get(id)));
-    console.log(`[FuzzyRegion] PostGIS 聚类完成，发现 ${clusters.length} 个簇，耗时 ${Date.now() - startTime}ms`);
-
-    // 3. 为每个簇生成边界与候选词 (与之前逻辑保持一致，但核心算法已提速)
-    const fuzzyRegionPromises = clusters.map(async (cluster, index) => {
-      const center = calculateCentroid(cluster);
-      const theme = inferRegionTheme(cluster);
-      const layers = await generateFuzzyRegionLayers(cluster, center, theme);
-      const candidates = analyzeRegionNameCandidates(cluster);
+    // 我们不再传输 poiIds，而是直接传查询条件
+    const res = await query(sql, [wkt, categories, eps]);
+    
+    // 转换结果为前端 Narrator 需要的格式
+    const results = res.rows.map((row, index) => {
+      // row: cluster_id, point_count, center_json, boundary_json, dominant_category, theme
       
+      let boundaryCoordinates = [];
+      if (row.boundary_json && row.boundary_json.coordinates && row.boundary_json.coordinates.length > 0) {
+        boundaryCoordinates = row.boundary_json.coordinates[0]; // Exterior ring
+      }
+
       return {
-        id: `region_${index}`,
-        name: null, 
-        theme,
-        center,
-        layers,
-        pointCount: cluster.length,
-        candidates,
-        dominantCategories: getDominantCategories(cluster)
+        id: `region_native_${row.cluster_id}`, // 标记为 native 生成
+        name: null, // 将由 LLM 命名
+        theme: row.theme,
+        center: row.center_json,
+        
+        // 构造 Narrator 期望的 layers 结构
+        layers: {
+          core: {
+            boundary: boundaryCoordinates, 
+            type: 'ConcaveHull',
+            membership: 'high'
+          },
+          // Native 模式下，暂不生成 Transition/Outer 以节省带宽
+          // 前端可以用 CSS 模糊滤镜模拟光晕
+          transition: null, 
+          outer: null
+        },
+        
+        pointCount: row.point_count,
+        dominantCategories: [{ category: row.dominant_category, count: row.point_count }],
+        candidates: { // 占位符，如果需要更详细的候选词，需要在 SQL 里做 string_agg
+           topLandmarks: [], 
+           commonPatterns: [], 
+           bestGuess: `${row.theme}区域` 
+        }
       };
     });
-    
-    const results = await Promise.all(fuzzyRegionPromises);
-    return results.filter(r => r.layers).sort((a, b) => b.pointCount - a.pointCount);
+
+    console.log(`[FuzzyRegion] PostGIS Native 聚类完成: 耗时 ${Date.now() - startTime}ms, 识别到 ${results.length} 个热点区域`);
+    return results;
 
   } catch (err) {
-    console.error('[FuzzyRegion] PostGIS 聚类识别失败:', err.message);
-    // 兜底逻辑：如果数据库挂了或不支持该函数，可以回退到 JS 实现，此处暂简略
+    console.error('[FuzzyRegion] PostGIS Native 分析失败 (可能此时 DB 函数尚未创建):', err.message);
     return [];
   }
 }
