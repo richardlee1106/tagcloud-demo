@@ -46,6 +46,31 @@
     </div>
 
     <!-- 消息列表 -->
+
+    <!-- 三阶段进度：意图处理 -> 空间分析 -> 组织回答 -->
+    <div v-if="isTyping || normalizedStageKey" class="thinking-process-embed">
+      <div class="pipeline-trace">
+        <template v-for="(step, idx) in stageSteps" :key="step.key">
+          <div
+            class="trace-step"
+            :class="{
+              active: stageActiveIndex === idx,
+              completed: stageActiveIndex > idx
+            }"
+          >
+            <div class="step-dot"></div>
+            <span class="step-label">{{ step.label }}</span>
+          </div>
+          <div
+            v-if="idx < stageSteps.length - 1"
+            class="trace-line"
+            :class="{ completed: stageActiveIndex > idx }"
+          ></div>
+        </template>
+      </div>
+      <div class="thinking-subtitle-embed">{{ currentStageHint }}</div>
+    </div>
+
     <div class="chat-messages" ref="messagesContainer">
       <!-- 欢迎消息 -->
       <div v-if="messages.length === 0" class="welcome-message">
@@ -159,7 +184,11 @@ const props = defineProps({
     default: ''
   },
   circleCenter: {
-    type: Object,
+    type: [Object, Array],
+    default: null
+  },
+  circleRadius: {
+    type: [Number, String],
     default: null
   },
   // 地图视野边界 [minLon, minLat, maxLon, maxLat]
@@ -185,8 +214,38 @@ const emit = defineEmits(['close', 'render-to-tagcloud', 'render-pois-to-map']);
 const messages = ref([]);
 const inputText = ref('');
 const isTyping = ref(false);
-const currentStage = ref(''); // 'planner', 'executor', 'writer'
+const currentStage = ref(''); // 原始 stage 名称（来自 SSE）
 const streamQueue = ref('');
+
+const stageSteps = [
+  { key: 'planner', label: '意图处理', hint: '正在理解问题意图与约束...' },
+  { key: 'executor', label: '空间分析', hint: '正在执行空间检索与约束过滤...' },
+  { key: 'writer', label: '组织回答', hint: '正在整理答案并生成可读输出...' }
+];
+
+function normalizeStageName(stageName) {
+  const raw = String(stageName || '').toLowerCase();
+  if (!raw) return '';
+
+  if (raw.includes('planner') || raw.includes('intent')) return 'planner';
+  if (raw.includes('writer') || raw.includes('answer') || raw.includes('compose')) return 'writer';
+  if (raw.includes('executor') || raw.includes('spatial') || raw.includes('compute') || raw.includes('python')) return 'executor';
+
+  return '';
+}
+
+const normalizedStageKey = computed(() => normalizeStageName(currentStage.value));
+
+const stageActiveIndex = computed(() => {
+  const idx = stageSteps.findIndex((step) => step.key === normalizedStageKey.value);
+  if (idx >= 0) return idx;
+  return isTyping.value ? 0 : -1;
+});
+
+const currentStageHint = computed(() => {
+  if (stageActiveIndex.value < 0) return '';
+  return stageSteps[stageActiveIndex.value]?.hint || '';
+});
 const streamTimer = ref(null);
 const activeMessageIndex = ref(-1);
 const streamRenderStep = 4;
@@ -375,6 +434,7 @@ async function sendMessage() {
       boundary: props.boundaryPolygon,
       mode: props.drawMode,
       center: props.circleCenter,
+      radius: props.circleRadius,
       viewport: props.mapBounds
     };
 

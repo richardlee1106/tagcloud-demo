@@ -127,7 +127,7 @@
         <div class="map-panel" :style="mapPanelStyle">
           <div class="panel-content">
             <MapContainer ref="mapComponent" 
-                          :poi-features="allPoiFeatures" 
+                          :poi-features="mapPoiFeatures" 
                           :hovered-feature-id="hoveredFeatureId"
                           :filter-enabled="filterEnabled"
                           :heatmap-enabled="heatmapEnabled"
@@ -199,6 +199,7 @@
                   :boundary-polygon="selectedPolygon"
                   :draw-mode="selectedDrawMode"
                   :circle-center="circleCenterGeo"
+                  :circle-radius="circleRadiusMeters"
                   :map-bounds="mapBounds"
                   :global-analysis-enabled="globalAnalysisEnabled"
                   :selected-categories="selectedCategoryPath"
@@ -270,6 +271,7 @@ const isLoading = ref(false); // 全局/区域加载状态
 // 绘图模式状态
 const selectedDrawMode = ref(''); // 存储当前的绘图模式 ('Polygon' 或 'Circle')
 const circleCenterGeo = ref(null); // 存储圆心经纬度（用于地理布局校正）
+const circleRadiusMeters = ref(null); // Circle radius in meters for strict spatial clipping
 
 // AI 面板状态
 const aiExpanded = ref(false);  // AI 面板是否展开
@@ -392,6 +394,83 @@ function polygonToWKT(polygon) {
   return `POLYGON((${coords}))`;
 }
 
+
+function normalizeCircleCenter(center) {
+  if (Array.isArray(center) && center.length >= 2) {
+    const lon = Number(center[0]);
+    const lat = Number(center[1]);
+    return Number.isFinite(lon) && Number.isFinite(lat) ? [lon, lat] : null;
+  }
+
+  if (center && typeof center === 'object') {
+    const lon = Number(center.lon);
+    const lat = Number(center.lat);
+    return Number.isFinite(lon) && Number.isFinite(lat) ? [lon, lat] : null;
+  }
+
+  return null;
+}
+
+function circleToWKT(center, radiusMeters, segments = 72) {
+  const centerPoint = normalizeCircleCenter(center);
+  const radius = Number(radiusMeters);
+
+  if (!centerPoint || !Number.isFinite(radius) || radius <= 0) {
+    return null;
+  }
+
+  const [centerLon, centerLat] = centerPoint;
+  const earthRadius = 6378137;
+  const angularDistance = radius / earthRadius;
+  const lat1 = (centerLat * Math.PI) / 180;
+  const lon1 = (centerLon * Math.PI) / 180;
+
+  const points = [];
+  for (let i = 0; i <= segments; i += 1) {
+    const bearing = (i / segments) * 2 * Math.PI;
+    const sinLat2 = Math.sin(lat1) * Math.cos(angularDistance)
+      + Math.cos(lat1) * Math.sin(angularDistance) * Math.cos(bearing);
+    const lat2 = Math.asin(sinLat2);
+    const lon2 = lon1 + Math.atan2(
+      Math.sin(bearing) * Math.sin(angularDistance) * Math.cos(lat1),
+      Math.cos(angularDistance) - Math.sin(lat1) * Math.sin(lat2)
+    );
+
+    const lon = (lon2 * 180) / Math.PI;
+    const lat = (lat2 * 180) / Math.PI;
+    points.push(`${lon} ${lat}`);
+  }
+
+  return `POLYGON((${points.join(', ')}))`;
+}
+
+function resolveManualGeometryWKT() {
+  const polygonWKT = polygonToWKT(selectedPolygon.value);
+  if (polygonWKT) {
+    return polygonWKT;
+  }
+
+  if (String(selectedDrawMode.value || '').toLowerCase() === 'circle') {
+    return circleToWKT(circleCenterGeo.value, circleRadiusMeters.value);
+  }
+
+  return null;
+}
+
+function hasManualSpatialSelection() {
+  if (Array.isArray(selectedPolygon.value) && selectedPolygon.value.length >= 3) {
+    return true;
+  }
+
+  if (String(selectedDrawMode.value || '').toLowerCase() !== 'circle') {
+    return false;
+  }
+
+  return Boolean(normalizeCircleCenter(circleCenterGeo.value))
+    && Number.isFinite(Number(circleRadiusMeters.value))
+    && Number(circleRadiusMeters.value) > 0;
+}
+
 async function fetchManualFilteredFeatures(categories = [], options = {}) {
   const normalizedCategories = Array.isArray(categories) ? categories : [];
   const requestBody = {
@@ -399,7 +478,7 @@ async function fetchManualFilteredFeatures(categories = [], options = {}) {
     limit: options.limit || 20000
   };
 
-  const geometryWKT = polygonToWKT(selectedPolygon.value);
+  const geometryWKT = resolveManualGeometryWKT();
   if (geometryWKT) {
     requestBody.geometry = geometryWKT;
   } else if (Array.isArray(mapBounds.value) && mapBounds.value.length >= 4) {
@@ -436,6 +515,47 @@ function syncCategorySelectors(paths) {
 const MAX_MANUAL_FETCH_LIMIT = 500000;
 let manualFilterRequestToken = 0;
 
+// Keep filtering coordinates in the same space as map rendering (GCJ02 when POI source is WGS84).
+const poiCoordSys = (import.meta.env.VITE_POI_COORD_SYS || 'gcj02').toLowerCase();
+const shouldProjectToGcjForFilter = poiCoordSys === 'wgs84';
+
+const GCJ_A = 6378245.0;
+const GCJ_EE = 0.00669342162296594323;
+
+function outOfChina(lon, lat) {
+  return (lon < 72.004 || lon > 137.8347) || (lat < 0.8293 || lat > 55.8271);
+}
+
+function transformLat(x, y) {
+  let ret = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * Math.sqrt(Math.abs(x));
+  ret += (20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0 / 3.0;
+  ret += (20.0 * Math.sin(y * Math.PI) + 40.0 * Math.sin(y / 3.0 * Math.PI)) * 2.0 / 3.0;
+  ret += (160.0 * Math.sin(y / 12.0 * Math.PI) + 320 * Math.sin(y * Math.PI / 30.0)) * 2.0 / 3.0;
+  return ret;
+}
+
+function transformLon(x, y) {
+  let ret = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * Math.sqrt(Math.abs(x));
+  ret += (20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0 / 3.0;
+  ret += (20.0 * Math.sin(x * Math.PI) + 40.0 * Math.sin(x / 3.0 * Math.PI)) * 2.0 / 3.0;
+  ret += (150.0 * Math.sin(x / 12.0 * Math.PI) + 300.0 * Math.sin(x / 30.0 * Math.PI)) * 2.0 / 3.0;
+  return ret;
+}
+
+function wgs84ToGcj02(lon, lat) {
+  if (outOfChina(lon, lat)) return [lon, lat];
+
+  const dLat = transformLat(lon - 105.0, lat - 35.0);
+  const dLon = transformLon(lon - 105.0, lat - 35.0);
+  const radLat = lat / 180.0 * Math.PI;
+  let magic = Math.sin(radLat);
+  magic = 1 - GCJ_EE * magic * magic;
+  const sqrtMagic = Math.sqrt(magic);
+  const mgLat = lat + (dLat * 180.0) / ((GCJ_A * (1 - GCJ_EE)) / (magic * sqrtMagic) * Math.PI);
+  const mgLon = lon + (dLon * 180.0) / (GCJ_A / sqrtMagic * Math.cos(radLat) * Math.PI);
+  return [mgLon, mgLat];
+}
+
 function normalizeFeatureCategoryText(feature) {
   const props = feature?.properties || {};
   return [
@@ -465,6 +585,10 @@ function normalizeFeatureCoordinate(feature) {
   const lat = Number(coordinates[1]);
   if (!Number.isFinite(lon) || !Number.isFinite(lat)) {
     return null;
+  }
+
+  if (shouldProjectToGcjForFilter) {
+    return wgs84ToGcj02(lon, lat);
   }
 
   return [lon, lat];
@@ -504,6 +628,29 @@ function pointInPolygon(point, polygonPoints) {
   return inside;
 }
 
+
+function haversineDistanceMeters(from, to) {
+  const [lon1, lat1] = from;
+  const [lon2, lat2] = to;
+  const earthRadius = 6371000;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a = Math.sin(dLat / 2) ** 2
+    + Math.cos((lat1 * Math.PI) / 180)
+    * Math.cos((lat2 * Math.PI) / 180)
+    * Math.sin(dLon / 2) ** 2;
+  return 2 * earthRadius * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function pointInCircle(point, center, radiusMeters) {
+  const centerPoint = normalizeCircleCenter(center);
+  const radius = Number(radiusMeters);
+  if (!centerPoint || !Number.isFinite(radius) || radius <= 0) {
+    return false;
+  }
+  return haversineDistanceMeters(point, centerPoint) <= radius;
+}
+
 function filterFeaturesClientSide(features, categoryLeaves) {
   const normalizedCategories = Array.isArray(categoryLeaves)
     ? categoryLeaves.map((cat) => String(cat).toLowerCase()).filter(Boolean)
@@ -512,6 +659,7 @@ function filterFeaturesClientSide(features, categoryLeaves) {
   const hasCategoryFilter = normalizedCategories.length > 0;
   const polygonPoints = normalizePolygonPoints(selectedPolygon.value);
   const hasPolygonFilter = polygonPoints.length >= 3;
+  const hasCircleFilter = !hasPolygonFilter && String(selectedDrawMode.value || '').toLowerCase() === 'circle';
   const bounds = Array.isArray(mapBounds.value) && mapBounds.value.length >= 4
     ? mapBounds.value
     : null;
@@ -522,6 +670,8 @@ function filterFeaturesClientSide(features, categoryLeaves) {
 
     if (hasPolygonFilter) {
       if (!pointInPolygon(coord, polygonPoints)) return false;
+    } else if (hasCircleFilter) {
+      if (!pointInCircle(coord, circleCenterGeo.value, circleRadiusMeters.value)) return false;
     } else if (bounds) {
       const [lon, lat] = coord;
       if (lon < bounds[0] || lon > bounds[2] || lat < bounds[1] || lat > bounds[3]) {
@@ -574,7 +724,10 @@ async function refreshManualSelectionSource(options = {}) {
   try {
     const features = await fetchManualFilteredFeatures(categoryLeaves, { limit });
     if (requestToken !== manualFilterRequestToken) return [];
-    return applySelectionResults(features, { updateTagCloud, fitView, keepMapHighlight });
+
+    // Apply a strict client-side clip after backend fetch to keep rendered POIs inside the chosen area.
+    const strictFeatures = filterFeaturesClientSide(features, categoryLeaves);
+    return applySelectionResults(strictFeatures, { updateTagCloud, fitView, keepMapHighlight });
   } catch (error) {
     if (requestToken !== manualFilterRequestToken) return [];
 
@@ -650,6 +803,15 @@ const filteredTagData = computed(() => {
     const [lon, lat] = f.geometry.coordinates;
     return lon >= bounds[0] && lon <= bounds[2] && lat >= bounds[1] && lat <= bounds[3];
   });
+});
+
+// Keep map rendering source aligned with AI analysis source under area/category constraints.
+const mapPoiFeatures = computed(() => {
+  const hasCategoryFilter = getSelectedCategoryLeaves(selectedCategoryPath.value).length > 0;
+  if (hasCategoryFilter || hasManualSpatialSelection()) {
+    return selectedFeatures.value;
+  }
+  return allPoiFeatures.value;
 });
 
 onMounted(() => {
@@ -776,7 +938,7 @@ const handleDataLoaded = (payload) => {
 
     // 分类数据变更后，重新同步“可分析 POI 池”，保证 AI 计数与词云来源一致。
     const hasCategoryFilter = getSelectedCategoryLeaves(selectedCategoryPath.value).length > 0;
-    const hasCustomArea = Array.isArray(selectedPolygon.value) && selectedPolygon.value.length >= 3;
+    const hasCustomArea = hasManualSpatialSelection();
     if (hasCategoryFilter || hasCustomArea) {
       void refreshManualSelectionSource({
         updateTagCloud: false,
@@ -893,8 +1055,11 @@ const handleSearch = async (keyword) => {
     const spatialContext = {
       viewport: mapBounds.value,
       boundary: selectedPolygon.value,
-      mode: selectedPolygon.value ? 'Polygon' : 'Viewport',
-      center: circleCenterGeo.value
+      mode: String(selectedDrawMode.value || '').toLowerCase() === 'circle'
+        ? 'Circle'
+        : (selectedPolygon.value ? 'Polygon' : 'Viewport'),
+      center: circleCenterGeo.value,
+      radius: circleRadiusMeters.value
     };
     
     // 调用智能语义搜索（自动判断走快速路径还是 RAG）
@@ -1154,23 +1319,10 @@ const handleGlobalAnalysisChange = (enabled) => {
  * 使用节流函数限制频率，更新地图边界用于实时过滤
  */
 
-const handleMapMoveEnd = throttle(async (bounds) => {
+const handleMapMoveEnd = throttle((bounds) => {
   mapBounds.value = bounds;
-  // console.log('[App] 地图边界更新:', bounds);
-
-  // 当存在类别约束且没有自定义选区时，视野变化需要实时刷新可分析 POI 池。
-  const hasCustomArea = Array.isArray(selectedPolygon.value) && selectedPolygon.value.length >= 3;
-  const hasCategoryFilter = getSelectedCategoryLeaves(selectedCategoryPath.value).length > 0;
-
-  if (!hasCustomArea && hasCategoryFilter) {
-    await refreshManualSelectionSource({
-      updateTagCloud: false,
-      fitView: false,
-      keepMapHighlight: true,
-      silent: true
-    });
-  }
-}, 500); // 每500ms最多触发一次
+  // console.log('[App] Map bounds updated:', bounds);
+}, 500); // throttle map move updates
 
 /**
  * 处理要素悬停
@@ -1227,6 +1379,9 @@ const handlePolygonCompleted = async (payload) => {
   // 保留绘制模式与中心点，供词云布局和 AI 上下文使用。
   selectedDrawMode.value = payload?.type || 'Polygon';
   circleCenterGeo.value = payload?.circleCenter || payload?.polygonCenter || null;
+  circleRadiusMeters.value = Number.isFinite(Number(payload?.circleRadius))
+    ? Number(payload.circleRadius)
+    : null;
 
   console.log(`[App] 绘制完成 (${selectedDrawMode.value})，初筛 ${inside.length} 个要素`);
 
@@ -1393,6 +1548,7 @@ function handleReset() {
   // 重置绘制状态。
   selectedDrawMode.value = '';
   circleCenterGeo.value = null;
+  circleRadiusMeters.value = null;
 
   // 清空分类约束与已加载分组，并同步三个控制面板。
   selectedCategoryPath.value = [];

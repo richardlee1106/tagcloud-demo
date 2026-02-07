@@ -345,6 +345,7 @@ async function execBasicMode(plan, frontendPOIs, options = {}) {
 
   let hardBoundaryWKT = null
   const spatialContext = options.spatialContext
+  const normalizedSpatialCenter = normalizeCenterPoint(spatialContext?.center)
   
   // 调试：输出前端传递的空间上下文
   console.log('[Executor] 📍 spatialContext 收到:', JSON.stringify({
@@ -362,10 +363,11 @@ async function execBasicMode(plan, frontendPOIs, options = {}) {
         (spatialContext.mode === 'Polygon' || spatialContext.mode === 'polygon' || !spatialContext.mode)) {
       hardBoundaryWKT = pointsToWKT(spatialContext.boundary)
       console.log('[Executor] 使用多边形边界 (Polygon WKT)')
-    } else if (spatialContext.center && 
+    } else if (normalizedSpatialCenter && 
                (spatialContext.mode === 'Circle' || spatialContext.mode === 'circle')) {
       // 如果是圆选区，后端构建一个搜索圆
-      hardBoundaryWKT = circleToWKT(spatialContext.center, plan.radius_m || 500)
+      const circleRadius = Number(spatialContext.radius ?? plan.radius_m ?? 500)
+      hardBoundaryWKT = circleToWKT(normalizedSpatialCenter, circleRadius)
       console.log('[Executor] 使用圆形边界 (Circle WKT)')
     } else if (spatialContext.viewport && Array.isArray(spatialContext.viewport) && spatialContext.viewport.length >= 4) {
       // 如果没画选区，但有视野范围，将视野作为硬边界
@@ -384,9 +386,9 @@ async function execBasicMode(plan, frontendPOIs, options = {}) {
       // 计算空间指纹 (H3)
       try {
         let centerLon, centerLat
-        if (spatialContext.center) {
-          centerLon = spatialContext.center.lon
-          centerLat = spatialContext.center.lat
+        if (normalizedSpatialCenter) {
+          centerLon = normalizedSpatialCenter.lon
+          centerLat = normalizedSpatialCenter.lat
         } else if (spatialContext.viewport && Array.isArray(spatialContext.viewport)) {
           centerLon = (spatialContext.viewport[0] + spatialContext.viewport[2]) / 2
           centerLat = (spatialContext.viewport[1] + spatialContext.viewport[3]) / 2
@@ -455,8 +457,8 @@ async function execBasicMode(plan, frontendPOIs, options = {}) {
       lon: (spatialContext.viewport[0] + spatialContext.viewport[2]) / 2,
       lat: (spatialContext.viewport[1] + spatialContext.viewport[3]) / 2
     }
-  } else if (spatialContext?.center) {
-    viewCenter = spatialContext.center
+  } else if (normalizedSpatialCenter) {
+    viewCenter = normalizedSpatialCenter
   }
   
   // 2. 解析锚点（增强：支持 unknown 类型，并传入视野中心用于距离偏好）
@@ -997,12 +999,17 @@ async function execAggregatedAnalysisMode(plan, frontendPOIs, options = {}) {
   const spatialContext = options.spatialContext || options.context || {}
   let hardBoundaryWKT = null
   let searchCenter = null
+  const normalizedSpatialCenter = normalizeCenterPoint(spatialContext.center)
   
   if (spatialContext.boundary && spatialContext.mode === 'Polygon') {
     hardBoundaryWKT = pointsToWKT(spatialContext.boundary)
     searchCenter = getPolygonCenter(spatialContext.boundary)
-  } else if (spatialContext.center) {
-    searchCenter = spatialContext.center
+  } else if (normalizedSpatialCenter && (spatialContext.mode === 'Circle' || spatialContext.mode === 'circle')) {
+    const circleRadius = Number(spatialContext.radius ?? plan.radius_m ?? 5000)
+    hardBoundaryWKT = circleToWKT(normalizedSpatialCenter, circleRadius)
+    searchCenter = normalizedSpatialCenter
+  } else if (normalizedSpatialCenter) {
+    searchCenter = normalizedSpatialCenter
   } else if (spatialContext.viewportCenter) { // 兼容 context.viewportCenter
     searchCenter = spatialContext.viewportCenter
   } else if (spatialContext.viewport) {
@@ -1838,9 +1845,10 @@ async function execGraphMode(plan, frontendPOIs, options = {}) {
   
   const spatialContext = options.spatialContext || options.context || {}
   let searchCenter = null
+  const normalizedSpatialCenter = normalizeCenterPoint(spatialContext.center)
   
-  if (spatialContext.center) {
-    searchCenter = spatialContext.center
+  if (normalizedSpatialCenter) {
+    searchCenter = normalizedSpatialCenter
   } else if (spatialContext.viewport) {
     searchCenter = {
       lon: (spatialContext.viewport[0] + spatialContext.viewport[2]) / 2,
@@ -1861,6 +1869,9 @@ async function execGraphMode(plan, frontendPOIs, options = {}) {
     let hardBoundaryWKT = null
     if (spatialContext.boundary && spatialContext.mode === 'Polygon') {
       hardBoundaryWKT = pointsToWKT(spatialContext.boundary)
+    } else if (normalizedSpatialCenter && (spatialContext.mode === 'Circle' || spatialContext.mode === 'circle')) {
+      const circleRadius = Number(spatialContext.radius ?? plan.radius_m ?? 3000)
+      hardBoundaryWKT = circleToWKT(normalizedSpatialCenter, circleRadius)
     } else if (spatialContext.viewport) {
       hardBoundaryWKT = bboxToWKT(spatialContext.viewport)
     }
@@ -2484,16 +2495,54 @@ function bboxToWKT(bbox) {
 /**
  * 将圆心和半径转换为 WKT Polygon (近似圆)
  */
-function circleToWKT(center, radiusM) {
+function normalizeCenterPoint(center) {
   if (!center) return null
-  const { lon, lat } = center
-  // 简易处理：生成一个包围圆的外接正方形 WKT
-  const offset = radiusM / 111320 // 粗略转换：111km ≈ 1度
-  const minLon = lon - (offset / Math.cos(lat * Math.PI / 180))
-  const maxLon = lon + (offset / Math.cos(lat * Math.PI / 180))
-  const minLat = lat - offset
-  const maxLat = lat + offset
-  return bboxToWKT([minLon, minLat, maxLon, maxLat])
+
+  if (Array.isArray(center) && center.length >= 2) {
+    const lon = Number(center[0])
+    const lat = Number(center[1])
+    return Number.isFinite(lon) && Number.isFinite(lat) ? { lon, lat } : null
+  }
+
+  if (typeof center === 'object') {
+    const lon = Number(center.lon ?? center.lng ?? center.longitude)
+    const lat = Number(center.lat ?? center.latitude)
+    return Number.isFinite(lon) && Number.isFinite(lat) ? { lon, lat } : null
+  }
+
+  return null
+}
+
+/**
+ * Convert circle center/radius to an approximate WKT polygon.
+ */
+function circleToWKT(center, radiusM, segments = 72) {
+  const normalizedCenter = normalizeCenterPoint(center)
+  const radius = Number(radiusM)
+
+  if (!normalizedCenter || !Number.isFinite(radius) || radius <= 0) return null
+
+  const { lon, lat } = normalizedCenter
+  const earthRadius = 6378137
+  const angularDistance = radius / earthRadius
+  const lat1 = (lat * Math.PI) / 180
+  const lon1 = (lon * Math.PI) / 180
+
+  const points = []
+  for (let i = 0; i <= segments; i += 1) {
+    const bearing = (i / segments) * 2 * Math.PI
+    const sinLat2 = Math.sin(lat1) * Math.cos(angularDistance)
+      + Math.cos(lat1) * Math.sin(angularDistance) * Math.cos(bearing)
+    const lat2 = Math.asin(sinLat2)
+    const lon2 = lon1 + Math.atan2(
+      Math.sin(bearing) * Math.sin(angularDistance) * Math.cos(lat1),
+      Math.cos(angularDistance) - Math.sin(lat1) * Math.sin(lat2)
+    )
+
+    points.push(`${(lon2 * 180) / Math.PI} ${(lat2 * 180) / Math.PI}`)
+  }
+
+  return `POLYGON((${points.join(', ')}))`
 }
 
 // =====================================================
