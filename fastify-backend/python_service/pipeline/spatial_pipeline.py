@@ -398,10 +398,14 @@ class SpatialPipeline:
                         "stats": {
                             "total_candidates": 0,
                             "cluster_count": 0,
+                            "cluster_engine": "none",
+                            "noise_count": 0,
                             "h3_resolution": _dynamic_h3_resolution(_extract_area_km2(spatial_context)),
                             "candidate_source": candidate_source,
                             "direction": direction_hint,
                             "direction_applied": direction_applied,
+                    "cluster_engine": cluster_result.engine,
+                    "noise_count": cluster_result.noise_count,
                         },
                     },
                 },
@@ -442,6 +446,8 @@ class SpatialPipeline:
                 "stage": "cluster",
                 "progress": 0.55,
                 "cluster_count": cluster_result.cluster_count,
+                "cluster_engine": cluster_result.engine,
+                "noise_count": cluster_result.noise_count,
             },
         }
 
@@ -544,6 +550,8 @@ class SpatialPipeline:
             "stats": {
                 "total_candidates": len(pois),
                 "cluster_count": len(vernacular_regions),
+                "cluster_engine": cluster_result.engine,
+                "noise_count": cluster_result.noise_count,
                 "h3_resolution": h3_resolution,
                 "query_type": query_type,
                 "candidate_source": candidate_source,
