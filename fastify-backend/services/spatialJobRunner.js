@@ -435,7 +435,13 @@ export function decideExecutionMode({
 /**
  * 构造 gRPC 请求体。
  */
-function serializeCandidatesForGrpc(options = {}, poiFeatures = []) {
+function serializeCandidatesForGrpc(options = {}, poiFeatures = [], migrationDecision = null) {
+  // In python data-source mode, keep candidates empty so Python reads from PostGIS directly.
+  const pyDataSource = String(options?.pyDataSource || migrationDecision?.py_data_source || '').toLowerCase()
+  if (pyDataSource === 'python') {
+    return ''
+  }
+
   // In hybrid mode we may forward candidates, but skip oversized payloads.
   if (typeof options?.candidatesJson === 'string') {
     return options.candidatesJson
@@ -459,7 +465,7 @@ function serializeCandidatesForGrpc(options = {}, poiFeatures = []) {
 function buildGrpcRequest({ requestId, queryPlan, spatialContext, options, migrationDecision, poiFeatures }) {
   const executionProfile = migrationDecision?.execution_profile || 'core'
   const dryRun = migrationDecision?.dry_run === true
-  const candidatesJson = serializeCandidatesForGrpc(options, poiFeatures)
+  const candidatesJson = serializeCandidatesForGrpc(options, poiFeatures, migrationDecision)
 
   return {
     request_id: requestId,
@@ -474,7 +480,8 @@ function buildGrpcRequest({ requestId, queryPlan, spatialContext, options, migra
         enableVernacularRegion: options?.enableVernacularRegion,
         needBoundaryRefine: options?.needBoundaryRefine,
         sourcePolicy: options?.sourcePolicy,
-        selectedCategories: options?.selectedCategories
+        selectedCategories: options?.selectedCategories,
+        regions: Array.isArray(options?.regions) ? options.regions : []
       },
       migration: migrationDecision || null
     }),

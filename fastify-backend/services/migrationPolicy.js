@@ -108,7 +108,7 @@ function resolveExecutionProfile(queryType, options = {}, preferShadow = false) 
  * 读取迁移配置（可在运行时通过 env 热更新）。
  */
 export function getSpatialMigrationConfig(env = process.env) {
-  const pyDataSourceRaw = String(env.SPATIAL_PY_DATA_SOURCE || 'hybrid').trim().toLowerCase()
+  const pyDataSourceRaw = String(env.SPATIAL_PY_DATA_SOURCE || 'python').trim().toLowerCase()
   const pyDataSource = ALLOWED_DATA_SOURCES.has(pyDataSourceRaw) ? pyDataSourceRaw : 'hybrid'
 
   return {
