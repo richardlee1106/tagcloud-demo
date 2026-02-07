@@ -646,6 +646,7 @@ function resolveConstraintBounds(constraints, options = {}) {
 }
 
 function constraintToGeometryWKT(constraint, forBackend = false) {
+  // 将统一约束对象转换为可发送给后端的 WKT，确保多形态选区可复用同一条查询链路。
   if (!constraint || typeof constraint !== 'object') {
     return null;
   }
@@ -686,6 +687,7 @@ function hasManualSpatialSelection() {
 }
 
 function syncLegacySpatialStateFromConstraints() {
+  // 兼容旧组件接口：当且仅当存在单个选区时回写到 legacy 字段，多个选区时清空单选区态。
   const constraints = resolveRegionConstraints();
 
   if (constraints.length !== 1) {
@@ -743,6 +745,7 @@ async function fetchManualFilteredFeatures(categories = [], options = {}) {
   };
 
   const mergeFeaturesByIdentity = (features) => {
+    // 多选区并行查询后做去重，避免同一 POI 位于重叠区域时重复渲染。
     const merged = [];
     const seen = new Set();
 
@@ -768,6 +771,7 @@ async function fetchManualFilteredFeatures(categories = [], options = {}) {
 
   const constraints = resolveSpatialConstraints();
   if (constraints.length > 0) {
+    // 多选区采用“每个选区独立 geometry 查询 + 结果并集”策略，严格避免 bbox 粗过滤带来的越界点。
     const perConstraintLimit = requestLimit;
 
     const batches = await Promise.all(constraints.map(async (constraint) => {
@@ -1729,6 +1733,7 @@ const handleMapMoveEnd = throttle((bounds) => {
   mapBounds.value = bounds;
   // console.log('[App] Map bounds updated:', bounds);
 
+  // 无手动选区时，视野变化应实时驱动 POI 来源更新，保证“仅 bbox 模式”数量随屏幕变化。
   if (!hasManualSpatialSelection()) {
     void refreshManualSelectionSource({
       updateTagCloud: false,
@@ -1835,6 +1840,7 @@ const handlePolygonCompleted = async (payload) => {
 };
 
 const handleRegionRemoved = async () => {
+  // 删除任一选区后立刻重算并集约束，保持地图点位、词云来源和 AI 计数一致。
   polygonCenter.value = null;
   syncLegacySpatialStateFromConstraints();
 
@@ -1847,6 +1853,7 @@ const handleRegionRemoved = async () => {
 };
 
 const handleRegionsCleared = async () => {
+  // 清空选区后回退到默认策略（视野 + 类别约束），不保留陈旧的边界状态。
   polygonCenter.value = null;
   syncLegacySpatialStateFromConstraints();
 

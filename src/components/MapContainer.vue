@@ -1324,6 +1324,7 @@ function clearAllRegionsFromMap() {
   currentGeometry = null;
   currentGeometryType = null;
 
+  // 告知父组件“选区集合已清空”，用于触发统一的数据源重算。
    if (count > 0) {
     emit('regions-cleared', { count });
   }
@@ -1616,7 +1617,7 @@ function addUploadedPolygon(coordinates) {
   console.log('[MapContainer] Uploaded polygon is registered as a region');
 }
 
-// ?????????
+// 向父组件暴露选区管理与高亮控制方法。
 defineExpose({
   map,
   openPolygonDraw,

@@ -1350,6 +1350,7 @@ defineExpose({
   flex-direction: column;
   gap: 8px;
   padding-bottom: 12px;
+  /* 与 assistant 消息列左对齐，避免阶段条悬空在聊天区域中央。 */
   margin: 0 16px 8px 62px;
   border-bottom: 1px dashed rgba(255, 255, 255, 0.1);
   width: auto;
