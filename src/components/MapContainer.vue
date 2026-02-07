@@ -1323,6 +1323,11 @@ function clearAllRegionsFromMap() {
   clearHighlights();
   currentGeometry = null;
   currentGeometryType = null;
+
+   if (count > 0) {
+    emit('regions-cleared', { count });
+  }
+
   return count;
 }
 
@@ -1612,7 +1617,17 @@ function addUploadedPolygon(coordinates) {
 }
 
 // ?????????
-defineExpose({ map, openPolygonDraw, closePolygonDraw, showHighlights, clearHighlights, clearPolygon, flyTo, addUploadedPolygon });
+defineExpose({
+  map,
+  openPolygonDraw,
+  closePolygonDraw,
+  showHighlights,
+  clearHighlights,
+  clearPolygon,
+  clearAllRegionsFromMap,
+  flyTo,
+  addUploadedPolygon
+});
 
 // --- WGS84 转 GCJ-02 工具函数 ---
 // (近似算法，仅中国区域有效)

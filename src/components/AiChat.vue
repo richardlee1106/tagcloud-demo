@@ -1350,10 +1350,11 @@ defineExpose({
   flex-direction: column;
   gap: 8px;
   padding-bottom: 12px;
-  margin-bottom: 8px;
+  margin: 0 16px 8px 62px;
   border-bottom: 1px dashed rgba(255, 255, 255, 0.1);
-  width: 500px; /* 固定宽度，确保从起始到结束的长度一致 */
-  max-width: 100%; /* 适配移动端，不超出屏幕 */
+  width: auto;
+  max-width: none;
+  box-sizing: border-box;
 }
 
 .pipeline-trace {
@@ -1445,7 +1446,7 @@ defineExpose({
 .thinking-subtitle-embed {
   font-size: 11px;
   color: rgba(255, 255, 255, 0.6);
-  text-align: center;
+  text-align: left;
   font-style: italic;
   min-height: 16px;
 }
@@ -1626,6 +1627,10 @@ defineExpose({
   .quick-action-btn {
     padding: 6px 12px;
     font-size: 12px;
+  }
+
+  .thinking-process-embed {
+    margin: 0 12px 8px 52px;
   }
 }
 </style>

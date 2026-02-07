@@ -141,7 +141,9 @@
                           @map-move-end="handleMapMoveEnd"
                           @toggle-filter="filterEnabled = $event"
                           @weight-change="handleWeightChange"
-                          @global-analysis-change="globalAnalysisEnabled = $event" />
+                          @global-analysis-change="globalAnalysisEnabled = $event"
+                          @region-removed="handleRegionRemoved"
+                          @regions-cleared="handleRegionsCleared" />
           </div>
         </div>
         
@@ -223,7 +225,7 @@
 </template>
 
 <script setup>
-import { ref, shallowRef, onMounted, nextTick, computed } from 'vue';
+import { ref, shallowRef, onMounted, nextTick, computed, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { ElNotification } from 'element-plus';
 import ControlPanel from './components/ControlPanel.vue';
@@ -367,8 +369,10 @@ function getSelectedCategoryLeaves(paths) {
   return [...new Set(normalized.map(path => path[path.length - 1]).filter(Boolean))];
 }
 
-function polygonToWKT(polygon) {
+function polygonToWKT(polygon, options = {}) {
   if (!Array.isArray(polygon) || polygon.length < 3) return null;
+
+  const { forBackend = false } = options;
 
   const points = polygon
     .map((pt) => {
@@ -390,7 +394,10 @@ function polygonToWKT(polygon) {
     points.push(first);
   }
 
-  const coords = points.map(([lon, lat]) => `${lon} ${lat}`).join(', ');
+  const coords = points
+    .map(([lon, lat]) => forBackend ? toBackendPoint(lon, lat) : [lon, lat])
+    .map(([lon, lat]) => `${lon} ${lat}`)
+    .join(', ');
   return `POLYGON((${coords}))`;
 }
 
@@ -411,7 +418,7 @@ function normalizeCircleCenter(center) {
   return null;
 }
 
-function circleToWKT(center, radiusMeters, segments = 72) {
+function circleToWKT(center, radiusMeters, segments = 72, options = {}) {
   const centerPoint = normalizeCircleCenter(center);
   const radius = Number(radiusMeters);
 
@@ -419,7 +426,11 @@ function circleToWKT(center, radiusMeters, segments = 72) {
     return null;
   }
 
-  const [centerLon, centerLat] = centerPoint;
+  const { forBackend = false } = options;
+  const [centerLonRaw, centerLatRaw] = centerPoint;
+  const [centerLon, centerLat] = forBackend
+    ? toBackendPoint(centerLonRaw, centerLatRaw)
+    : [centerLonRaw, centerLatRaw];
   const earthRadius = 6378137;
   const angularDistance = radius / earthRadius;
   const lat1 = (centerLat * Math.PI) / 180;
@@ -444,65 +455,370 @@ function circleToWKT(center, radiusMeters, segments = 72) {
   return `POLYGON((${points.join(', ')}))`;
 }
 
-function resolveManualGeometryWKT() {
-  const polygonWKT = polygonToWKT(selectedPolygon.value);
-  if (polygonWKT) {
-    return polygonWKT;
+function polygonPointsFromWKT(wkt) {
+  if (typeof wkt !== 'string') return [];
+
+  const match = wkt.match(/POLYGON\s*\(\(\s*(.+?)\s*\)\)/i);
+  if (!match || !match[1]) return [];
+
+  return match[1]
+    .split(',')
+    .map((pair) => pair.trim().split(/\s+/).map(Number))
+    .filter((pair) => pair.length >= 2 && Number.isFinite(pair[0]) && Number.isFinite(pair[1]))
+    .map((pair) => [pair[0], pair[1]]);
+}
+
+function resolveRegionConstraints() {
+  if (!Array.isArray(regions.value) || regions.value.length === 0) {
+    return [];
+  }
+
+  return regions.value
+    .map((region) => {
+      const geometry = region?.geometry || {};
+      const regionType = String(region?.type || geometry?.type || '').toLowerCase();
+
+      if (regionType === 'circle' || geometry?.type === 'Point') {
+        const center = normalizeCircleCenter(geometry?.coordinates || region?.center);
+        const radius = Number(geometry?.radius);
+        if (center && Number.isFinite(radius) && radius > 0) {
+          return {
+            kind: 'circle',
+            center,
+            radius,
+            wkt: typeof region?.boundaryWKT === 'string'
+              ? region.boundaryWKT
+              : circleToWKT(center, radius)
+          };
+        }
+      }
+
+      const polygonCoords = geometry?.type === 'Polygon'
+        ? geometry?.coordinates?.[0]
+        : geometry?.type === 'MultiPolygon'
+          ? geometry?.coordinates?.[0]?.[0]
+          : null;
+
+      const polygonPoints = normalizePolygonPoints(polygonCoords || []);
+      if (polygonPoints.length >= 3) {
+        return {
+          kind: 'polygon',
+          points: polygonPoints,
+          wkt: typeof region?.boundaryWKT === 'string'
+            ? region.boundaryWKT
+            : polygonToWKT(polygonPoints)
+        };
+      }
+
+      const fallbackWKT = typeof region?.boundaryWKT === 'string' ? region.boundaryWKT.trim() : '';
+      const fallbackPoints = polygonPointsFromWKT(fallbackWKT);
+      if (fallbackPoints.length >= 3) {
+        return {
+          kind: 'polygon',
+          points: fallbackPoints,
+          wkt: fallbackWKT
+        };
+      }
+
+      return null;
+    })
+    .filter(Boolean);
+}
+
+function resolveSingleConstraintFallback() {
+  const polygonPoints = normalizePolygonPoints(selectedPolygon.value);
+  if (polygonPoints.length >= 3) {
+    return [{
+      kind: 'polygon',
+      points: polygonPoints,
+      wkt: polygonToWKT(polygonPoints)
+    }];
   }
 
   if (String(selectedDrawMode.value || '').toLowerCase() === 'circle') {
-    return circleToWKT(circleCenterGeo.value, circleRadiusMeters.value);
+    const center = normalizeCircleCenter(circleCenterGeo.value);
+    const radius = Number(circleRadiusMeters.value);
+    if (center && Number.isFinite(radius) && radius > 0) {
+      return [{
+        kind: 'circle',
+        center,
+        radius,
+        wkt: circleToWKT(center, radius)
+      }];
+    }
+  }
+
+  return [];
+}
+
+function resolveSpatialConstraints() {
+  const regionConstraints = resolveRegionConstraints();
+  if (regionConstraints.length > 0) {
+    return regionConstraints;
+  }
+  return resolveSingleConstraintFallback();
+}
+
+function extractBoundsFromWKT(wkt) {
+  if (typeof wkt !== 'string') return null;
+
+  const numbers = wkt.match(/-?\d+(?:\.\d+)?/g);
+  if (!numbers || numbers.length < 8) return null;
+
+  let minLon = Infinity;
+  let minLat = Infinity;
+  let maxLon = -Infinity;
+  let maxLat = -Infinity;
+
+  for (let i = 0; i < numbers.length - 1; i += 2) {
+    const lon = Number(numbers[i]);
+    const lat = Number(numbers[i + 1]);
+    if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
+
+    minLon = Math.min(minLon, lon);
+    minLat = Math.min(minLat, lat);
+    maxLon = Math.max(maxLon, lon);
+    maxLat = Math.max(maxLat, lat);
+  }
+
+  if (![minLon, minLat, maxLon, maxLat].every(Number.isFinite)) {
+    return null;
+  }
+
+  return [minLon, minLat, maxLon, maxLat];
+}
+
+function resolveConstraintBounds(constraints, options = {}) {
+  const { forBackend = false, padding = 0 } = options;
+  if (!Array.isArray(constraints) || constraints.length === 0) return null;
+
+  let minLon = Infinity;
+  let minLat = Infinity;
+  let maxLon = -Infinity;
+  let maxLat = -Infinity;
+
+  const pushPoint = (lon, lat) => {
+    const sourceLon = Number(lon);
+    const sourceLat = Number(lat);
+    if (!Number.isFinite(sourceLon) || !Number.isFinite(sourceLat)) return;
+
+    const [targetLon, targetLat] = forBackend
+      ? toBackendPoint(sourceLon, sourceLat)
+      : [sourceLon, sourceLat];
+
+    minLon = Math.min(minLon, targetLon);
+    minLat = Math.min(minLat, targetLat);
+    maxLon = Math.max(maxLon, targetLon);
+    maxLat = Math.max(maxLat, targetLat);
+  };
+
+  constraints.forEach((constraint) => {
+    if (constraint.kind === 'polygon' && Array.isArray(constraint.points)) {
+      constraint.points.forEach(([lon, lat]) => pushPoint(lon, lat));
+      return;
+    }
+
+    if (constraint.kind === 'circle' && Array.isArray(constraint.center)) {
+      const radius = Number(constraint.radius);
+      if (!Number.isFinite(radius) || radius <= 0) return;
+
+      const latOffset = radius / 111320;
+      const lonOffset = latOffset / Math.max(Math.cos((constraint.center[1] * Math.PI) / 180), 1e-6);
+      pushPoint(constraint.center[0] - lonOffset, constraint.center[1] - latOffset);
+      pushPoint(constraint.center[0] + lonOffset, constraint.center[1] + latOffset);
+      return;
+    }
+
+    if (typeof constraint.wkt === 'string') {
+      const fromWKT = extractBoundsFromWKT(constraint.wkt);
+      if (fromWKT) {
+        pushPoint(fromWKT[0], fromWKT[1]);
+        pushPoint(fromWKT[2], fromWKT[3]);
+      }
+    }
+  });
+
+  if (![minLon, minLat, maxLon, maxLat].every(Number.isFinite)) {
+    return null;
+  }
+
+  return [minLon - padding, minLat - padding, maxLon + padding, maxLat + padding];
+}
+
+function constraintToGeometryWKT(constraint, forBackend = false) {
+  if (!constraint || typeof constraint !== 'object') {
+    return null;
+  }
+
+  if (constraint.kind === 'polygon' && Array.isArray(constraint.points)) {
+    return polygonToWKT(constraint.points, { forBackend });
+  }
+
+  if (constraint.kind === 'circle' && Array.isArray(constraint.center)) {
+    return circleToWKT(constraint.center, constraint.radius, 72, { forBackend });
+  }
+
+  if (typeof constraint.wkt === 'string' && constraint.wkt.trim()) {
+    if (!forBackend || !shouldProjectToGcjForFilter) {
+      return constraint.wkt.trim();
+    }
+
+    const points = polygonPointsFromWKT(constraint.wkt);
+    if (points.length >= 3) {
+      return polygonToWKT(points, { forBackend: true });
+    }
   }
 
   return null;
 }
 
+function resolveManualGeometryWKT(forBackend = false) {
+  const constraints = resolveSpatialConstraints();
+  if (constraints.length !== 1) {
+    return null;
+  }
+
+  return constraintToGeometryWKT(constraints[0], forBackend);
+}
+
 function hasManualSpatialSelection() {
-  if (Array.isArray(selectedPolygon.value) && selectedPolygon.value.length >= 3) {
-    return true;
+  return resolveSpatialConstraints().length > 0;
+}
+
+function syncLegacySpatialStateFromConstraints() {
+  const constraints = resolveRegionConstraints();
+
+  if (constraints.length !== 1) {
+    selectedPolygon.value = null;
+    selectedDrawMode.value = '';
+    circleCenterGeo.value = null;
+    circleRadiusMeters.value = null;
+    return;
   }
 
-  if (String(selectedDrawMode.value || '').toLowerCase() !== 'circle') {
-    return false;
+  const [constraint] = constraints;
+  if (constraint.kind === 'polygon' && Array.isArray(constraint.points)) {
+    selectedPolygon.value = constraint.points.map(([lon, lat]) => [lon, lat]);
+    selectedDrawMode.value = 'Polygon';
+    circleCenterGeo.value = null;
+    circleRadiusMeters.value = null;
+    return;
   }
 
-  return Boolean(normalizeCircleCenter(circleCenterGeo.value))
-    && Number.isFinite(Number(circleRadiusMeters.value))
-    && Number(circleRadiusMeters.value) > 0;
+  if (constraint.kind === 'circle' && Array.isArray(constraint.center)) {
+    selectedPolygon.value = null;
+    selectedDrawMode.value = 'Circle';
+    circleCenterGeo.value = [...constraint.center];
+    circleRadiusMeters.value = Number(constraint.radius) || null;
+    return;
+  }
+
+  selectedPolygon.value = null;
+  selectedDrawMode.value = '';
+  circleCenterGeo.value = null;
+  circleRadiusMeters.value = null;
 }
 
 async function fetchManualFilteredFeatures(categories = [], options = {}) {
   const normalizedCategories = Array.isArray(categories) ? categories : [];
-  const requestBody = {
-    categories: normalizedCategories,
-    limit: options.limit || 20000
+  const requestLimit = Number.isFinite(Number(options.limit)) ? Number(options.limit) : 20000;
+
+  const fetchByPayload = async (payload) => {
+    const response = await fetch(`${API_BASE_URL}/api/spatial/fetch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+      throw new Error(`fetch filtered POIs failed (${response.status})`);
+    }
+
+    const data = await response.json();
+    if (!data?.success || !Array.isArray(data.features)) {
+      return [];
+    }
+
+    return data.features;
   };
 
-  const geometryWKT = resolveManualGeometryWKT();
+  const mergeFeaturesByIdentity = (features) => {
+    const merged = [];
+    const seen = new Set();
+
+    for (const feature of Array.isArray(features) ? features : []) {
+      const props = feature?.properties || {};
+      const coords = feature?.geometry?.coordinates;
+      const lon = Number(coords?.[0]);
+      const lat = Number(coords?.[1]);
+      const key = [
+        feature?.id ?? props.id ?? props.poiid ?? props.name ?? '',
+        Number.isFinite(lon) ? lon.toFixed(6) : '',
+        Number.isFinite(lat) ? lat.toFixed(6) : ''
+      ].join('|');
+
+      if (!seen.has(key)) {
+        seen.add(key);
+        merged.push(feature);
+      }
+    }
+
+    return merged;
+  };
+
+  const constraints = resolveSpatialConstraints();
+  if (constraints.length > 0) {
+    const perConstraintLimit = requestLimit;
+
+    const batches = await Promise.all(constraints.map(async (constraint) => {
+      const geometry = constraintToGeometryWKT(constraint, true);
+      const payload = {
+        categories: normalizedCategories,
+        limit: perConstraintLimit
+      };
+
+      if (geometry) {
+        payload.geometry = geometry;
+      } else {
+        const bounds = resolveConstraintBounds([constraint], {
+          forBackend: true,
+          padding: shouldProjectToGcjForFilter ? 0.01 : 0
+        });
+        if (bounds) {
+          payload.bounds = bounds;
+        }
+      }
+
+      if (!payload.geometry && !payload.bounds) {
+        return [];
+      }
+
+      return fetchByPayload(payload);
+    }));
+
+    return mergeFeaturesByIdentity(batches.flat()).slice(0, requestLimit);
+  }
+
+  const requestBody = {
+    categories: normalizedCategories,
+    limit: requestLimit
+  };
+
+  const geometryWKT = resolveManualGeometryWKT(true);
   if (geometryWKT) {
     requestBody.geometry = geometryWKT;
-  } else if (Array.isArray(mapBounds.value) && mapBounds.value.length >= 4) {
-    requestBody.bounds = [...mapBounds.value];
   } else {
+    const backendBounds = boundsToBackend(mapBounds.value);
+    if (backendBounds) {
+      requestBody.bounds = backendBounds;
+    }
+  }
+
+  if (!requestBody.bounds && !requestBody.geometry) {
     return [];
   }
 
-  const response = await fetch(`${API_BASE_URL}/api/spatial/fetch`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(requestBody)
-  });
-
-  if (!response.ok) {
-    throw new Error(`fetch filtered POIs failed (${response.status})`);
-  }
-
-  const data = await response.json();
-  if (!data?.success || !Array.isArray(data.features)) {
-    return [];
-  }
-
-  return data.features;
+  return fetchByPayload(requestBody);
 }
 
 
@@ -554,6 +870,52 @@ function wgs84ToGcj02(lon, lat) {
   const mgLat = lat + (dLat * 180.0) / ((GCJ_A * (1 - GCJ_EE)) / (magic * sqrtMagic) * Math.PI);
   const mgLon = lon + (dLon * 180.0) / (GCJ_A / sqrtMagic * Math.cos(radLat) * Math.PI);
   return [mgLon, mgLat];
+}
+
+function gcj02ToWgs84(lon, lat) {
+  if (outOfChina(lon, lat)) return [lon, lat];
+
+  const [gcjLon, gcjLat] = wgs84ToGcj02(lon, lat);
+  return [lon * 2 - gcjLon, lat * 2 - gcjLat];
+}
+
+function toBackendPoint(lon, lat) {
+  if (!shouldProjectToGcjForFilter) {
+    return [lon, lat];
+  }
+  return gcj02ToWgs84(lon, lat);
+}
+
+function normalizeBounds(bounds) {
+  if (!Array.isArray(bounds) || bounds.length < 4) return null;
+
+  const minLon = Number(bounds[0]);
+  const minLat = Number(bounds[1]);
+  const maxLon = Number(bounds[2]);
+  const maxLat = Number(bounds[3]);
+
+  if (![minLon, minLat, maxLon, maxLat].every(Number.isFinite)) return null;
+
+  return [
+    Math.min(minLon, maxLon),
+    Math.min(minLat, maxLat),
+    Math.max(minLon, maxLon),
+    Math.max(minLat, maxLat)
+  ];
+}
+
+function boundsToBackend(bounds) {
+  const normalized = normalizeBounds(bounds);
+  if (!normalized) return null;
+
+  if (!shouldProjectToGcjForFilter) {
+    return normalized;
+  }
+
+  const [swLon, swLat] = toBackendPoint(normalized[0], normalized[1]);
+  const [neLon, neLat] = toBackendPoint(normalized[2], normalized[3]);
+
+  return normalizeBounds([swLon, swLat, neLon, neLat]);
 }
 
 function normalizeFeatureCategoryText(feature) {
@@ -651,15 +1013,32 @@ function pointInCircle(point, center, radiusMeters) {
   return haversineDistanceMeters(point, centerPoint) <= radius;
 }
 
+function isPointWithinAnyConstraint(point, constraints) {
+  if (!Array.isArray(constraints) || constraints.length === 0) {
+    return false;
+  }
+
+  return constraints.some((constraint) => {
+    if (constraint.kind === 'polygon' && Array.isArray(constraint.points)) {
+      return pointInPolygon(point, constraint.points);
+    }
+
+    if (constraint.kind === 'circle' && Array.isArray(constraint.center)) {
+      return pointInCircle(point, constraint.center, constraint.radius);
+    }
+
+    return false;
+  });
+}
+
 function filterFeaturesClientSide(features, categoryLeaves) {
   const normalizedCategories = Array.isArray(categoryLeaves)
     ? categoryLeaves.map((cat) => String(cat).toLowerCase()).filter(Boolean)
     : [];
 
   const hasCategoryFilter = normalizedCategories.length > 0;
-  const polygonPoints = normalizePolygonPoints(selectedPolygon.value);
-  const hasPolygonFilter = polygonPoints.length >= 3;
-  const hasCircleFilter = !hasPolygonFilter && String(selectedDrawMode.value || '').toLowerCase() === 'circle';
+  const constraints = resolveSpatialConstraints();
+  const hasConstraintFilter = constraints.length > 0;
   const bounds = Array.isArray(mapBounds.value) && mapBounds.value.length >= 4
     ? mapBounds.value
     : null;
@@ -668,10 +1047,10 @@ function filterFeaturesClientSide(features, categoryLeaves) {
     const coord = normalizeFeatureCoordinate(feature);
     if (!coord) return false;
 
-    if (hasPolygonFilter) {
-      if (!pointInPolygon(coord, polygonPoints)) return false;
-    } else if (hasCircleFilter) {
-      if (!pointInCircle(coord, circleCenterGeo.value, circleRadiusMeters.value)) return false;
+    if (hasConstraintFilter) {
+      if (!isPointWithinAnyConstraint(coord, constraints)) {
+        return false;
+      }
     } else if (bounds) {
       const [lon, lat] = coord;
       if (lon < bounds[0] || lon > bounds[2] || lat < bounds[1] || lat > bounds[3]) {
@@ -813,6 +1192,15 @@ const mapPoiFeatures = computed(() => {
   }
   return allPoiFeatures.value;
 });
+
+watch(
+  () => regions.value.map(region => `${region.id}:${region.type}:${region.boundaryWKT || ''}`).join('|'),
+  () => {
+    // 多选区模式下维护单选区遗留状态，避免 boundary/圆形上下文与实际选区不一致。
+    syncLegacySpatialStateFromConstraints();
+  },
+  { immediate: true }
+);
 
 onMounted(() => {
   window.addEventListener('resize', handleResize);
@@ -1050,16 +1438,34 @@ const handleSearch = async (keyword) => {
   ElNotification.info({ title: '搜索中', message: '正在搜索，请稍候...', offset: 80 });
   
   try {
+    const constraints = resolveSpatialConstraints();
+    const singleConstraint = constraints.length === 1 ? constraints[0] : null;
+    const selectedCategoryLeaves = getSelectedCategoryLeaves(selectedCategoryPath.value);
+
+    const boundary = singleConstraint?.kind === 'polygon'
+      ? singleConstraint.points
+      : (Array.isArray(selectedPolygon.value) ? selectedPolygon.value : null);
+    const circleCenter = singleConstraint?.kind === 'circle'
+      ? singleConstraint.center
+      : circleCenterGeo.value;
+    const circleRadius = singleConstraint?.kind === 'circle'
+      ? singleConstraint.radius
+      : circleRadiusMeters.value;
+
     // 构建空间上下文
     // 优先使用绘制/上传的多边形选区，其次是当前地图视野
     const spatialContext = {
       viewport: mapBounds.value,
-      boundary: selectedPolygon.value,
-      mode: String(selectedDrawMode.value || '').toLowerCase() === 'circle'
+      boundary,
+      mode: singleConstraint?.kind === 'circle'
         ? 'Circle'
-        : (selectedPolygon.value ? 'Polygon' : 'Viewport'),
-      center: circleCenterGeo.value,
-      radius: circleRadiusMeters.value
+        : (boundary ? 'Polygon' : 'Viewport'),
+      center: circleCenter,
+      radius: circleRadius,
+      regions: constraints.map((constraint) => ({
+        kind: constraint.kind,
+        wkt: constraintToGeometryWKT(constraint, true) || constraint.wkt || null
+      }))
     };
     
     // 调用智能语义搜索（自动判断走快速路径还是 RAG）
@@ -1092,7 +1498,7 @@ const handleSearch = async (keyword) => {
     }
     
     // 简单查询成功：直接渲染结果
-    const filtered = result.pois || [];
+    const filtered = filterFeaturesClientSide(result.pois || [], selectedCategoryLeaves);
     
     tagData.value = filtered;
     if (mapComponent.value) {
@@ -1322,6 +1728,16 @@ const handleGlobalAnalysisChange = (enabled) => {
 const handleMapMoveEnd = throttle((bounds) => {
   mapBounds.value = bounds;
   // console.log('[App] Map bounds updated:', bounds);
+
+  if (!hasManualSpatialSelection()) {
+    void refreshManualSelectionSource({
+      updateTagCloud: false,
+      fitView: false,
+      keepMapHighlight: false,
+      silent: true,
+      limit: MAX_MANUAL_FETCH_LIMIT
+    });
+  }
 }, 500); // throttle map move updates
 
 /**
@@ -1382,6 +1798,7 @@ const handlePolygonCompleted = async (payload) => {
   circleRadiusMeters.value = Number.isFinite(Number(payload?.circleRadius))
     ? Number(payload.circleRadius)
     : null;
+  syncLegacySpatialStateFromConstraints();
 
   console.log(`[App] 绘制完成 (${selectedDrawMode.value})，初筛 ${inside.length} 个要素`);
 
@@ -1415,6 +1832,30 @@ const handlePolygonCompleted = async (payload) => {
       offset: 80
     });
   }
+};
+
+const handleRegionRemoved = async () => {
+  polygonCenter.value = null;
+  syncLegacySpatialStateFromConstraints();
+
+  await refreshManualSelectionSource({
+    updateTagCloud: false,
+    fitView: false,
+    keepMapHighlight: true,
+    silent: true
+  });
+};
+
+const handleRegionsCleared = async () => {
+  polygonCenter.value = null;
+  syncLegacySpatialStateFromConstraints();
+
+  await refreshManualSelectionSource({
+    updateTagCloud: false,
+    fitView: false,
+    keepMapHighlight: true,
+    silent: true
+  });
 };
 
 /**
@@ -1558,6 +1999,7 @@ function handleReset() {
 
   // 清空地图上的选区和高亮。
   if (mapComponent.value) {
+    mapComponent.value.clearAllRegionsFromMap?.();
     mapComponent.value.clearPolygon();
     mapComponent.value.closePolygonDraw();
   }
