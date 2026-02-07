@@ -45,11 +45,20 @@ def normalize_direction(raw_direction: Any) -> str | None:
     if not text:
         return None
 
+    short_map = {"e": "east", "w": "west", "n": "north", "s": "south"}
+    if text in short_map:
+        return short_map[text]
+
     for canonical, aliases in _DIRECTION_ALIASES.items():
         if text == canonical:
             return canonical
-        if any(alias in text for alias in aliases):
-            return canonical
+
+        for alias in aliases:
+            # ?????????????????? "restaurant" ??? east?
+            if len(alias) == 1:
+                continue
+            if text == alias or alias in text:
+                return canonical
 
     return None
 

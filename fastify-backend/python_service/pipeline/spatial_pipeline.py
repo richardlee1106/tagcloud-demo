@@ -13,6 +13,7 @@ from shapely.geometry import MultiPoint, Point, Polygon, mapping
 from algorithms.alpha_shape import build_alpha_shape
 from algorithms.direction_filter import filter_pois_by_direction, resolve_direction_from_query_plan
 from algorithms.h3_aggregate import aggregate_pois_h3
+from algorithms.graph_reasoning import analyze_spatial_graph
 from algorithms.hdbscan_cluster import cluster_points
 from algorithms.membership import compute_membership
 from db.repository import POIRepository
@@ -349,6 +350,11 @@ class SpatialPipeline:
         query_plan = hints.get("query_plan") if isinstance(hints.get("query_plan"), dict) else {}
         direction_hint = resolve_direction_from_query_plan(query_plan, semantic_query=semantic_query)
         anchor_hint = query_plan.get("anchor") if isinstance(query_plan, dict) else None
+        need_graph_reasoning = bool(query_plan.get("need_graph_reasoning")) or query_type == "graph_reasoning"
+
+        # ??????????????????????????????
+        if need_graph_reasoning and query_type == "graph_reasoning":
+            terms = []
 
         yield {
             "type": "STAGE",
@@ -388,6 +394,8 @@ class SpatialPipeline:
                 limit=8000,
             )
 
+        graph_summary = analyze_spatial_graph(pois) if need_graph_reasoning else None
+
         yield {
             "type": "PROGRESS",
             "payload": {
@@ -397,6 +405,8 @@ class SpatialPipeline:
                 "candidate_source": candidate_source,
                 "direction": direction_hint,
                 "direction_applied": direction_applied,
+                "graph_enabled": need_graph_reasoning,
+                "graph_nodes": graph_summary.get("node_count", 0) if graph_summary else 0,
             },
         }
 
@@ -413,6 +423,15 @@ class SpatialPipeline:
                         "spatial_clusters": {"hotspots": []},
                         "vernacular_regions": [],
                         "fuzzy_regions": [],
+                        "graph_reasoning": graph_summary or {
+                            "node_count": 0,
+                            "edge_count": 0,
+                            "component_count": 0,
+                            "components": [],
+                            "top_hubs": [],
+                            "avg_degree": 0.0,
+                            "distance_threshold_m": 280.0,
+                        },
                         "stats": {
                             "total_candidates": 0,
                             "cluster_count": 0,
@@ -600,6 +619,15 @@ class SpatialPipeline:
             "vernacular_regions": vernacular_regions[:10],
             "fuzzy_regions": fuzzy_regions[:10],
             "fuzzy_summary": fuzzy_summary,
+            "graph_reasoning": graph_summary or {
+                "node_count": 0,
+                "edge_count": 0,
+                "component_count": 0,
+                "components": [],
+                "top_hubs": [],
+                "avg_degree": 0.0,
+                "distance_threshold_m": 280.0,
+            },
             "stats": {
                 "total_candidates": len(pois),
                 "cluster_count": len(vernacular_regions),
@@ -613,6 +641,8 @@ class SpatialPipeline:
                 "direction": direction_hint,
                 "direction_applied": direction_applied,
                 "boundary_method": boundary_methods[0] if len(set(boundary_methods)) == 1 and boundary_methods else "mixed",
+                "graph_component_count": graph_summary.get("component_count", 0) if graph_summary else 0,
+                "graph_edge_count": graph_summary.get("edge_count", 0) if graph_summary else 0,
                 "fuzzy_core_count": fuzzy_summary["core"],
                 "fuzzy_transition_count": fuzzy_summary["transition"],
                 "fuzzy_periphery_count": fuzzy_summary["periphery"],
@@ -634,6 +664,8 @@ class SpatialPipeline:
                     "direction": direction_hint,
                     "direction_applied": direction_applied,
                     "boundary_methods": boundary_methods,
+                    "graph_enabled": need_graph_reasoning,
+                    "graph_component_count": graph_summary.get("component_count", 0) if graph_summary else 0,
                 },
             },
         }
