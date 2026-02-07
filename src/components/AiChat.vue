@@ -438,6 +438,19 @@ async function sendMessage() {
       viewport: props.mapBounds
     };
 
+    const normalizedRegions = props.regions.map(r => ({
+      id: r.id,
+      name: r.name,
+      type: r.type,
+      geometry: r.geometry,
+      boundaryWKT: r.boundaryWKT,
+      center: r.center,
+      poiCount: r.pois?.length || 0,
+      stats: r.stats
+    }));
+    // 多选区约束写入 spatialContext，供 Python 直查模式按“选区并集”严格过滤。
+    spatialContext.regions = normalizedRegions;
+
     const normalizedSelectedCategories = normalizeSelectedCategories(props.selectedCategories);
     const options = {
       globalAnalysis: props.globalAnalysisEnabled,
@@ -448,15 +461,7 @@ async function sendMessage() {
         hasCategoryFilter: normalizedSelectedCategories.length > 0
       },
       spatialContext,
-      regions: props.regions.map(r => ({
-        id: r.id,
-        name: r.name,
-        type: r.type,
-        boundaryWKT: r.boundaryWKT,
-        center: r.center,
-        poiCount: r.pois?.length || 0,
-        stats: r.stats
-      }))
+      regions: normalizedRegions
     };
 
     await sendChatMessageStream(

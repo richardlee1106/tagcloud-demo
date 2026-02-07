@@ -103,6 +103,78 @@ class POIRepository:
             "))"
         )
 
+    @classmethod
+    def _region_spatial_clauses(cls, regions: Any) -> Tuple[List[str], List[Any]]:
+        """将多选区上下文转换为 SQL 空间子句（OR 并集）。"""
+        if not isinstance(regions, (list, tuple)):
+            return [], []
+
+        clauses: List[str] = []
+        params: List[Any] = []
+
+        for region in regions:
+            if not isinstance(region, dict):
+                continue
+
+            # 中文注释：优先使用前端预生成的 boundaryWKT，避免重复几何序列化导致精度漂移。
+            region_wkt = region.get("boundaryWKT", region.get("wkt"))
+            if isinstance(region_wkt, str) and region_wkt.strip():
+                clauses.append("ST_Within(p.geom, ST_GeomFromText(%s, 4326))")
+                params.append(region_wkt.strip())
+                continue
+
+            geometry = region.get("geometry")
+            geometry_type = ""
+            if isinstance(geometry, dict):
+                geometry_type = str(geometry.get("type", "")).lower()
+
+            if geometry_type == "polygon":
+                ring = geometry.get("coordinates", [None])[0]
+                polygon_wkt = cls._boundary_wkt(ring)
+                if polygon_wkt:
+                    clauses.append("ST_Within(p.geom, ST_GeomFromText(%s, 4326))")
+                    params.append(polygon_wkt)
+                    continue
+
+            if geometry_type == "multipolygon":
+                polygons = geometry.get("coordinates")
+                if isinstance(polygons, (list, tuple)):
+                    for poly in polygons:
+                        if not isinstance(poly, (list, tuple)) or len(poly) == 0:
+                            continue
+                        polygon_wkt = cls._boundary_wkt(poly[0])
+                        if polygon_wkt:
+                            clauses.append("ST_Within(p.geom, ST_GeomFromText(%s, 4326))")
+                            params.append(polygon_wkt)
+                if clauses:
+                    continue
+
+            # 中文注释：圆形选区用中心点 + 半径表达，保持与前端 Circle 交互一致。
+            center = None
+            radius = 0.0
+            if geometry_type == "point" and isinstance(geometry, dict):
+                center = cls._normalize_point(geometry.get("coordinates"))
+                try:
+                    radius = float(geometry.get("radius", region.get("radius", 0)) or 0)
+                except (TypeError, ValueError):
+                    radius = 0.0
+
+            if center is None:
+                center = cls._normalize_point(region.get("center"))
+            if radius <= 0:
+                try:
+                    radius = float(region.get("radius", 0) or 0)
+                except (TypeError, ValueError):
+                    radius = 0.0
+
+            if center and radius > 0:
+                clauses.append(
+                    "ST_DWithin(p.geom::geography, ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography, %s)"
+                )
+                params.extend([center[0], center[1], radius])
+
+        return clauses, params
+
     def fetch_pois(
         self,
         *,
@@ -118,6 +190,7 @@ class POIRepository:
 
         boundary_wkt = self._boundary_wkt(spatial_context.get("boundary"))
         viewport_wkt = self._viewport_wkt(spatial_context.get("viewport"))
+        region_clauses, region_params = self._region_spatial_clauses(spatial_context.get("regions"))
 
         center = self._normalize_point(spatial_context.get("center"))
         radius = float(spatial_context.get("radius", 0) or 0)
@@ -127,7 +200,12 @@ class POIRepository:
         order_sql = "ORDER BY p.id ASC"
 
         # 关键守卫：必须有空间约束，避免误触全表扫描。
-        if boundary_wkt:
+        if region_clauses:
+            # 中文注释：多选区场景采用 OR 并集，严格贴合“多个区域共同生效”的业务定义。
+            where_parts.append("(" + " OR ".join(region_clauses) + ")")
+            params.extend(region_params)
+            order_sql = "ORDER BY p.id ASC"
+        elif boundary_wkt:
             where_parts.append("ST_Within(p.geom, ST_GeomFromText(%s, 4326))")
             params.append(boundary_wkt)
             # 中文注释：边界查询按边界中心做 KNN 排序，避免 LIMIT 截断只落在某个类目。
