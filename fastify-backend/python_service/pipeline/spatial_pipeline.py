@@ -16,6 +16,7 @@ from algorithms.h3_aggregate import aggregate_pois_h3
 from algorithms.graph_reasoning import analyze_spatial_graph
 from algorithms.hdbscan_cluster import cluster_points
 from algorithms.membership import compute_membership
+from algorithms.region_comparison import analyze_region_set, compute_region_comparison
 from db.repository import POIRepository
 
 
@@ -283,6 +284,19 @@ def _top_membership_drivers(membership, top_n: int = 2) -> List[Dict[str, Any]]:
     ]
 
 
+def _empty_graph_summary() -> Dict[str, Any]:
+    """Return stable empty graph payload for API compatibility."""
+    return {
+        "node_count": 0,
+        "edge_count": 0,
+        "component_count": 0,
+        "components": [],
+        "top_hubs": [],
+        "avg_degree": 0.0,
+        "distance_threshold_m": 280.0,
+    }
+
+
 def _filter_payload_candidates(
     candidates: List[Dict[str, Any]],
     *,
@@ -351,10 +365,106 @@ class SpatialPipeline:
         direction_hint = resolve_direction_from_query_plan(query_plan, semantic_query=semantic_query)
         anchor_hint = query_plan.get("anchor") if isinstance(query_plan, dict) else None
         need_graph_reasoning = bool(query_plan.get("need_graph_reasoning")) or query_type == "graph_reasoning"
+        need_region_comparison = query_type == "region_comparison"
+        region_context = hints_options.get("regions") if isinstance(hints_options.get("regions"), list) else []
+        target_region_ids = query_plan.get("target_regions") if isinstance(query_plan.get("target_regions"), list) else []
 
-        # ??????????????????????????????
+        # 图结构推理以空间关系为核心，避免语义分词把候选集误过滤为空。
         if need_graph_reasoning and query_type == "graph_reasoning":
             terms = []
+
+        if need_region_comparison:
+            yield {
+                "type": "STAGE",
+                "payload": {
+                    "stage": "region_comparison_prepare",
+                    "query_type": query_type,
+                },
+            }
+
+            region_analyses = analyze_region_set(
+                regions=region_context,
+                target_region_ids=target_region_ids,
+                categories=categories,
+                repository=self.repository,
+            )
+            comparison = compute_region_comparison(
+                region_analyses,
+                dimensions=query_plan.get("comparison_dimensions") if isinstance(query_plan.get("comparison_dimensions"), list) else [],
+            )
+
+            valid_regions = len(region_analyses)
+            total_pois = sum(int(item.get("poi_count", 0)) for item in region_analyses)
+            comparison_error = None
+            if valid_regions < 2:
+                comparison_error = "对比分析需要至少2个有效选区"
+                comparison = None
+
+            yield {
+                "type": "PROGRESS",
+                "payload": {
+                    "stage": "region_comparison_prepare",
+                    "progress": 0.6,
+                    "requested_regions": len(target_region_ids),
+                    "valid_regions": valid_regions,
+                    "total_pois": total_pois,
+                },
+            }
+
+            final_results = {
+                "mode": "region_comparison",
+                "target_regions": target_region_ids,
+                "region_analyses": region_analyses,
+                "comparison": comparison,
+                "pois": [],
+                "boundary": None,
+                "spatial_clusters": {"hotspots": []},
+                "vernacular_regions": [],
+                "fuzzy_regions": [],
+                "fuzzy_summary": {"core": 0, "transition": 0, "periphery": 0},
+                "graph_reasoning": _empty_graph_summary(),
+                "stats": {
+                    "query_type": query_type,
+                    "requested_regions": len(target_region_ids),
+                    "valid_regions": valid_regions,
+                    "regions_analyzed": valid_regions,
+                    "total_pois": total_pois,
+                    "cluster_count": 0,
+                    "cluster_engine": "none",
+                    "noise_count": 0,
+                    "h3_resolution": _dynamic_h3_resolution(_extract_area_km2(spatial_context)),
+                    "h3_engine": "none",
+                    "h3_cell_count": 0,
+                    "candidate_source": "region_context",
+                    "direction": None,
+                    "direction_applied": False,
+                    "boundary_method": "none",
+                    "graph_component_count": 0,
+                    "graph_edge_count": 0,
+                    "fuzzy_core_count": 0,
+                    "fuzzy_transition_count": 0,
+                    "fuzzy_periphery_count": 0,
+                },
+            }
+
+            if comparison_error:
+                final_results["error"] = comparison_error
+
+            yield {
+                "type": "FINAL",
+                "payload": {
+                    "success": True,
+                    "results": final_results,
+                    "diagnostics": {
+                        "engine": "python-spatial-pipeline",
+                        "query_type": query_type,
+                        "requested_regions": len(target_region_ids),
+                        "valid_regions": valid_regions,
+                        "comparison_ready": comparison is not None,
+                    },
+                },
+            }
+            return
 
         yield {
             "type": "STAGE",
@@ -423,15 +533,7 @@ class SpatialPipeline:
                         "spatial_clusters": {"hotspots": []},
                         "vernacular_regions": [],
                         "fuzzy_regions": [],
-                        "graph_reasoning": graph_summary or {
-                            "node_count": 0,
-                            "edge_count": 0,
-                            "component_count": 0,
-                            "components": [],
-                            "top_hubs": [],
-                            "avg_degree": 0.0,
-                            "distance_threshold_m": 280.0,
-                        },
+                        "graph_reasoning": graph_summary or _empty_graph_summary(),
                         "stats": {
                             "total_candidates": 0,
                             "cluster_count": 0,
@@ -619,15 +721,7 @@ class SpatialPipeline:
             "vernacular_regions": vernacular_regions[:10],
             "fuzzy_regions": fuzzy_regions[:10],
             "fuzzy_summary": fuzzy_summary,
-            "graph_reasoning": graph_summary or {
-                "node_count": 0,
-                "edge_count": 0,
-                "component_count": 0,
-                "components": [],
-                "top_hubs": [],
-                "avg_degree": 0.0,
-                "distance_threshold_m": 280.0,
-            },
+            "graph_reasoning": graph_summary or _empty_graph_summary(),
             "stats": {
                 "total_candidates": len(pois),
                 "cluster_count": len(vernacular_regions),

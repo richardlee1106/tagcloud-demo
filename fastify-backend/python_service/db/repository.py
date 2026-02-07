@@ -186,3 +186,54 @@ class POIRepository:
                 rows = cursor.fetchall()
 
         return [dict(row) for row in rows]
+
+
+    def fetch_pois_by_wkt(
+        self,
+        *,
+        boundary_wkt: str,
+        categories: List[str] | None = None,
+        limit: int = 12000,
+    ) -> List[Dict[str, Any]]:
+        """Query POIs inside a boundary WKT for region comparison."""
+        if not isinstance(boundary_wkt, str) or not boundary_wkt.strip():
+            return []
+
+        where_parts: List[str] = ["ST_Within(p.geom, ST_GeomFromText(%s, 4326))"]
+        params: List[Any] = [boundary_wkt.strip()]
+
+        normalized_categories = [c.strip() for c in (categories or []) if isinstance(c, str) and c.strip()]
+        if normalized_categories:
+            cat_parts = []
+            for cat in normalized_categories:
+                cat_parts.append(
+                    "(p.category_big ILIKE %s OR p.category_mid ILIKE %s OR p.category_small ILIKE %s OR p.type ILIKE %s)"
+                )
+                wildcard = f"%{cat}%"
+                params.extend([wildcard, wildcard, wildcard, wildcard])
+            where_parts.append("(" + " OR ".join(cat_parts) + ")")
+
+        sql = """
+            SELECT
+                p.id,
+                p.name,
+                p.address,
+                p.type,
+                p.category_big,
+                p.category_mid,
+                p.category_small,
+                NULL::double precision AS rating,
+                ST_X(p.geom) AS lon,
+                ST_Y(p.geom) AS lat
+            FROM pois p
+            WHERE
+        """ + " AND ".join(where_parts) + " ORDER BY p.id ASC LIMIT %s"
+
+        params.append(int(limit))
+
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute(sql, params)
+                rows = cursor.fetchall()
+
+        return [dict(row) for row in rows]

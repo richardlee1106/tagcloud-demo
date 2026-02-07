@@ -54,7 +54,7 @@ def normalize_direction(raw_direction: Any) -> str | None:
             return canonical
 
         for alias in aliases:
-            # ?????????????????? "restaurant" ??? east?
+            # Skip 1-letter aliases here; they are matched by exact short_map only.
             if len(alias) == 1:
                 continue
             if text == alias or alias in text:
