@@ -8,7 +8,7 @@ from collections import Counter, defaultdict
 from dataclasses import asdict
 from typing import Any, Dict, Iterable, Iterator, List, Tuple
 
-from shapely.geometry import MultiPoint, mapping
+from shapely.geometry import MultiPoint, Point, Polygon, mapping
 
 from algorithms.alpha_shape import build_alpha_shape
 from algorithms.hdbscan_cluster import cluster_points
@@ -88,6 +88,215 @@ def _extract_area_km2(spatial_context: Dict[str, Any]) -> float:
     return 0.0
 
 
+def _to_float(value: Any) -> float | None:
+    """Safe float conversion helper."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalize_payload_poi(raw: Any) -> Dict[str, Any] | None:
+    """Normalize payload POI into repository-compatible shape."""
+    if not isinstance(raw, dict):
+        return None
+
+    props = raw.get("properties") if isinstance(raw.get("properties"), dict) else raw
+    geom = raw.get("geometry") if isinstance(raw.get("geometry"), dict) else {}
+
+    lon = (
+        _to_float(raw.get("lon"))
+        or _to_float(raw.get("lng"))
+        or _to_float(raw.get("longitude"))
+        or _to_float(props.get("lon"))
+        or _to_float(props.get("lng"))
+        or _to_float(props.get("longitude"))
+    )
+    lat = (
+        _to_float(raw.get("lat"))
+        or _to_float(raw.get("latitude"))
+        or _to_float(props.get("lat"))
+        or _to_float(props.get("latitude"))
+    )
+
+    if (lon is None or lat is None) and isinstance(geom.get("coordinates"), list) and len(geom["coordinates"]) >= 2:
+        lon = lon if lon is not None else _to_float(geom["coordinates"][0])
+        lat = lat if lat is not None else _to_float(geom["coordinates"][1])
+
+    if lon is None or lat is None:
+        return None
+
+    return {
+        "id": props.get("id", raw.get("id")),
+        "name": props.get("name") or "",
+        "address": props.get("address") or "",
+        "type": props.get("type") or "",
+        "category_big": props.get("category_big") or props.get("categoryBig") or "",
+        "category_mid": props.get("category_mid") or props.get("categoryMid") or "",
+        "category_small": props.get("category_small") or props.get("categorySmall") or "",
+        "rating": props.get("rating"),
+        "lon": lon,
+        "lat": lat,
+    }
+
+
+def _normalize_payload_candidates(raw_candidates: Any) -> List[Dict[str, Any]]:
+    """Parse gRPC candidates_json and discard invalid points."""
+    if not isinstance(raw_candidates, list):
+        return []
+
+    normalized: List[Dict[str, Any]] = []
+    for item in raw_candidates:
+        poi = _normalize_payload_poi(item)
+        if poi is not None:
+            normalized.append(poi)
+    return normalized
+
+
+def _contains_text(value: Any, keyword: str) -> bool:
+    return keyword in str(value or "").lower()
+
+
+def _matches_categories(poi: Dict[str, Any], categories: List[str]) -> bool:
+    if not categories:
+        return True
+
+    fields = [
+        poi.get("category_big"),
+        poi.get("category_mid"),
+        poi.get("category_small"),
+        poi.get("type"),
+    ]
+
+    for category in categories:
+        key = str(category).strip().lower()
+        if not key:
+            continue
+        if any(_contains_text(field, key) for field in fields):
+            return True
+    return False
+
+
+def _matches_terms(poi: Dict[str, Any], terms: List[str]) -> bool:
+    if not terms:
+        return True
+
+    fields = [
+        poi.get("name"),
+        poi.get("address"),
+        poi.get("category_big"),
+        poi.get("category_mid"),
+        poi.get("category_small"),
+        poi.get("type"),
+    ]
+
+    for term in terms:
+        key = str(term).strip().lower()
+        if not key:
+            continue
+        if any(_contains_text(field, key) for field in fields):
+            return True
+    return False
+
+
+def _build_spatial_checker(spatial_context: Dict[str, Any]):
+    """Build a callable spatial filter from spatial_context."""
+    boundary = spatial_context.get("boundary")
+    if isinstance(boundary, list) and len(boundary) >= 3:
+        ring: List[Tuple[float, float]] = []
+        for raw in boundary:
+            if isinstance(raw, dict):
+                lon = _to_float(raw.get("lon", raw.get("lng", raw.get("longitude"))))
+                lat = _to_float(raw.get("lat", raw.get("latitude")))
+            elif isinstance(raw, (list, tuple)) and len(raw) >= 2:
+                lon = _to_float(raw[0])
+                lat = _to_float(raw[1])
+            else:
+                lon = None
+                lat = None
+            if lon is not None and lat is not None:
+                ring.append((lon, lat))
+
+        if len(ring) >= 3:
+            if ring[0] != ring[-1]:
+                ring.append(ring[0])
+            polygon = Polygon(ring)
+            if not polygon.is_valid:
+                polygon = polygon.buffer(0)
+
+            if polygon.is_valid:
+                return lambda lon, lat: polygon.covers(Point(lon, lat))
+
+    viewport = spatial_context.get("viewport")
+    if isinstance(viewport, list) and len(viewport) >= 4:
+        try:
+            min_lon, min_lat, max_lon, max_lat = map(float, viewport[:4])
+        except (TypeError, ValueError):
+            return lambda *_: True
+
+        return lambda lon, lat: min_lon <= lon <= max_lon and min_lat <= lat <= max_lat
+
+    center = spatial_context.get("center")
+    radius_m = _to_float(spatial_context.get("radius"))
+    if isinstance(center, dict) and radius_m and radius_m > 0:
+        center_lon = _to_float(center.get("lon", center.get("lng", center.get("longitude"))))
+        center_lat = _to_float(center.get("lat", center.get("latitude")))
+        if center_lon is not None and center_lat is not None:
+            radius_km = radius_m / 1000.0
+
+            def _within_circle(lon: float, lat: float) -> bool:
+                distance = _haversine_km(center_lat, center_lon, lat, lon)
+                return distance <= radius_km
+
+            return _within_circle
+
+    return lambda *_: True
+
+
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Compute haversine distance in kilometers."""
+    r = 6371.0
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return r * c
+
+
+def _filter_payload_candidates(
+    candidates: List[Dict[str, Any]],
+    *,
+    spatial_context: Dict[str, Any],
+    categories: List[str],
+    terms: List[str],
+    limit: int = 8000,
+) -> List[Dict[str, Any]]:
+    """Apply secondary filtering on payload candidates in Python."""
+    checker = _build_spatial_checker(spatial_context)
+    filtered: List[Dict[str, Any]] = []
+
+    for poi in candidates:
+        lon = _to_float(poi.get("lon"))
+        lat = _to_float(poi.get("lat"))
+        if lon is None or lat is None:
+            continue
+
+        if not checker(lon, lat):
+            continue
+
+        if not _matches_categories(poi, categories):
+            continue
+
+        if not _matches_terms(poi, terms):
+            continue
+
+        filtered.append(poi)
+        if len(filtered) >= limit:
+            break
+
+    return filtered
+
+
 class SpatialPipeline:
     """核心流水线：查询候选 -> 聚类 -> 边界 -> membership -> 输出事件流。"""
 
@@ -96,13 +305,27 @@ class SpatialPipeline:
 
     def run(self, request: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
         """执行一次空间任务并持续产出阶段事件。"""
-        query_type = request.get("query_type") or "poi_search"
+        query_type = str(request.get("query_type") or "poi_search")
         spatial_context = _safe_json_loads(request.get("spatial_context"), {})
-        categories = request.get("categories") or []
+        categories = [str(cat).strip() for cat in (request.get("categories") or []) if str(cat).strip()]
 
         hints = _safe_json_loads(request.get("hints"), {})
         semantic_query = hints.get("semantic_query") or ""
-        terms = [term for term in semantic_query.split() if term.strip()]
+        terms = [term.strip() for term in semantic_query.split() if term.strip()]
+
+        hints_options = hints.get("options") if isinstance(hints.get("options"), dict) else {}
+        source_policy = (
+            hints_options.get("sourcePolicy")
+            or hints_options.get("source_policy")
+            or {}
+        )
+
+        if not categories and isinstance(source_policy, dict) and source_policy.get("has_category_filter"):
+            selected = source_policy.get("selected_categories") or hints_options.get("selectedCategories") or []
+            categories = [str(cat).strip() for cat in selected if str(cat).strip()]
+
+        migration_hints = hints.get("migration") if isinstance(hints.get("migration"), dict) else {}
+        py_data_source = str(migration_hints.get("py_data_source") or "python").lower()
 
         yield {
             "type": "STAGE",
@@ -112,12 +335,26 @@ class SpatialPipeline:
             },
         }
 
-        pois = self.repository.fetch_pois(
-            spatial_context=spatial_context,
-            categories=categories,
-            terms=terms,
-            limit=8000,
-        )
+        raw_candidates = _safe_json_loads(request.get("candidates_json"), [])
+        payload_candidates = _normalize_payload_candidates(raw_candidates)
+
+        candidate_source = "db"
+        if payload_candidates and py_data_source in {"hybrid", "node"}:
+            pois = _filter_payload_candidates(
+                payload_candidates,
+                spatial_context=spatial_context,
+                categories=categories,
+                terms=terms,
+                limit=8000,
+            )
+            candidate_source = "payload"
+        else:
+            pois = self.repository.fetch_pois(
+                spatial_context=spatial_context,
+                categories=categories,
+                terms=terms,
+                limit=8000,
+            )
 
         yield {
             "type": "PROGRESS",
@@ -125,6 +362,7 @@ class SpatialPipeline:
                 "stage": "fetch_candidates",
                 "progress": 0.25,
                 "poi_count": len(pois),
+                "candidate_source": candidate_source,
             },
         }
 
@@ -145,6 +383,7 @@ class SpatialPipeline:
                             "total_candidates": 0,
                             "cluster_count": 0,
                             "h3_resolution": _dynamic_h3_resolution(_extract_area_km2(spatial_context)),
+                            "candidate_source": candidate_source,
                         },
                     },
                 },
@@ -289,6 +528,7 @@ class SpatialPipeline:
                 "cluster_count": len(vernacular_regions),
                 "h3_resolution": h3_resolution,
                 "query_type": query_type,
+                "candidate_source": candidate_source,
             },
         }
 
@@ -301,6 +541,8 @@ class SpatialPipeline:
                     "engine": "python-spatial-pipeline",
                     "query_type": query_type,
                     "input_area_km2": round(area_km2, 3),
+                    "candidate_source": candidate_source,
+                    "source_policy": source_policy if isinstance(source_policy, dict) else {},
                 },
             },
         }

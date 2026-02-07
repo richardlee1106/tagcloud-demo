@@ -472,7 +472,9 @@ function buildGrpcRequest({ requestId, queryPlan, spatialContext, options, migra
       options: {
         enableFuzzyRegion: options?.enableFuzzyRegion,
         enableVernacularRegion: options?.enableVernacularRegion,
-        needBoundaryRefine: options?.needBoundaryRefine
+        needBoundaryRefine: options?.needBoundaryRefine,
+        sourcePolicy: options?.sourcePolicy,
+        selectedCategories: options?.selectedCategories
       },
       migration: migrationDecision || null
     }),
