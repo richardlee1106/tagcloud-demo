@@ -131,7 +131,78 @@ function getMaxBinsForResolution(resolution) {
  * - 任何异常都不中断请求，失败即回退 Node。
  */
 // 执行器直连场景优先走 Python 主路径。
-const PYTHON_EXECUTOR_QUERY_TYPES = new Set(['poi_search', 'area_analysis'])
+// ??????? query_type ? executor ???????? Python?
+const PYTHON_EXECUTOR_QUERY_TYPES = new Set(['poi_search', 'area_analysis', 'graph_reasoning', 'region_comparison'])
+// ? migrationPolicy ????????????core/advanced?????
+const PYTHON_EXECUTOR_ADVANCED_TYPES = new Set(['area_analysis', 'graph_reasoning', 'region_comparison', 'fuzzy_regions', 'vernacular_region'])
+
+// ????????? executor ? JobRunner ??????
+function resolveExecutorExecutionProfile(queryType = 'poi_search') {
+  return PYTHON_EXECUTOR_ADVANCED_TYPES.has(queryType) ? 'advanced' : 'core'
+}
+
+// ?????????? id/regionId/name ?????
+function normalizeExecutorRegions(rawRegions = []) {
+  if (!Array.isArray(rawRegions)) return []
+
+  return rawRegions
+    .filter((region) => region && typeof region === 'object')
+    .map((region) => ({
+      ...region,
+      id: region.id ?? region.regionId ?? region.name ?? null
+    }))
+    .filter((region) => region.id !== null && region.id !== undefined && String(region.id).trim())
+}
+
+// region_comparison ?? target_regions ?????????? id?
+function resolveTargetRegionIds(queryPlan = {}, regions = []) {
+  if (Array.isArray(queryPlan?.target_regions) && queryPlan.target_regions.length > 0) {
+    return queryPlan.target_regions
+  }
+
+  return regions
+    .map((region) => region.id)
+    .filter((id) => id !== null && id !== undefined && String(id).trim())
+}
+
+// Python ???? graph_reasoning ???????? writer ???? graph_analysis?
+function buildGraphAnalysisFromSummary(graphSummary = null) {
+  if (!graphSummary || typeof graphSummary !== 'object') return null
+
+  const edgeCount = Number(graphSummary.edge_count || 0)
+  const avgDegree = Number(graphSummary.avg_degree || 0)
+  const componentCount = Number(graphSummary.component_count || 0)
+  const topHubs = Array.isArray(graphSummary.top_hubs) ? graphSummary.top_hubs : []
+
+  const hubs = topHubs.map((hub, index) => ({
+    representativePOI: hub?.name || `Hub-${index + 1}`,
+    mainCategory: hub?.category || 'mixed',
+    pageRank: Number.isFinite(edgeCount) && edgeCount > 0
+      ? Math.min(1, Math.max(0, Number(hub?.degree || 0) / edgeCount))
+      : 0,
+    degree: Number(hub?.degree || 0)
+  }))
+
+  const insights = []
+  if (componentCount > 1) {
+    insights.push({ text: `Spatial graph has ${componentCount} connected components.` })
+  }
+  if (avgDegree > 0) {
+    insights.push({ text: `Average degree is ${avgDegree.toFixed(2)}.` })
+  }
+
+  return {
+    global: {
+      totalGrids: componentCount,
+      totalConnections: edgeCount,
+      avgConnectivity: Number(avgDegree.toFixed(2))
+    },
+    hubs,
+    bridges: [],
+    communities: [],
+    insights
+  }
+}
 
 function normalizeExecutorCategories(rawCategories = []) {
   // 与 JobRunner / spatial-fetch 共享同一类别归一化规则。
@@ -181,7 +252,15 @@ function normalizePythonExecutorResult(rawPayload = {}) {
     ? { ...rawResult.stats }
     : {}
 
+  const graphReasoning = rawResult.graph_reasoning && typeof rawResult.graph_reasoning === 'object'
+    ? rawResult.graph_reasoning
+    : null
+  const graphAnalysis = rawResult.graph_analysis && typeof rawResult.graph_analysis === 'object'
+    ? rawResult.graph_analysis
+    : buildGraphAnalysisFromSummary(graphReasoning)
+
   return {
+    ...rawResult,
     mode: rawResult.mode || 'python-spatial',
     anchor: rawResult.anchor ?? null,
     pois: Array.isArray(rawResult.pois) ? rawResult.pois : [],
@@ -189,13 +268,19 @@ function normalizePythonExecutorResult(rawPayload = {}) {
     area_profile: rawResult.area_profile ?? null,
     landmarks: Array.isArray(rawResult.landmarks) ? rawResult.landmarks : [],
     spatial_clusters: rawResult.spatial_clusters || { hotspots: [] },
+    target_regions: Array.isArray(rawResult.target_regions) ? rawResult.target_regions : [],
+    region_analyses: Array.isArray(rawResult.region_analyses) ? rawResult.region_analyses : [],
+    comparison: rawResult.comparison ?? null,
+    error: rawResult.error ?? null,
     vernacular_regions: Array.isArray(rawResult.vernacular_regions) ? rawResult.vernacular_regions : [],
     fuzzy_regions: Array.isArray(rawResult.fuzzy_regions) ? rawResult.fuzzy_regions : [],
     fuzzy_summary: rawResult.fuzzy_summary || { core: 0, transition: 0, periphery: 0 },
-    graph_reasoning: rawResult.graph_reasoning || null,
+    graph_reasoning: graphReasoning,
+    graph_analysis: graphAnalysis,
     stats: safeStats
   }
 }
+
 
 async function tryExecuteQueryViaPython(queryPlan, frontendPOIs, options = {}) {
   if (!shouldUsePythonExecutor(queryPlan, options)) {
@@ -215,14 +300,27 @@ async function tryExecuteQueryViaPython(queryPlan, frontendPOIs, options = {}) {
     ? Math.max(1, Math.min(Math.floor(requestedLimit), maxFetchLimit))
     : defaultLimit
 
-  const regions = Array.isArray(options?.regions)
-    ? options.regions
-    : (Array.isArray(spatialContext?.regions) ? spatialContext.regions : [])
+  const regions = normalizeExecutorRegions(
+    Array.isArray(options?.regions)
+      ? options.regions
+      : (Array.isArray(spatialContext?.regions) ? spatialContext.regions : [])
+  )
 
   const sourcePolicy = options?.sourcePolicy || {}
   const pyDataSource = String(options?.pyDataSource || process.env.SPATIAL_PY_DATA_SOURCE || 'python').toLowerCase()
-  const executionProfile = queryType === 'area_analysis' ? 'advanced' : 'core'
+  const executionProfile = resolveExecutorExecutionProfile(queryType)
   const requestId = options.requestId || `executor-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
+  // Python ????? query_plan ????????????????????
+  const pythonQueryPlan = { ...(queryPlan || {}) }
+  // graph_reasoning ?????????????? pipeline ????????
+  if (queryType === 'graph_reasoning') {
+    pythonQueryPlan.need_graph_reasoning = true
+  }
+  // region_comparison ? planner ????? target_regions ??????
+  if (queryType === 'region_comparison') {
+    pythonQueryPlan.target_regions = resolveTargetRegionIds(pythonQueryPlan, regions)
+  }
 
   try {
     let finalPayload = null
@@ -234,8 +332,8 @@ async function tryExecuteQueryViaPython(queryPlan, frontendPOIs, options = {}) {
         spatial_context: JSON.stringify(spatialContext || {}),
         categories,
         hints: JSON.stringify({
-          query_plan: queryPlan,
-          semantic_query: queryPlan?.semantic_query || '',
+          query_plan: pythonQueryPlan,
+          semantic_query: pythonQueryPlan?.semantic_query || queryPlan?.semantic_query || '',
           options: {
             sourcePolicy,
             selectedCategories: options?.selectedCategories || [],
@@ -269,10 +367,17 @@ async function tryExecuteQueryViaPython(queryPlan, frontendPOIs, options = {}) {
       throw new Error('Python executor returned empty FINAL payload')
     }
 
+    const finalDiagnostics = finalPayload?.diagnostics && typeof finalPayload.diagnostics === 'object'
+      ? finalPayload.diagnostics
+      : null
+
     normalizedResult.stats = {
       ...normalizedResult.stats,
       executor_engine: 'python_grpc',
-      fetch_limit: safeLimit
+      fetch_limit: safeLimit,
+      execution_profile: executionProfile,
+      source_policy: sourcePolicy,
+      python_diagnostics: finalDiagnostics
     }
 
     console.log(`[Executor] Python 主路径命中: ${queryType}, POI=${normalizedResult.pois.length}`)

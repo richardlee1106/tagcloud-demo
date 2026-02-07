@@ -413,31 +413,108 @@ function buildGrpcRequest({ requestId, queryPlan, spatialContext, options, migra
 /**
  * 将不同形式的 executor 结果归一化。
  */
+function buildGraphAnalysisFromReasoning(graphReasoning = null) {
+  if (!graphReasoning || typeof graphReasoning !== 'object') return null
+
+  const edgeCount = Number(graphReasoning.edge_count || 0)
+  const avgDegree = Number(graphReasoning.avg_degree || 0)
+  const componentCount = Number(graphReasoning.component_count || 0)
+  const topHubs = Array.isArray(graphReasoning.top_hubs) ? graphReasoning.top_hubs : []
+
+  const hubs = topHubs.map((hub, index) => ({
+    representativePOI: hub?.name || `Hub-${index + 1}`,
+    mainCategory: hub?.category || 'mixed',
+    pageRank: Number.isFinite(edgeCount) && edgeCount > 0
+      ? Math.min(1, Math.max(0, Number(hub?.degree || 0) / edgeCount))
+      : 0,
+    degree: Number(hub?.degree || 0)
+  }))
+
+  return {
+    global: {
+      totalGrids: componentCount,
+      totalConnections: edgeCount,
+      avgConnectivity: Number(avgDegree.toFixed(2))
+    },
+    hubs,
+    bridges: [],
+    communities: [],
+    insights: []
+  }
+}
+
+function normalizeExecutorResults(rawResults, diagnostics = null) {
+  const results = rawResults && typeof rawResults === 'object'
+    ? { ...rawResults }
+    : {}
+
+  const stats = results.stats && typeof results.stats === 'object'
+    ? { ...results.stats }
+    : {}
+
+  const graphReasoning = results.graph_reasoning && typeof results.graph_reasoning === 'object'
+    ? results.graph_reasoning
+    : null
+
+  if (!results.graph_analysis && graphReasoning) {
+    results.graph_analysis = buildGraphAnalysisFromReasoning(graphReasoning)
+  }
+
+  if (!stats.source_policy && diagnostics?.source_policy) {
+    stats.source_policy = diagnostics.source_policy
+  }
+
+  if (!stats.executor_engine && typeof diagnostics?.engine === 'string' && diagnostics.engine.includes('python')) {
+    stats.executor_engine = 'python_grpc'
+  }
+
+  return {
+    ...results,
+    mode: results.mode || 'unknown',
+    pois: Array.isArray(results.pois) ? results.pois : [],
+    boundary: results.boundary ?? null,
+    spatial_clusters: results.spatial_clusters || { hotspots: [] },
+    target_regions: Array.isArray(results.target_regions) ? results.target_regions : [],
+    region_analyses: Array.isArray(results.region_analyses) ? results.region_analyses : [],
+    comparison: results.comparison ?? null,
+    vernacular_regions: Array.isArray(results.vernacular_regions) ? results.vernacular_regions : [],
+    fuzzy_regions: Array.isArray(results.fuzzy_regions) ? results.fuzzy_regions : [],
+    graph_reasoning: graphReasoning,
+    stats
+  }
+}
+
 function normalizeExecutorEnvelope(rawPayload) {
   if (!rawPayload || typeof rawPayload !== 'object') {
     return {
       success: false,
-      results: {
+      results: normalizeExecutorResults({
         mode: 'empty',
         pois: [],
         boundary: null,
         spatial_clusters: { hotspots: [] },
         vernacular_regions: [],
         fuzzy_regions: []
-      },
+      }),
       error: 'Empty compute payload'
     }
   }
 
-  if (Object.prototype.hasOwnProperty.call(rawPayload, 'success') && rawPayload.results) {
-    return rawPayload
-  }
+  const envelope = (Object.prototype.hasOwnProperty.call(rawPayload, 'success') && rawPayload.results)
+    ? { ...rawPayload }
+    : {
+        success: true,
+        results: rawPayload.results || rawPayload
+      }
 
-  return {
-    success: true,
-    results: rawPayload.results || rawPayload
-  }
+  const diagnostics = envelope.diagnostics && typeof envelope.diagnostics === 'object'
+    ? envelope.diagnostics
+    : null
+
+  envelope.results = normalizeExecutorResults(envelope.results, diagnostics)
+  return envelope
 }
+
 
 function resolveComputeMode(executorEnvelope, migrationDecision) {
   const computePath = executorEnvelope?._compute_path
