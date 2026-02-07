@@ -10,6 +10,7 @@ import milvus from '../../services/vectordb.js';
 import { resolveAnchor } from '../../services/geocoder.js';
 import { createRAGSession } from '../../services/ragLogger.js';
 import { computeSpatialStream, isGrpcComputeEnabled } from '../../services/grpcClient.js';
+import { resolveSourcePolicy } from '../../services/sourcePolicy.js';
 
 /**
  * LLM 意图解析 Prompt
@@ -555,7 +556,7 @@ ${context}
       return reply.code(400).send({ error: 'regions must be an array when provided' });
     }
 
-    // ???????????????????????? SQL / gRPC ???
+    // 统一清洗类别输入，确保 SQL 与 gRPC 路径过滤条件完全一致。
     const normalizedCategories = categories
       .filter((cat) => typeof cat === 'string' && cat.trim())
       .map((cat) => cat.trim());
@@ -718,6 +719,34 @@ ${context}
         ? Math.max(1, Math.min(normalizedLimit, maxLimit))
         : Math.min(100, maxLimit);
 
+      const hasCustomArea =
+        (Array.isArray(regions) && regions.length > 0) ||
+        (typeof geometryInput === 'string' && geometryInput.trim().length > 0);
+
+      // 复用 JobRunner / Executor 的 source-policy 内核，避免三条链路规则漂移。
+      const fetchSourcePolicy = resolveSourcePolicy(
+        {
+          query_type: 'poi_fetch',
+          categories: normalizedCategories
+        },
+        {
+          mode: hasCustomArea ? 'Polygon' : 'Viewport',
+          viewport: bounds,
+          regions: hasCustomArea
+            ? queryGeometries.map((wkt, index) => ({ id: index + 1, wkt }))
+            : []
+        },
+        {
+          selectedCategories: normalizedCategories,
+          regions,
+          sourcePolicy: {
+            enforceUiConstraints: true,
+            hasCategoryFilter: normalizedCategories.length > 0,
+            hasCustomArea
+          }
+        }
+      ).policy;
+
       const toFeature = (poi) => {
         const lon = Number.parseFloat(poi?.lon);
         const lat = Number.parseFloat(poi?.lat);
@@ -767,11 +796,8 @@ ${context}
                 options: {
                   limit: safeLimit,
                   maxFetchLimit: maxLimit,
-                  sourcePolicy: {
-                    has_category_filter: normalizedCategories.length > 0,
-                    has_custom_area: queryGeometries.length > 0,
-                    selected_categories: normalizedCategories
-                  }
+                  sourcePolicy: fetchSourcePolicy,
+                  selectedCategories: fetchSourcePolicy.selected_categories,
                 }
               }),
               mode: 'sync',
@@ -802,7 +828,8 @@ ${context}
               engine: 'python_grpc',
               fallback: false,
               request_id: requestId,
-              query_geometries: queryGeometries.length
+              query_geometries: queryGeometries.length,
+              source_policy: fetchSourcePolicy
             }
           };
         } catch (pythonError) {
@@ -828,7 +855,8 @@ ${context}
         diagnostics: {
           engine: 'node_sql_fallback',
           fallback: true,
-          query_geometries: queryGeometries.length
+          query_geometries: queryGeometries.length,
+          source_policy: fetchSourcePolicy
         }
       };
     } catch (error) {

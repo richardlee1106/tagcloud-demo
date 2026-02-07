@@ -26,6 +26,7 @@ import clustering from '../../services/clustering.js'
 // Phase 5 优化：模糊区域生成 (Fuzzy Region)
 import fuzzyRegion from '../../services/fuzzyRegion.js'
 import { computeSpatialStream, isGrpcComputeEnabled } from '../../services/grpcClient.js'
+import { normalizeSelectedCategories, resolveSourcePolicy } from '../../services/sourcePolicy.js'
 
 /**
  * 执行器配置
@@ -133,13 +134,8 @@ function getMaxBinsForResolution(resolution) {
 const PYTHON_EXECUTOR_QUERY_TYPES = new Set(['poi_search', 'area_analysis'])
 
 function normalizeExecutorCategories(rawCategories = []) {
-  if (!Array.isArray(rawCategories)) return []
-
-  return [...new Set(
-    rawCategories
-      .filter((item) => typeof item === 'string' && item.trim())
-      .map((item) => item.trim())
-  )]
+  // 与 JobRunner / spatial-fetch 共享同一类别归一化规则。
+  return normalizeSelectedCategories(rawCategories)
 }
 
 function shouldUsePythonExecutor(queryPlan = {}, options = {}) {
@@ -301,6 +297,19 @@ export async function executeQuery(queryPlan, frontendPOIs = [], options = {}) {
   // Phase 2 优化：查询缓存
   // 生成查询指纹并检查缓存
   const spatialContext = options.spatialContext || options.context || {}
+
+  // 先统一执行 source policy，再进入缓存与分支选择，避免规则漂移。
+  const enforcedPolicy = resolveSourcePolicy(queryPlan, spatialContext, options)
+  queryPlan = enforcedPolicy.queryPlan
+  options = {
+    ...options,
+    selectedCategories: enforcedPolicy.policy.selected_categories,
+    sourcePolicy: {
+      ...(options.sourcePolicy || {}),
+      ...enforcedPolicy.policy
+    }
+  }
+
   const cacheFingerprint = queryCache.generateQueryFingerprint(queryPlan, spatialContext)
   
   // 检查是否应该使用缓存（某些场景不适合缓存）
@@ -351,6 +360,7 @@ export async function executeQuery(queryPlan, frontendPOIs = [], options = {}) {
     // 添加执行统计
     result.stats.execution_time_ms = Date.now() - startTime
     result.stats.cache_hit = false
+    result.stats.source_policy = options.sourcePolicy || null
     
     // Phase 3 优化：POI 智能过滤（条件性黑名单）
     if (result.pois?.length > 0) {
@@ -485,23 +495,7 @@ async function execBasicMode(plan, frontendPOIs, options = {}) {
   }
 
   // 0. 解析空间硬边界 (从前端 spatialContext 中提取)
-  const normalizeUiCategories = (rawCategories = []) => {
-    if (!Array.isArray(rawCategories) || rawCategories.length === 0) return []
-
-    const flattened = []
-    for (const item of rawCategories) {
-      if (Array.isArray(item) && item.length > 0) {
-        const leaf = item[item.length - 1]
-        if (typeof leaf === 'string' && leaf.trim()) flattened.push(leaf.trim())
-      } else if (typeof item === 'string' && item.trim()) {
-        flattened.push(item.trim())
-      }
-    }
-
-    return [...new Set(flattened)]
-  }
-
-  const uiSelectedCategories = normalizeUiCategories(options?.selectedCategories)
+  const uiSelectedCategories = normalizeSelectedCategories(options?.selectedCategories)
   if (uiSelectedCategories.length > 0) {
     // UI selector takes top priority for hard category filtering.
     plan.categories = uiSelectedCategories

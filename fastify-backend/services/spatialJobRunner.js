@@ -9,6 +9,7 @@ import { executeQuery } from '../routes/ai/executor.js'
 import { generateAnswer, buildQuickReply } from '../routes/ai/writer.js'
 import { computeSpatialStream, isGrpcComputeEnabled } from './grpcClient.js'
 import { resolveSpatialMigrationDecision } from './migrationPolicy.js'
+import { resolveSourcePolicy } from './sourcePolicy.js'
 
 // MVP 固定分流阈值，后续可根据压测结果调参。
 const ASYNC_RULES = {
@@ -185,91 +186,6 @@ function hasSpatialContext(spatialContext = {}) {
 /**
  * 获取视口中心点，供 Planner 作为辅助上下文。
  */
-
-function flattenSelectedCategories(selectedCategories = []) {
-  if (!Array.isArray(selectedCategories) || selectedCategories.length === 0) {
-    return []
-  }
-
-  const normalized = []
-  for (const item of selectedCategories) {
-    if (Array.isArray(item) && item.length > 0) {
-      const leaf = item[item.length - 1]
-      if (typeof leaf === 'string' && leaf.trim()) {
-        normalized.push(leaf.trim())
-      }
-      continue
-    }
-
-    if (typeof item === 'string' && item.trim()) {
-      normalized.push(item.trim())
-    }
-  }
-
-  return [...new Set(normalized)]
-}
-
-function hasCustomAreaSelection(spatialContext = {}, options = {}) {
-  const mode = String(spatialContext?.mode || '').toLowerCase()
-  const hasPolygon = Array.isArray(spatialContext?.boundary) && spatialContext.boundary.length >= 3
-  const hasCircle = Boolean(spatialContext?.center) && mode === 'circle'
-  const hasRegions = Array.isArray(options?.regions) && options.regions.length > 0
-  return hasPolygon || hasCircle || hasRegions
-}
-
-function enforceSourcePolicy(queryPlan = {}, spatialContext = {}, options = {}) {
-  const selectedCategories = flattenSelectedCategories(options.selectedCategories)
-  const sourcePolicy = options.sourcePolicy || {}
-  const enforceUiConstraints = sourcePolicy.enforceUiConstraints !== false
-  const hasCategoryFilter = sourcePolicy.hasCategoryFilter ?? selectedCategories.length > 0
-  const hasCustomArea = sourcePolicy.hasCustomArea ?? hasCustomAreaSelection(spatialContext, options)
-
-  if (!enforceUiConstraints) {
-    return {
-      queryPlan,
-      policy: {
-        enforce_ui_constraints: false,
-        selected_categories: selectedCategories,
-        has_category_filter: hasCategoryFilter,
-        has_custom_area: hasCustomArea,
-        category_source: 'planner_only'
-      }
-    }
-  }
-
-  const nextPlan = {
-    ...queryPlan,
-    categories: Array.isArray(queryPlan.categories) ? [...queryPlan.categories] : []
-  }
-
-  // UI category selector has highest priority for hard filtering.
-  if (hasCategoryFilter && selectedCategories.length > 0) {
-    nextPlan.categories = selectedCategories
-
-    if (!nextPlan.semantic_query || typeof nextPlan.semantic_query !== 'string') {
-      nextPlan.semantic_query = selectedCategories.join(' ')
-    }
-  } else {
-    // Strict source policy: without UI category selection, query all categories.
-    nextPlan.categories = []
-  }
-
-  const categorySource = hasCategoryFilter && selectedCategories.length > 0
-    ? 'ui_selector'
-    : 'all_categories'
-
-  return {
-    queryPlan: nextPlan,
-    policy: {
-      enforce_ui_constraints: true,
-      selected_categories: selectedCategories,
-      has_category_filter: hasCategoryFilter,
-      has_custom_area: hasCustomArea,
-      category_source: categorySource,
-      geometry_source: hasCustomArea ? 'custom_area' : 'viewport_fallback'
-    }
-  }
-}
 
 function getViewportCenter(spatialContext = {}) {
   if (Array.isArray(spatialContext.viewport) && spatialContext.viewport.length >= 4) {
@@ -800,7 +716,7 @@ export async function runNarrativeSpatialJob(payload, reporter = {}) {
     radius_m: 1200
   }
 
-  const enforced = enforceSourcePolicy(queryPlan, spatialContext, options)
+  const enforced = resolveSourcePolicy(queryPlan, spatialContext, options)
   queryPlan = enforced.queryPlan
 
   const effectiveOptions = {
