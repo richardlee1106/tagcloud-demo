@@ -34,7 +34,11 @@ def ensure_proto_generated() -> None:
     pb2_grpc_file = GENERATED_DIR / "spatial_compute_pb2_grpc.py"
 
     if pb2_file.exists() and pb2_grpc_file.exists():
-        return
+        # Regenerate when proto changed, so Node/Python keep contract in sync.
+        proto_mtime = PROTO_FILE.stat().st_mtime
+        generated_mtime = min(pb2_file.stat().st_mtime, pb2_grpc_file.stat().st_mtime)
+        if generated_mtime >= proto_mtime:
+            return
 
     cmd = [
         sys.executable,
@@ -79,6 +83,9 @@ class SpatialComputeService(spatial_compute_pb2_grpc.SpatialComputeServiceServic
             "categories": list(request.categories),
             "hints": request.hints,
             "mode": request.mode,
+            "candidates_json": request.candidates_json,
+            "execution_profile": request.execution_profile,
+            "dry_run": request.dry_run,
         }
 
         try:

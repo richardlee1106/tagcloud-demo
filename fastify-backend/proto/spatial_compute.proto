@@ -30,6 +30,15 @@ message ComputeRequest {
 
   // 执行模式：sync | async
   string mode = 6;
+
+  // Optional: prefetched candidates from Node (JSON string) for hybrid migration.
+  string candidates_json = 7;
+
+  // Execution profile: core | advanced | shadow.
+  string execution_profile = 8;
+
+  // Dry-run comparison mode. When true, this run is for parity check only.
+  bool dry_run = 9;
 }
 
 enum EventType {
