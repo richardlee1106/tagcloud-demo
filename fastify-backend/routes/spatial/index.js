@@ -538,15 +538,19 @@ ${context}
    * 根据类别列表获取 POI（源自 PostGIS）
    */
   fastify.post('/fetch', async (request, reply) => {
-    const { categories, limit = 100000, bounds } = request.body;
+    const { categories = [], limit = 100000, bounds, geometry: geometryInput } = request.body || {};
     
-    if (!categories || !Array.isArray(categories)) {
-      return reply.code(400).send({ error: '缺少 categories 数组' });
+    if (!Array.isArray(categories)) {
+      return reply.code(400).send({ error: 'categories must be an array' });
     }
 
     try {
       let geometry = null;
-      if (bounds) {
+
+      // 优先使用前端传入的 geometry（WKT），未传时回退到 bounds 生成矩形范围
+      if (typeof geometryInput === 'string' && geometryInput.trim()) {
+        geometry = geometryInput.trim();
+      } else if (bounds) {
         // bounds: [minLon, minLat, maxLon, maxLat]
         const [w, s, e, n] = bounds;
         geometry = `POLYGON((${w} ${s}, ${e} ${s}, ${e} ${n}, ${w} ${n}, ${w} ${s}))`;

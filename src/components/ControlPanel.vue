@@ -284,6 +284,12 @@
           style="display: none;"
         />
         
+        <el-tooltip content="Enter Narrative Mode" placement="bottom">
+          <button class="narrative-mode-btn" @click="emit('go-narrative')">
+            Narrative
+          </button>
+        </el-tooltip>
+
         <el-select
           v-if="!drawEnabled"
           v-model="selectedDrawMode"
@@ -379,7 +385,7 @@ import { ElNotification } from 'element-plus';
 import DataLoaderWorker from '../workers/dataLoader.worker.js?worker';
 import { API_BASE_URL } from '../config';
 
-const emit = defineEmits(['data-loaded', 'data-removed', 'run-algorithm', 'toggle-draw', 'debug-show', 'reset', 'search', 'clear-search', 'update:currentAlgorithm', 'save-result', 'loading-change', 'vector-polygon-uploaded', 'category-change', 'update:filterEnabled', 'update:heatmapEnabled', 'update:weightEnabled', 'update:showWeightValue', 'update:globalAnalysisEnabled']);
+const emit = defineEmits(['data-loaded', 'data-removed', 'run-algorithm', 'toggle-draw', 'debug-show', 'reset', 'search', 'clear-search', 'update:currentAlgorithm', 'save-result', 'loading-change', 'vector-polygon-uploaded', 'category-change', 'go-narrative', 'update:filterEnabled', 'update:heatmapEnabled', 'update:weightEnabled', 'update:showWeightValue', 'update:globalAnalysisEnabled']);
 // const selectedGroup = ref(''); // Replace with array path
 const selectedCategoryPath = ref([]); // 多选模式下是二维数组 [[A,B], [A,C]]
 const activeCategories = ref(new Set()); // 用于追踪已加载的类别 (最后一级名称)
@@ -501,6 +507,31 @@ const getBoundsFromPolygon = (geo) => {
   return [minX, minY, maxX, maxY];
 };
 
+// ????????/??????????? WKT????????????? bbox?
+const polygonToWKT = (geo) => {
+  if (!Array.isArray(geo)) return null;
+
+  const points = geo
+    .map((pt) => {
+      if (Array.isArray(pt) && pt.length >= 2) {
+        return [Number(pt[0]), Number(pt[1])];
+      }
+      return null;
+    })
+    .filter((pt) => Number.isFinite(pt?.[0]) && Number.isFinite(pt?.[1]));
+
+  if (points.length < 3) return null;
+
+  const first = points[0];
+  const last = points[points.length - 1];
+  if (first[0] !== last[0] || first[1] !== last[1]) {
+    points.push(first);
+  }
+
+  const coords = points.map(([lon, lat]) => `${lon} ${lat}`).join(', ');
+  return `POLYGON((${coords}))`;
+};
+
 // 辅助函数：初始化 Worker
 const initWorker = () => {
    if (dataWorker.value) return;
@@ -567,8 +598,34 @@ const getAllLeafPaths = (node, currentPath) => {
   return paths;
 };
 
+// 统一规范级联选择器返回值，兼容单选和多选两种结构。
+const normalizeCategoryPaths = (paths) => {
+  if (!Array.isArray(paths) || paths.length === 0) return [];
+
+  if (Array.isArray(paths[0])) {
+    return paths
+      .filter(path => Array.isArray(path) && path.length > 0)
+      .map(path => [...path]);
+  }
+
+  return [paths];
+};
+
+const setCategorySelection = (paths = []) => {
+  const normalized = normalizeCategoryPaths(paths);
+  selectedCategoryPath.value = normalized;
+
+  const nextCategories = new Set();
+  normalized.forEach((path) => {
+    const leaf = path[path.length - 1];
+    if (leaf) nextCategories.add(leaf);
+  });
+
+  activeCategories.value = nextCategories;
+};
+
 const handleCascaderChange = () => {
-  const currentPaths = selectedCategoryPath.value || [];
+  const currentPaths = normalizeCategoryPaths(selectedCategoryPath.value);
   
   // 提取当前选中的所有最后一级类别名称 (Set)
   const currentCategories = new Set();
@@ -576,7 +633,7 @@ const handleCascaderChange = () => {
   
   // 兼容单选模式
   // 多选模式下 currentPaths 是二维数组
-  const paths = Array.isArray(currentPaths[0]) ? currentPaths : (currentPaths.length ? [currentPaths] : []);
+  const paths = currentPaths;
   
   paths.forEach(path => {
     if (path.length > 0) {
@@ -604,8 +661,8 @@ const handleCascaderChange = () => {
       activeCategories.value.add(item.category);
     }
   }
-  // ??????????????????????? AI ???????????
-  emit('category-change', currentPaths); // ??????? (Header)
+  // 先同步到父组件，确保 AI 面板和主路由拿到最新分类约束。
+  emit('category-change', currentPaths); // 同步分类路径到父组件
 
   if (toAdd.length === 0) return;
 
@@ -616,24 +673,31 @@ const handleCascaderChange = () => {
   // 计算当前的查询边界 (BBox)
   // 优先级：上传/绘制的选区 > 当前地图视口 > 全球(null)
   let searchBounds = null;
+  let searchGeometry = null;
+
+  // 若已存在选区，优先发送 geometry WKT，避免仅用 bbox 造成范围放大。
   if (props.selectedPolygon) {
+    searchGeometry = polygonToWKT(props.selectedPolygon);
+    if (!searchGeometry) {
       searchBounds = getBoundsFromPolygon(props.selectedPolygon);
+    }
   } else if (props.mapBounds) {
-      // 关键修复：使用解构展开 Proxy 数组，确保 postMessage 可以克隆数据
-      searchBounds = [...props.mapBounds];
+    // 解构 Proxy 数组，确保 Worker postMessage 可序列化。
+    searchBounds = [...props.mapBounds];
   }
-  
-  // 3. 批量/循环请求新增数据
+
+  // 3. 为新增类别发起增量请求（附带当前空间约束）
   toAdd.forEach(item => {
     const fullName = item.path.join(' > ');
-    console.log(`Loading new category: ${item.category}, Bounds:`, searchBounds);
-    
+    console.log(`Loading new category: ${item.category}, bounds=`, searchBounds, 'geometry=', Boolean(searchGeometry));
+
     dataWorker.value.postMessage({
       category: item.category,
       name: fullName,
       limit: 500000,
       baseUrl: API_BASE_URL,
-      bounds: searchBounds // 传给 Worker -> Backend
+      bounds: searchBounds,
+      geometry: searchGeometry
     });
   });
 };
@@ -710,7 +774,22 @@ const run = () => {
 };
 
 const reset = () => {
-  // 触发reset事件，由父组件处理清空逻辑
+  // 初始化时需要同时清理分类筛选状态，避免残留约束。
+  const categoriesToRemove = Array.from(activeCategories.value);
+  categoriesToRemove.forEach((category) => {
+    emit('data-removed', category);
+  });
+
+  activeCategories.value = new Set();
+  selectedCategoryPath.value = [];
+  categoryDrawerVisible.value = false;
+
+  emit('category-change', []);
+
+  // 清空语义搜索状态，保持 UI 与数据源一致。
+  hasSearchResult.value = false;
+  searchKeyword.value = '';
+
   emit('reset');
   showMobileMenu.value = false;
 };
@@ -829,7 +908,7 @@ const handleVectorFileUpload = async (event) => {
   }
 };
 
-defineExpose({ setDrawEnabled, setSearchResult, setSearching });
+defineExpose({ setDrawEnabled, setSearchResult, setSearching, setCategorySelection });
 
 /* const debugShow = () => {
   if (!selectedGroup.value) {
@@ -957,6 +1036,30 @@ defineExpose({ setDrawEnabled, setSearchResult, setSearching });
   border-color: rgba(99, 102, 241, 0.6) !important;
   color: #a5b4fc;
   box-shadow: 0 0 15px rgba(99, 102, 241, 0.3);
+}
+
+.narrative-mode-btn {
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(99, 102, 241, 0.5);
+  background: rgba(99, 102, 241, 0.16);
+  color: #c7d2fe;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.narrative-mode-btn:hover {
+  transform: translateY(-1px);
+  background: rgba(99, 102, 241, 0.24);
+  box-shadow: 0 6px 16px rgba(99, 102, 241, 0.25);
+}
+
+.narrative-mode-btn:active {
+  transform: translateY(0);
 }
 
 .run-btn.premium-run-btn {

@@ -49,7 +49,7 @@
                       @search="handleSearch"
                       @clear-search="handleClearSearch"
                       @save-result="handleSaveResult"
-                      @category-change="selectedCategoryPath = $event"
+                      @category-change="handleCategoryChange"
                       @loading-change="isLoading = $event"
                       v-model:filterEnabled="filterEnabled"
                       v-model:heatmapEnabled="heatmapEnabled"
@@ -77,7 +77,8 @@
                       @search="handleSearch"
                       @clear-search="handleClearSearch"
                       @loading-change="isLoading = $event"
-                      @category-change="selectedCategoryPath = $event"
+                      @category-change="handleCategoryChange"
+                      @go-narrative="goToNarrative"
                       :on-run-algorithm="handleRunAlgorithm"
                       v-model:filterEnabled="filterEnabled"
                       v-model:heatmapEnabled="heatmapEnabled"
@@ -101,7 +102,7 @@
                     @clear-search="handleClearSearch"
                     @save-result="handleSaveResult"
                     @loading-change="isLoading = $event"
-                    @category-change="selectedCategoryPath = $event"
+                    @category-change="handleCategoryChange"
                     :on-run-algorithm="handleRunAlgorithm"
                     v-model:filterEnabled="filterEnabled"
                     v-model:heatmapEnabled="heatmapEnabled"
@@ -208,12 +209,6 @@
         </div>
       </section>
     </main>
-    
-    <!-- AI 助手浮动按钮（AI收起时显示） -->
-    <button class="narrative-entry-btn" @click="goToNarrative">
-      Narrative Mode
-    </button>
-
     <div v-if="!aiExpanded" class="ai-fab" @click="toggleAiPanel">
       <div class="ai-fab-icon">
         <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
@@ -235,6 +230,7 @@ import TagCloud from './components/TagCloud.vue';
 import MapContainer from './components/MapContainer.vue';
 import AiChat from './components/AiChat.vue';
 import { semanticSearch } from './utils/aiService';
+import { API_BASE_URL } from './config';
 import { useRegions } from './composables/useRegions';
 
 const router = useRouter();
@@ -352,6 +348,265 @@ function goToNarrative() {
   router.push('/narrative');
 }
 
+function normalizeCategoryPaths(paths) {
+  if (!Array.isArray(paths) || paths.length === 0) return [];
+
+  if (Array.isArray(paths[0])) {
+    return paths
+      .filter(path => Array.isArray(path) && path.length > 0)
+      .map(path => [...path]);
+  }
+
+  return [paths];
+}
+
+function getSelectedCategoryLeaves(paths) {
+  const normalized = normalizeCategoryPaths(paths);
+  return [...new Set(normalized.map(path => path[path.length - 1]).filter(Boolean))];
+}
+
+function polygonToWKT(polygon) {
+  if (!Array.isArray(polygon) || polygon.length < 3) return null;
+
+  const points = polygon
+    .map((pt) => {
+      if (Array.isArray(pt) && pt.length >= 2) {
+        return [Number(pt[0]), Number(pt[1])];
+      }
+      if (pt && typeof pt === 'object') {
+        return [Number(pt.lon), Number(pt.lat)];
+      }
+      return null;
+    })
+    .filter((pt) => Number.isFinite(pt?.[0]) && Number.isFinite(pt?.[1]));
+
+  if (points.length < 3) return null;
+
+  const first = points[0];
+  const last = points[points.length - 1];
+  if (first[0] !== last[0] || first[1] !== last[1]) {
+    points.push(first);
+  }
+
+  const coords = points.map(([lon, lat]) => `${lon} ${lat}`).join(', ');
+  return `POLYGON((${coords}))`;
+}
+
+async function fetchManualFilteredFeatures(categories = [], options = {}) {
+  const normalizedCategories = Array.isArray(categories) ? categories : [];
+  const requestBody = {
+    categories: normalizedCategories,
+    limit: options.limit || 20000
+  };
+
+  const geometryWKT = polygonToWKT(selectedPolygon.value);
+  if (geometryWKT) {
+    requestBody.geometry = geometryWKT;
+  } else if (Array.isArray(mapBounds.value) && mapBounds.value.length >= 4) {
+    requestBody.bounds = [...mapBounds.value];
+  } else {
+    return [];
+  }
+
+  const response = await fetch(`${API_BASE_URL}/api/spatial/fetch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(requestBody)
+  });
+
+  if (!response.ok) {
+    throw new Error(`fetch filtered POIs failed (${response.status})`);
+  }
+
+  const data = await response.json();
+  if (!data?.success || !Array.isArray(data.features)) {
+    return [];
+  }
+
+  return data.features;
+}
+
+
+function syncCategorySelectors(paths) {
+  controlPanelRefMap.value?.setCategorySelection?.(paths);
+  controlPanelRefTag.value?.setCategorySelection?.(paths);
+  controlPanelRefMobile.value?.setCategorySelection?.(paths);
+}
+
+const MAX_MANUAL_FETCH_LIMIT = 500000;
+let manualFilterRequestToken = 0;
+
+function normalizeFeatureCategoryText(feature) {
+  const props = feature?.properties || {};
+  return [
+    props.name,
+    props['??'],
+    props.type,
+    props['??'],
+    props.category_big,
+    props.category_mid,
+    props.category_small,
+    props['??'],
+    props['??'],
+    props['??']
+  ]
+    .filter((value) => typeof value === 'string' && value.trim())
+    .join(' ')
+    .toLowerCase();
+}
+
+function normalizeFeatureCoordinate(feature) {
+  const coordinates = feature?.geometry?.coordinates;
+  if (!Array.isArray(coordinates) || coordinates.length < 2) {
+    return null;
+  }
+
+  const lon = Number(coordinates[0]);
+  const lat = Number(coordinates[1]);
+  if (!Number.isFinite(lon) || !Number.isFinite(lat)) {
+    return null;
+  }
+
+  return [lon, lat];
+}
+
+function normalizePolygonPoints(polygon) {
+  if (!Array.isArray(polygon)) return [];
+
+  return polygon
+    .map((pt) => {
+      if (Array.isArray(pt) && pt.length >= 2) {
+        return [Number(pt[0]), Number(pt[1])];
+      }
+
+      if (pt && typeof pt === 'object') {
+        return [Number(pt.lon), Number(pt.lat)];
+      }
+
+      return null;
+    })
+    .filter((pt) => Number.isFinite(pt?.[0]) && Number.isFinite(pt?.[1]));
+}
+
+function pointInPolygon(point, polygonPoints) {
+  if (!point || polygonPoints.length < 3) return false;
+  const [x, y] = point;
+  let inside = false;
+
+  for (let i = 0, j = polygonPoints.length - 1; i < polygonPoints.length; j = i++) {
+    const [xi, yi] = polygonPoints[i];
+    const [xj, yj] = polygonPoints[j];
+    const intersects = ((yi > y) !== (yj > y))
+      && (x < ((xj - xi) * (y - yi)) / ((yj - yi) || 1e-12) + xi);
+    if (intersects) inside = !inside;
+  }
+
+  return inside;
+}
+
+function filterFeaturesClientSide(features, categoryLeaves) {
+  const normalizedCategories = Array.isArray(categoryLeaves)
+    ? categoryLeaves.map((cat) => String(cat).toLowerCase()).filter(Boolean)
+    : [];
+
+  const hasCategoryFilter = normalizedCategories.length > 0;
+  const polygonPoints = normalizePolygonPoints(selectedPolygon.value);
+  const hasPolygonFilter = polygonPoints.length >= 3;
+  const bounds = Array.isArray(mapBounds.value) && mapBounds.value.length >= 4
+    ? mapBounds.value
+    : null;
+
+  return (Array.isArray(features) ? features : []).filter((feature) => {
+    const coord = normalizeFeatureCoordinate(feature);
+    if (!coord) return false;
+
+    if (hasPolygonFilter) {
+      if (!pointInPolygon(coord, polygonPoints)) return false;
+    } else if (bounds) {
+      const [lon, lat] = coord;
+      if (lon < bounds[0] || lon > bounds[2] || lat < bounds[1] || lat > bounds[3]) {
+        return false;
+      }
+    }
+
+    if (!hasCategoryFilter) {
+      return true;
+    }
+
+    const categoryText = normalizeFeatureCategoryText(feature);
+    return normalizedCategories.some((cat) => categoryText.includes(cat));
+  });
+}
+
+function applySelectionResults(features, options = {}) {
+  const normalizedFeatures = Array.isArray(features) ? features : [];
+  const {
+    updateTagCloud = false,
+    fitView = false,
+    keepMapHighlight = true
+  } = options;
+
+  selectedFeatures.value = normalizedFeatures;
+
+  if (updateTagCloud) {
+    tagData.value = normalizedFeatures;
+  }
+
+  if (keepMapHighlight && mapComponent.value) {
+    mapComponent.value.showHighlights(normalizedFeatures, { fitView });
+  }
+
+  return normalizedFeatures;
+}
+
+async function refreshManualSelectionSource(options = {}) {
+  const {
+    updateTagCloud = false,
+    fitView = false,
+    keepMapHighlight = true,
+    silent = true,
+    limit = MAX_MANUAL_FETCH_LIMIT
+  } = options;
+
+  const requestToken = ++manualFilterRequestToken;
+  const categoryLeaves = getSelectedCategoryLeaves(selectedCategoryPath.value);
+
+  try {
+    const features = await fetchManualFilteredFeatures(categoryLeaves, { limit });
+    if (requestToken !== manualFilterRequestToken) return [];
+    return applySelectionResults(features, { updateTagCloud, fitView, keepMapHighlight });
+  } catch (error) {
+    if (requestToken !== manualFilterRequestToken) return [];
+
+    console.error('[App] 刷新手动筛选数据失败，回退到前端过滤:', error);
+    const fallbackFeatures = filterFeaturesClientSide(allPoiFeatures.value, categoryLeaves);
+    applySelectionResults(fallbackFeatures, { updateTagCloud, fitView, keepMapHighlight });
+
+    if (!silent) {
+      ElNotification.warning({
+        title: '已使用本地回退',
+        message: '后端筛选失败，已使用当前已加载数据进行近似筛选。',
+        offset: 80
+      });
+    }
+
+    return fallbackFeatures;
+  }
+}
+
+async function handleCategoryChange(paths) {
+  const normalizedPaths = normalizeCategoryPaths(paths);
+  selectedCategoryPath.value = normalizedPaths;
+  syncCategorySelectors(normalizedPaths);
+
+  await refreshManualSelectionSource({
+    updateTagCloud: false,
+    fitView: false,
+    keepMapHighlight: true,
+    silent: true
+  });
+}
+
 const activeGroups = ref([]); // [{ name: 'A', features: [] }, ...]
 const heatmapEnabled = ref(false); // 新增热力图同步状态
 
@@ -466,17 +721,29 @@ const handleResize = () => {
  * 当用户在控制面板点击"生成词云"时触发
  * @param {Object|string} payload - 包含算法名称和配置的对象，或仅算法名称字符串
  */
-const handleRunAlgorithm = (payload) => {
+
+const handleRunAlgorithm = async (payload) => {
   const algorithm = typeof payload === 'string' ? payload : payload?.algorithm;
   selectedAlgorithm.value = algorithm || 'spiral';
   spiralConfig.value = typeof payload === 'object' ? payload?.config || null : null;
-  
-  // 如果当前模式是 'Circle'，TagCloud 组件会根据 selectedDrawMode 自动处理
-  // 这里主要确保数据源是最新的选中数据
-  
-  console.log('[App] 选中的要素:', selectedFeatures.value);
-  console.log('[App] 地图对象:', map.value); 
-  tagData.value = selectedFeatures.value;
+
+  const latestFeatures = await refreshManualSelectionSource({
+    updateTagCloud: true,
+    fitView: false,
+    keepMapHighlight: true,
+    silent: false,
+    limit: MAX_MANUAL_FETCH_LIMIT
+  });
+
+  if (!latestFeatures.length) {
+    ElNotification.warning({
+      title: '暂无可渲染数据',
+      message: '当前约束范围内没有可用于词云渲染的 POI。',
+      offset: 80
+    });
+  }
+
+  console.log('[App] 已应用手动约束，当前 POI 数量:', latestFeatures.length);
 };
 
 /**
@@ -506,6 +773,18 @@ const handleDataLoaded = (payload) => {
     }
     
     updateAllPoiFeatures();
+
+    // 分类数据变更后，重新同步“可分析 POI 池”，保证 AI 计数与词云来源一致。
+    const hasCategoryFilter = getSelectedCategoryLeaves(selectedCategoryPath.value).length > 0;
+    const hasCustomArea = Array.isArray(selectedPolygon.value) && selectedPolygon.value.length >= 3;
+    if (hasCategoryFilter || hasCustomArea) {
+      void refreshManualSelectionSource({
+        updateTagCloud: false,
+        fitView: false,
+        keepMapHighlight: true,
+        silent: true
+      });
+    }
     
     // 注意：这里只加载数据，不自动渲染红点
   }
@@ -524,6 +803,12 @@ const handleDataRemoved = (categoryToRemove) => {
   
   if (activeGroups.value.length < initialLength) {
     updateAllPoiFeatures();
+    void refreshManualSelectionSource({
+      updateTagCloud: false,
+      fitView: false,
+      keepMapHighlight: true,
+      silent: true
+    });
     ElNotification.info({ title: '已移除', message: `移除图层: ${categoryToRemove}`, offset: 80 });
   }
 };
@@ -868,9 +1153,23 @@ const handleGlobalAnalysisChange = (enabled) => {
  * 处理地图移动结束
  * 使用节流函数限制频率，更新地图边界用于实时过滤
  */
-const handleMapMoveEnd = throttle((bounds) => {
+
+const handleMapMoveEnd = throttle(async (bounds) => {
   mapBounds.value = bounds;
   // console.log('[App] 地图边界更新:', bounds);
+
+  // 当存在类别约束且没有自定义选区时，视野变化需要实时刷新可分析 POI 池。
+  const hasCustomArea = Array.isArray(selectedPolygon.value) && selectedPolygon.value.length >= 3;
+  const hasCategoryFilter = getSelectedCategoryLeaves(selectedCategoryPath.value).length > 0;
+
+  if (!hasCustomArea && hasCategoryFilter) {
+    await refreshManualSelectionSource({
+      updateTagCloud: false,
+      fitView: false,
+      keepMapHighlight: true,
+      silent: true
+    });
+  }
 }, 500); // 每500ms最多触发一次
 
 /**
@@ -917,34 +1216,49 @@ const handleFeatureLocate = (feature) => {
  * 用户需要点击"渲染标签云"按钮才会渲染
  * @param {Object} payload - { polygon, center, selected, type, circleCenter, polygonCenter }
  */
-const handlePolygonCompleted = (payload) => {
+
+const handlePolygonCompleted = async (payload) => {
   const inside = Array.isArray(payload?.selected) ? payload.selected : [];
   selectedFeatures.value = inside;
-  // 注意：不再自动设置 tagData，需要用户点击"渲染标签云"按钮
-  // tagData.value = inside;
-  
+
   polygonCenter.value = payload?.center || null;
   selectedPolygon.value = Array.isArray(payload?.polygon) ? payload.polygon : null;
-  
-  // 存储绘图模式特定的数据
+
+  // 保留绘制模式与中心点，供词云布局和 AI 上下文使用。
   selectedDrawMode.value = payload?.type || 'Polygon';
-  // 优先使用 circleCenter（圆形模式），否则使用 polygonCenter（多边形模式）
   circleCenterGeo.value = payload?.circleCenter || payload?.polygonCenter || null;
-  
-  console.log(`[App] 绘制完成 (${selectedDrawMode.value}). 选中 ${inside.length} 个要素，中心点:`, circleCenterGeo.value);
-  
-  // 同步控制面板状态（自动关闭绘制按钮状态）
+
+  console.log(`[App] 绘制完成 (${selectedDrawMode.value})，初筛 ${inside.length} 个要素`);
+
+  // 同步控制面板状态，避免继续停留在绘制模式。
   if (controlPanelRefTag.value) {
     controlPanelRefTag.value.setDrawEnabled(false);
   }
   if (controlPanelRefMobile.value) {
     controlPanelRefMobile.value.setDrawEnabled(false);
   }
-  
-  if (!inside.length) {
-    ElNotification.success({ title: '区域已锁定', message: '已应用选区，可以筛选POI和向GeoAI助手提问啦~', offset: 80 });
+
+  // 使用统一约束重新拉取 POI，保证“选区 + 类别”按交集生效。
+  const refreshed = await refreshManualSelectionSource({
+    updateTagCloud: false,
+    fitView: false,
+    keepMapHighlight: true,
+    silent: true
+  });
+
+  const finalCount = refreshed.length;
+  if (!finalCount) {
+    ElNotification.success({
+      title: '区域已锁定',
+      message: '已应用选区约束，当前范围内未命中 POI。',
+      offset: 80
+    });
   } else {
-    ElNotification.success({ title: '绘制完成', message: `已选中 ${inside.length} 个POI，点击"渲染标签云"按钮进行渲染`, offset: 80 });
+    ElNotification.success({
+      title: '选区已生效',
+      message: `当前约束命中 ${finalCount} 个 POI，可直接渲染词云或发起 AI 分析。`,
+      offset: 80
+    });
   }
 };
 
@@ -1063,36 +1377,60 @@ function handleRenderAIResult(data) {
  * 初始化：清空所有数据
  * 重置所有状态到初始值
  */
+
 function handleReset() {
-  // 清空标签云数据
+  // 取消可能正在进行的筛选请求，避免重置后旧结果回写。
+  manualFilterRequestToken++;
+
+  // 清空词云与 AI 分析数据源。
   tagData.value = [];
   selectedFeatures.value = [];
   polygonCenter.value = null;
   selectedPolygon.value = null;
   hoveredFeatureId.value = null;
-  
-  // 重置绘图模式状态
+  clickedFeatureId.value = null;
+
+  // 重置绘制状态。
   selectedDrawMode.value = '';
   circleCenterGeo.value = null;
 
-  // 清空地图上的多边形和高亮
+  // 清空分类约束与已加载分组，并同步三个控制面板。
+  selectedCategoryPath.value = [];
+  activeGroups.value = [];
+  allPoiFeatures.value = [];
+  syncCategorySelectors([]);
+
+  // 清空地图上的选区和高亮。
   if (mapComponent.value) {
     mapComponent.value.clearPolygon();
-    mapComponent.value.closePolygonDraw(); // 确保停止绘制
+    mapComponent.value.closePolygonDraw();
   }
-  
-  // 重置控制面板状态
-  // 重置控制面板状态
+
+  // 重置控制面板按钮态。
   if (controlPanelRefTag.value) {
     controlPanelRefTag.value.setDrawEnabled(false);
+    controlPanelRefTag.value.setSearchResult(false);
   }
   if (controlPanelRefMobile.value) {
     controlPanelRefMobile.value.setDrawEnabled(false);
+    controlPanelRefMobile.value.setSearchResult(false);
   }
-  
-  console.log('[App] 已重置所有数据');
-  ElNotification.success({ title: '重置完成', message: '已清空所有数据', offset: 80 });
+  if (controlPanelRefMap.value) {
+    controlPanelRefMap.value.setSearchResult(false);
+  }
+
+  // 重置后按默认规则回填“当前视野 + 全类别”数据，保证 AI 数据源与计数可用。
+  void refreshManualSelectionSource({
+    updateTagCloud: false,
+    fitView: false,
+    keepMapHighlight: false,
+    silent: true
+  });
+
+  console.log('[App] 已完成初始化重置并同步分类状态');
+  ElNotification.success({ title: '重置完成', message: '已清空选区、类别与结果数据。', offset: 80 });
 }
+
 </script>
 
 <style>
@@ -1500,32 +1838,6 @@ html, body, #app {
 
 
 /* AI 浮动按钮 */
-.narrative-entry-btn {
-  position: fixed;
-  right: 24px;
-  bottom: 28px;
-  z-index: 1001;
-  padding: 10px 16px;
-  border: 1px solid rgba(129, 140, 248, 0.45);
-  border-radius: 999px;
-  background: rgba(15, 23, 42, 0.82);
-  color: #e5e7eb;
-  font-size: 13px;
-  font-weight: 600;
-  backdrop-filter: blur(8px);
-  cursor: pointer;
-  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
-}
-
-.narrative-entry-btn:hover {
-  transform: translateY(-1px);
-  border-color: rgba(129, 140, 248, 0.75);
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.35);
-}
-
-.narrative-entry-btn:active {
-  transform: translateY(0);
-}
 
 .ai-fab {
   position: fixed;
@@ -1710,14 +2022,6 @@ html, body, #app {
   }
 }
 
-@media (max-width: 768px) {
-  .narrative-entry-btn {
-    right: 12px;
-    bottom: 88px;
-    padding: 8px 12px;
-    font-size: 12px;
-  }
-}
 </style>
 
 <!-- 全局非隔离样式，强制覆盖 Element Plus 默认外观 -->

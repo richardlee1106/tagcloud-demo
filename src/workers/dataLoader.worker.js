@@ -1,6 +1,14 @@
 // Web Worker 用于从后端 API 加载 POI 数据
 self.onmessage = async (e) => {
-  const { category, categories, name, bounds, limit = 500000, baseUrl = '' } = e.data;
+  const {
+    category,
+    categories,
+    name,
+    bounds,
+    geometry,
+    limit = 500000,
+    baseUrl = ''
+  } = e.data;
 
   try {
     // 灵活处理：如果是旧逻辑传了数组 categories，就用数组
@@ -22,6 +30,7 @@ self.onmessage = async (e) => {
       body: JSON.stringify({
         categories: finalCategories, 
         bounds,
+        geometry,
         limit
       })
     });
