@@ -745,63 +745,30 @@ async function fetchManualFilteredFeatures(categories = [], options = {}) {
     return data.features;
   };
 
-  const mergeFeaturesByIdentity = (features) => {
-    // 多选区并行查询后做去重，避免同一 POI 位于重叠区域时重复渲染。
-    const merged = [];
-    const seen = new Set();
-
-    for (const feature of Array.isArray(features) ? features : []) {
-      const props = feature?.properties || {};
-      const coords = feature?.geometry?.coordinates;
-      const lon = Number(coords?.[0]);
-      const lat = Number(coords?.[1]);
-      const key = [
-        feature?.id ?? props.id ?? props.poiid ?? props.name ?? '',
-        Number.isFinite(lon) ? lon.toFixed(6) : '',
-        Number.isFinite(lat) ? lat.toFixed(6) : ''
-      ].join('|');
-
-      if (!seen.has(key)) {
-        seen.add(key);
-        merged.push(feature);
-      }
-    }
-
-    return merged;
-  };
-
   const constraints = resolveSpatialConstraints();
   if (constraints.length > 0) {
-    // 多选区采用“每个选区独立 geometry 查询 + 结果并集”策略，严格避免 bbox 粗过滤带来的越界点。
-    const perConstraintLimit = requestLimit;
-
-    const batches = await Promise.all(constraints.map(async (constraint) => {
-      const geometry = constraintToGeometryWKT(constraint, true);
-      const payload = {
-        categories: normalizedCategories,
-        limit: perConstraintLimit
-      };
-
-      if (geometry) {
-        payload.geometry = geometry;
-      } else {
-        const bounds = resolveConstraintBounds([constraint], {
-          forBackend: true,
-          padding: shouldProjectToGcjForFilter ? 0.01 : 0
-        });
-        if (bounds) {
-          payload.bounds = bounds;
+    // ??????? payload ??????????? OR ?????????
+    const regionPayloads = constraints
+      .map((constraint, index) => {
+        const boundaryWKT = constraintToGeometryWKT(constraint, true);
+        if (!boundaryWKT) {
+          return null;
         }
-      }
+        return {
+          id: index + 1,
+          kind: constraint.kind,
+          boundaryWKT
+        };
+      })
+      .filter(Boolean);
 
-      if (!payload.geometry && !payload.bounds) {
-        return [];
-      }
-
-      return fetchByPayload(payload);
-    }));
-
-    return mergeFeaturesByIdentity(batches.flat()).slice(0, requestLimit);
+    if (regionPayloads.length > 0) {
+      return fetchByPayload({
+        categories: normalizedCategories,
+        limit: requestLimit,
+        regions: regionPayloads
+      });
+    }
   }
 
   const requestBody = {

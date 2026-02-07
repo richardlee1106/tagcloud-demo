@@ -538,29 +538,185 @@ ${context}
    * 根据类别列表获取 POI（源自 PostGIS）
    */
   fastify.post('/fetch', async (request, reply) => {
-    const { categories = [], limit = 100000, bounds, geometry: geometryInput } = request.body || {};
-    
+    const {
+      categories = [],
+      limit = 100000,
+      bounds,
+      geometry: geometryInput,
+      regions = []
+    } = request.body || {};
+
     if (!Array.isArray(categories)) {
       return reply.code(400).send({ error: 'categories must be an array' });
     }
 
-    try {
-      let geometry = null;
+    if (!Array.isArray(regions) && regions !== undefined) {
+      return reply.code(400).send({ error: 'regions must be an array when provided' });
+    }
 
-      // 优先使用前端传入的 geometry（WKT），未传时回退到 bounds 生成矩形范围
-      if (typeof geometryInput === 'string' && geometryInput.trim()) {
-        geometry = geometryInput.trim();
-      } else if (bounds) {
-        // bounds: [minLon, minLat, maxLon, maxLat]
-        const [w, s, e, n] = bounds;
-        geometry = `POLYGON((${w} ${s}, ${e} ${s}, ${e} ${n}, ${w} ${n}, ${w} ${s}))`;
+    const polygonCoordsToWKT = (coords = []) => {
+      if (!Array.isArray(coords) || coords.length < 3) return null;
+
+      const points = coords
+        .map((pt) => {
+          if (Array.isArray(pt) && pt.length >= 2) {
+            return [Number(pt[0]), Number(pt[1])];
+          }
+          if (pt && typeof pt === 'object') {
+            return [Number(pt.lon ?? pt.lng), Number(pt.lat)];
+          }
+          return null;
+        })
+        .filter((pt) => Number.isFinite(pt?.[0]) && Number.isFinite(pt?.[1]));
+
+      if (points.length < 3) return null;
+      const first = points[0];
+      const last = points[points.length - 1];
+      if (first[0] !== last[0] || first[1] !== last[1]) {
+        points.push(first);
+      }
+      return `POLYGON((${points.map(([lon, lat]) => `${lon} ${lat}`).join(', ')}))`;
+    };
+
+    const normalizeCircleCenter = (center) => {
+      if (Array.isArray(center) && center.length >= 2) {
+        const lon = Number(center[0]);
+        const lat = Number(center[1]);
+        return Number.isFinite(lon) && Number.isFinite(lat) ? [lon, lat] : null;
+      }
+      if (center && typeof center === 'object') {
+        const lon = Number(center.lon ?? center.lng ?? center.longitude);
+        const lat = Number(center.lat ?? center.latitude);
+        return Number.isFinite(lon) && Number.isFinite(lat) ? [lon, lat] : null;
+      }
+      return null;
+    };
+
+    const circleToWKT = (center, radiusMeters, segments = 72) => {
+      const centerPoint = normalizeCircleCenter(center);
+      const radius = Number(radiusMeters);
+      if (!centerPoint || !Number.isFinite(radius) || radius <= 0) return null;
+
+      const [centerLon, centerLat] = centerPoint;
+      const earthRadius = 6378137;
+      const angularDistance = radius / earthRadius;
+      const lat1 = (centerLat * Math.PI) / 180;
+      const lon1 = (centerLon * Math.PI) / 180;
+
+      const points = [];
+      for (let i = 0; i <= segments; i += 1) {
+        const bearing = (i / segments) * 2 * Math.PI;
+        const sinLat2 = Math.sin(lat1) * Math.cos(angularDistance)
+          + Math.cos(lat1) * Math.sin(angularDistance) * Math.cos(bearing);
+        const lat2 = Math.asin(sinLat2);
+        const lon2 = lon1 + Math.atan2(
+          Math.sin(bearing) * Math.sin(angularDistance) * Math.cos(lat1),
+          Math.cos(angularDistance) - Math.sin(lat1) * Math.sin(lat2)
+        );
+
+        const lon = (lon2 * 180) / Math.PI;
+        const lat = (lat2 * 180) / Math.PI;
+        points.push(`${lon} ${lat}`);
       }
 
-      const results = await db.findPOIsFiltered({
-        categories,
-        geometry,
-        limit
-      });
+      return `POLYGON((${points.join(', ')}))`;
+    };
+
+    const boundsToWKT = (inputBounds) => {
+      if (!Array.isArray(inputBounds) || inputBounds.length < 4) return null;
+      const [w, s, e, n] = inputBounds.map(Number);
+      if (![w, s, e, n].every(Number.isFinite)) return null;
+      return `POLYGON((${w} ${s}, ${e} ${s}, ${e} ${n}, ${w} ${n}, ${w} ${s}))`;
+    };
+
+    const resolveRegionWKT = (region) => {
+      if (!region || typeof region !== 'object') return null;
+
+      if (typeof region.boundaryWKT === 'string' && region.boundaryWKT.trim()) {
+        return region.boundaryWKT.trim();
+      }
+      if (typeof region.wkt === 'string' && region.wkt.trim()) {
+        return region.wkt.trim();
+      }
+
+      const geometry = region.geometry;
+      if (geometry && typeof geometry === 'object') {
+        const geometryType = String(geometry.type || '').toLowerCase();
+        if (geometryType === 'polygon') {
+          return polygonCoordsToWKT(geometry.coordinates?.[0]);
+        }
+        if (geometryType === 'multipolygon') {
+          return polygonCoordsToWKT(geometry.coordinates?.[0]?.[0]);
+        }
+        if (geometryType === 'point') {
+          return circleToWKT(geometry.coordinates, geometry.radius ?? region.radius);
+        }
+      }
+
+      return circleToWKT(region.center, region.radius);
+    };
+
+    const mergeRows = (rows = []) => {
+      const merged = [];
+      const seen = new Set();
+      for (const row of rows) {
+        const lon = Number(row?.lon);
+        const lat = Number(row?.lat);
+        const key = [
+          row?.id ?? row?.poiid ?? row?.name ?? '',
+          Number.isFinite(lon) ? lon.toFixed(6) : '',
+          Number.isFinite(lat) ? lat.toFixed(6) : ''
+        ].join('|');
+        if (!seen.has(key)) {
+          seen.add(key);
+          merged.push(row);
+        }
+      }
+      return merged;
+    };
+
+    try {
+      const queryGeometries = [];
+      if (Array.isArray(regions) && regions.length > 0) {
+        regions
+          .map(resolveRegionWKT)
+          .filter(Boolean)
+          .forEach((wkt) => queryGeometries.push(wkt));
+      }
+
+      if (queryGeometries.length === 0) {
+        const fallbackGeometry =
+          (typeof geometryInput === 'string' && geometryInput.trim())
+            ? geometryInput.trim()
+            : boundsToWKT(bounds);
+        if (fallbackGeometry) {
+          queryGeometries.push(fallbackGeometry);
+        }
+      }
+
+      if (queryGeometries.length === 0) {
+        return {
+          success: true,
+          count: 0,
+          features: []
+        };
+      }
+
+      const batches = await Promise.all(
+        queryGeometries.map((wkt) => db.findPOIsFiltered({
+          categories,
+          geometry: wkt,
+          limit
+        }))
+      );
+
+      const rawResults = mergeRows(batches.flat());
+      const maxLimit = parseInt(process.env.POI_QUERY_MAX_LIMIT || '20000', 10);
+      const normalizedLimit = Number(limit);
+      const safeLimit = Number.isFinite(normalizedLimit)
+        ? Math.max(1, Math.min(normalizedLimit, maxLimit))
+        : Math.min(100, maxLimit);
+      const results = rawResults.slice(0, safeLimit);
 
       return {
         success: true,
