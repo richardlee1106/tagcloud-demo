@@ -12,6 +12,7 @@ from shapely.geometry import MultiPoint, Point, Polygon, mapping
 
 from algorithms.alpha_shape import build_alpha_shape
 from algorithms.direction_filter import filter_pois_by_direction, resolve_direction_from_query_plan
+from algorithms.h3_aggregate import aggregate_pois_h3
 from algorithms.hdbscan_cluster import cluster_points
 from algorithms.membership import compute_membership
 from db.repository import POIRepository
@@ -401,6 +402,8 @@ class SpatialPipeline:
                             "cluster_engine": "none",
                             "noise_count": 0,
                             "h3_resolution": _dynamic_h3_resolution(_extract_area_km2(spatial_context)),
+                            "h3_engine": "none",
+                            "h3_cell_count": 0,
                             "candidate_source": candidate_source,
                             "direction": direction_hint,
                             "direction_applied": direction_applied,
@@ -540,6 +543,11 @@ class SpatialPipeline:
 
         area_km2 = _extract_area_km2(spatial_context)
         h3_resolution = _dynamic_h3_resolution(area_km2)
+        h3_summary = aggregate_pois_h3(
+            pois,
+            resolution=h3_resolution,
+            max_cells=120 if query_type == "area_analysis" else 60,
+        )
 
         yield {
             "type": "PROGRESS",
@@ -554,7 +562,10 @@ class SpatialPipeline:
             "mode": "python-spatial",
             "pois": pois[:500],
             "boundary": vernacular_regions[0]["boundary"] if vernacular_regions else None,
-            "spatial_clusters": {"hotspots": hotspots[:5]},
+            "spatial_clusters": {
+                "hotspots": hotspots[:5],
+                "h3_summary": h3_summary.get("cells", [])[:20],
+            },
             "vernacular_regions": vernacular_regions[:10],
             "fuzzy_regions": fuzzy_regions[:10],
             "stats": {
@@ -563,6 +574,8 @@ class SpatialPipeline:
                 "cluster_engine": cluster_result.engine,
                 "noise_count": cluster_result.noise_count,
                 "h3_resolution": h3_resolution,
+                "h3_engine": h3_summary.get("engine", "none"),
+                "h3_cell_count": len(h3_summary.get("cells", [])),
                 "query_type": query_type,
                 "candidate_source": candidate_source,
                 "direction": direction_hint,
@@ -579,6 +592,7 @@ class SpatialPipeline:
                 "diagnostics": {
                     "engine": "python-spatial-pipeline",
                     "query_type": query_type,
+                    "h3_engine": h3_summary.get("engine", "none"),
                     "input_area_km2": round(area_km2, 3),
                     "candidate_source": candidate_source,
                     "source_policy": source_policy if isinstance(source_policy, dict) else {},
