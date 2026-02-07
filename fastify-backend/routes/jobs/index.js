@@ -15,12 +15,14 @@ import {
   getJobResult,
   awaitJobCompletion,
   subscribeJobEvents,
-  getQueueMode
+  getQueueMode,
+  getQueueHealthSnapshot
 } from '../../services/queue.js'
 import {
   decideExecutionMode,
   extractLastUserMessage
 } from '../../services/spatialJobRunner.js'
+import { getSpatialMigrationConfig } from '../../services/migrationPolicy.js'
 
 /**
  * SSE 事件写入工具。
@@ -128,6 +130,53 @@ async function jobsRoutes(fastify) {
    * 查询任务状态。
    * 返回字段尽量稳定，方便前端做进度条和失败重试提示。
    */
+  /**
+   * Jobs 健康检查：统一暴露队列状态 + 迁移开关快照 + 告警。
+   * 该接口用于发布前巡检、灰度期监控与故障自检。
+   */
+  fastify.get('/health', async () => {
+    const queueHealth = await getQueueHealthSnapshot()
+    const migrationConfig = getSpatialMigrationConfig()
+
+    const migration = {
+      migrate_enabled: migrationConfig.migrateEnabled,
+      migrate_percent: migrationConfig.migratePercent,
+      migrate_query_types: [...migrationConfig.migrateQueryTypes],
+      dual_run_enabled: migrationConfig.dualRunEnabled,
+      dual_run_sample: migrationConfig.dualRunSample,
+      py_data_source: migrationConfig.pyDataSource,
+      force_node_fallback: migrationConfig.forceNodeFallback
+    }
+
+    const alerts = [...(queueHealth.alerts || [])]
+
+    if (!migration.migrate_enabled) {
+      alerts.push({
+        code: 'migration_disabled',
+        severity: 'warning',
+        message: '空间迁移总开关已关闭，当前只会走 Node 路径。'
+      })
+    }
+
+    if (migration.force_node_fallback) {
+      alerts.push({
+        code: 'force_node_fallback_enabled',
+        severity: 'warning',
+        message: '全局 force_node_fallback=true，Python 主路径已被禁用。'
+      })
+    }
+
+    const status = alerts.some((item) => item.severity === 'error') ? 'degraded' : 'ok'
+
+    return {
+      status,
+      checked_at: new Date().toISOString(),
+      queue: queueHealth,
+      migration,
+      alerts
+    }
+  })
+
   fastify.get('/:job_id', async (request, reply) => {
     const { job_id: jobId } = request.params
     const snapshot = await getJobSnapshot(jobId)

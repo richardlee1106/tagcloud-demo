@@ -71,3 +71,31 @@ npm run bench:jobs -- 10 6
 1. Vite 代理报 `ECONNREFUSED`：检查后端是否启动。
 2. Jobs 超时：检查是否误用了“无 Redis + 独立 worker”。
 3. 检索结果为空：检查空间边界、分类过滤、数据存在性。
+
+## 6. 收口2运维补充
+
+### 6.1 新增健康接口
+
+- `GET /api/jobs/health`
+
+接口会返回队列模式、积压指标、失败任务统计、迁移开关快照与告警列表。
+
+### 6.2 双跑与回退演练脚本
+
+在 `fastify-backend` 目录执行：
+
+```bash
+npm run check:dualrun -- --samples=2 --out=reports/rollout/dual-run-latest.json
+npm run drill:fallback -- --out=reports/rollout/fallback-drill-latest.json
+```
+
+脚本用途：
+
+- `check:dualrun`：同一请求分别走 Python 主路径与 Node 回退路径，验证结构一致性与结果稳定性。
+- `drill:fallback`：强制开启 Node 回退，验证故障情况下的可恢复能力。
+
+### 6.3 灰度建议
+
+- 发布前按顺序执行：`smoke:jobs` → `check:dualrun` → `drill:fallback`。
+- 灰度观察期可定时轮询 `/api/jobs/health`。
+- 若告警持续升高，可临时设置 `SPATIAL_FORCE_NODE_FALLBACK=true` 快速降级。

@@ -16,7 +16,8 @@
     "dev:stack": "node scripts/dev_stack.js",
     "smoke:jobs": "node scripts/smoke_jobs_flow.js",
     "bench:jobs": "node scripts/bench_jobs.js",
-    "check:dualrun": "node scripts/dual_run_parity_check.js"
+    "check:dualrun": "node scripts/dual_run_parity_check.js",
+    "drill:fallback": "node scripts/drill_node_fallback.js"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.0",

@@ -387,7 +387,192 @@ export function getQueueMode() {
 }
 
 /**
+ * 统计当前内存快照中的任务状态分布，便于统一监控队列健康。
  */
+function buildSnapshotStatusStats() {
+  const stats = {
+    total: jobSnapshots.size,
+    queued: 0,
+    running: 0,
+    completed: 0,
+    failed: 0,
+    unknown: 0
+  }
+
+  for (const snapshot of jobSnapshots.values()) {
+    const status = String(snapshot?.status || '').toLowerCase()
+
+    if (status === 'queued' || status === 'waiting' || status === 'delayed') {
+      stats.queued += 1
+      continue
+    }
+
+    if (status === 'running' || status === 'active') {
+      stats.running += 1
+      continue
+    }
+
+    if (status === 'completed') {
+      stats.completed += 1
+      continue
+    }
+
+    if (status === 'failed') {
+      stats.failed += 1
+      continue
+    }
+
+    stats.unknown += 1
+  }
+
+  return stats
+}
+
+/**
+ * 解析健康检查阈值，保证环境变量异常时仍有安全默认值。
+ */
+function parseHealthThreshold(rawValue, fallback) {
+  const parsed = Number(rawValue)
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return fallback
+  }
+  return Math.floor(parsed)
+}
+
+/**
+ * 规范化告警对象，便于 API 与脚本统一解析。
+ */
+function createQueueAlert(code, severity, message, extra = {}) {
+  return {
+    code,
+    severity,
+    message,
+    ...extra
+  }
+}
+
+/**
+ * 提供队列健康快照：模式、积压、失败数、阈值与告警。
+ * - Jobs 健康接口直接消费该结构。
+ * - 发布前演练脚本也可复用该结构做断言。
+ */
+export async function getQueueHealthSnapshot(options = {}) {
+  if (!initialized) {
+    await initQueueServices()
+  }
+
+  const thresholds = {
+    backlog_warn: parseHealthThreshold(options.backlogWarn ?? process.env.SPATIAL_QUEUE_BACKLOG_WARN, 200),
+    failed_warn: parseHealthThreshold(options.failedWarn ?? process.env.SPATIAL_QUEUE_FAILED_WARN, 20)
+  }
+
+  const snapshot_stats = buildSnapshotStatusStats()
+  const memory = {
+    pending: memoryQueue.length,
+    draining: memoryDraining,
+    processor_registered: Boolean(memoryProcessor)
+  }
+
+  let bullmq = null
+
+  if (queue) {
+    try {
+      const rawCounts = await queue.getJobCounts(
+        'waiting',
+        'active',
+        'delayed',
+        'completed',
+        'failed',
+        'paused',
+        'waiting-children',
+        'prioritized'
+      )
+
+      bullmq = {
+        waiting: Number(rawCounts.waiting || 0),
+        active: Number(rawCounts.active || 0),
+        delayed: Number(rawCounts.delayed || 0),
+        completed: Number(rawCounts.completed || 0),
+        failed: Number(rawCounts.failed || 0),
+        paused: Number(rawCounts.paused || 0),
+        waiting_children: Number(rawCounts['waiting-children'] || 0),
+        prioritized: Number(rawCounts.prioritized || 0),
+        worker_attached: Boolean(worker),
+        queue_events_attached: Boolean(queueEvents)
+      }
+    } catch (err) {
+      bullmq = {
+        error: err.message,
+        worker_attached: Boolean(worker),
+        queue_events_attached: Boolean(queueEvents)
+      }
+    }
+  }
+
+  const backlog = queue
+    ? Number(bullmq?.waiting || 0) +
+      Number(bullmq?.active || 0) +
+      Number(bullmq?.delayed || 0) +
+      Number(bullmq?.waiting_children || 0) +
+      Number(bullmq?.prioritized || 0)
+    : memory.pending
+
+  const failed = queue ? Number(bullmq?.failed || 0) : snapshot_stats.failed
+
+  const alerts = []
+
+  if (!queue) {
+    alerts.push(createQueueAlert(
+      'memory_mode_enabled',
+      'warning',
+      '当前运行在 memory 队列模式，进程重启会丢失未完成任务。'
+    ))
+  }
+
+  if (bullmq?.error) {
+    alerts.push(createQueueAlert(
+      'bullmq_stats_unavailable',
+      'error',
+      `BullMQ 统计读取失败: ${bullmq.error}`
+    ))
+  }
+
+  if (backlog >= thresholds.backlog_warn) {
+    alerts.push(createQueueAlert(
+      'queue_backlog_high',
+      'warning',
+      '队列积压已超过预警阈值。',
+      { value: backlog, threshold: thresholds.backlog_warn }
+    ))
+  }
+
+  if (failed >= thresholds.failed_warn) {
+    alerts.push(createQueueAlert(
+      'queue_failed_high',
+      'warning',
+      '失败任务数量已超过预警阈值。',
+      { value: failed, threshold: thresholds.failed_warn }
+    ))
+  }
+
+  return {
+    sampled_at: new Date().toISOString(),
+    queue_name: QUEUE_NAME,
+    mode: getQueueMode(),
+    initialized,
+    redis_configured: Boolean(getRedisConfig()),
+    snapshot_stats,
+    memory,
+    bullmq,
+    metrics: {
+      backlog,
+      failed
+    },
+    thresholds,
+    alerts
+  }
+}
+
 /**
  * 提交空间任务。
  */
@@ -637,5 +822,6 @@ export default {
   awaitJobCompletion,
   subscribeJobEvents,
   getQueueMode,
-  isBullQueueEnabled
+  isBullQueueEnabled,
+  getQueueHealthSnapshot
 }

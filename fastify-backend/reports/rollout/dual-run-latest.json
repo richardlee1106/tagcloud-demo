@@ -1,5 +1,5 @@
 {
-  "checked_at": "2026-02-07T16:47:50.689Z",
+  "checked_at": "2026-02-07T17:06:18.568Z",
   "base_url": "http://127.0.0.1:3200",
   "samples_per_case": 2,
   "threshold": {
@@ -10,8 +10,8 @@
     "passed": 4,
     "failed": 0,
     "alert_count": 0,
-    "avg_python_latency_ms": 504,
-    "avg_node_latency_ms": 2.75,
+    "avg_python_latency_ms": 545.75,
+    "avg_node_latency_ms": 205,
     "all_passed": true
   },
   "runs": [
@@ -23,7 +23,7 @@
       "python": {
         "ok": true,
         "status": 200,
-        "elapsed_ms": 1040,
+        "elapsed_ms": 1067,
         "mode": "python-spatial",
         "compute_mode": "python_primary",
         "executor_engine": "python_grpc",
@@ -33,7 +33,7 @@
       "node_fallback": {
         "ok": true,
         "status": 200,
-        "elapsed_ms": 2,
+        "elapsed_ms": 810,
         "mode": "graph_analysis_fallback",
         "compute_mode": "node_primary",
         "executor_engine": "node_fallback",
@@ -55,7 +55,7 @@
       "python": {
         "ok": true,
         "status": 200,
-        "elapsed_ms": 968,
+        "elapsed_ms": 1106,
         "mode": "python-spatial",
         "compute_mode": "python_primary",
         "executor_engine": "python_grpc",
@@ -87,7 +87,7 @@
       "python": {
         "ok": true,
         "status": 200,
-        "elapsed_ms": 4,
+        "elapsed_ms": 6,
         "mode": "region_comparison",
         "compute_mode": "python_primary",
         "executor_engine": "python_grpc",
@@ -97,7 +97,7 @@
       "node_fallback": {
         "ok": true,
         "status": 200,
-        "elapsed_ms": 2,
+        "elapsed_ms": 4,
         "mode": "region_comparison",
         "compute_mode": "node_primary",
         "executor_engine": "node_fallback",
@@ -129,7 +129,7 @@
       "node_fallback": {
         "ok": true,
         "status": 200,
-        "elapsed_ms": 4,
+        "elapsed_ms": 3,
         "mode": "region_comparison",
         "compute_mode": "node_primary",
         "executor_engine": "node_fallback",
