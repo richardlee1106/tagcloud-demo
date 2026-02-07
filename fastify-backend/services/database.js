@@ -601,8 +601,9 @@ export async function findPOIsFiltered(options) {
 
   const params = [];
   let paramIndex = 1;
+  let geometryParamIndex = null;
 
-  // 如果提供了锚点，计算距离
+  // 中文注释：锚点存在时返回真实距离，便于“附近”类请求按距离排序。
   if (anchor) {
     sql += `, ST_Distance(p.geom::geography, ST_SetSRID(ST_MakePoint($${paramIndex}, $${paramIndex + 1}), 4326)::geography) AS distance_meters`;
     params.push(anchor.lon, anchor.lat);
@@ -613,37 +614,38 @@ export async function findPOIsFiltered(options) {
 
   sql += ` FROM pois p WHERE 1=1 `;
 
-  // 核心逻辑：如果提供了几何边界，强制使用 ST_Within
+  // 中文注释：优先使用几何边界，避免仅凭半径导致候选范围外扩。
   if (geometry) {
-    sql += ` AND ST_Within(p.geom, ST_GeomFromText($${paramIndex}, 4326))`;
+    geometryParamIndex = paramIndex;
+    sql += ` AND ST_Within(p.geom, ST_GeomFromText($${geometryParamIndex}, 4326))`;
     params.push(geometry);
     paramIndex++;
   } else if (anchor) {
-    // 否则回退到半径搜索
+    // 中文注释：未提供几何边界时回退到半径查询，保持历史接口兼容。
     sql += ` AND ST_DWithin(p.geom::geography, ST_SetSRID(ST_MakePoint($${paramIndex - 2}, $${paramIndex - 1}), 4326)::geography, $${paramIndex})`;
     params.push(radius_m);
     paramIndex++;
   }
   
-  // 类别过滤 (Phase 1 修复：同时匹配名称，与 QuickSearch 保持一致)
+  // 中文注释：类别过滤同时覆盖名称/地址/大小类/type，降低“有数据但检索不到”的漏召回。
   if (categories.length > 0) {
-     const categoryConditions = categories.map((_, i) => {
+    const categoryConditions = categories.map((_, i) => {
       const idx = paramIndex + i;
-      // 修复：同时匹配 name (名称)、category 字段和 type
-      // 这与 QuickSearch 的行为一致，避免遗漏名称中包含关键词的 POI
       return `(
         p.name ILIKE $${idx}
-        OR p.category_small ILIKE $${idx} 
-        OR p.category_mid ILIKE $${idx} 
+        OR p.address ILIKE $${idx}
+        OR p.category_big ILIKE $${idx}
+        OR p.category_mid ILIKE $${idx}
+        OR p.category_small ILIKE $${idx}
         OR p.type ILIKE $${idx}
       )`;
     });
     sql += ` AND (${categoryConditions.join(' OR ')})`;
-    categories.forEach(cat => params.push(`%${cat}%`)); // 使用模糊匹配
+    categories.forEach(cat => params.push(`%${cat}%`));
     paramIndex += categories.length;
   }
   
-  // 评分过滤 (数据库暂无 rating 字段，暂时忽略)
+  // 评分过滤（数据库暂无 rating 字段，暂时忽略）
   /*
   if (rating_range[0] !== null) {
     sql += ` AND p.rating >= $${paramIndex}`;
@@ -656,8 +658,18 @@ export async function findPOIsFiltered(options) {
     paramIndex++;
   }
   */
+
+  // 中文注释：无锚点时不能按常量 distance_meters 排序，否则 LIMIT 会被导入顺序锁定成单一类目。
+  let orderClause = 'distance_meters';
+  if (!anchor) {
+    if (geometryParamIndex !== null) {
+      orderClause = `p.geom <-> ST_Centroid(ST_GeomFromText($${geometryParamIndex}, 4326))`;
+    } else {
+      orderClause = 'p.id';
+    }
+  }
   
-  sql += ` ORDER BY distance_meters LIMIT $${paramIndex}`;
+  sql += ` ORDER BY ${orderClause} LIMIT $${paramIndex}`;
   const maxLimit = parseInt(process.env.POI_QUERY_MAX_LIMIT || '20000', 10);
   const normalizedLimit = Number(limit);
   const safeLimit = Number.isFinite(normalizedLimit)
@@ -677,7 +689,6 @@ export async function findPOIsFiltered(options) {
     return result.rows;
   } catch (err) {
     console.error('[DB] 高级过滤查询失败:', err.message);
-    // ????????? 500 ??????????????????????
     throw err;
   }
 }

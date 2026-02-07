@@ -112,7 +112,7 @@ class POIRepository:
         limit: int = 5000,
     ) -> List[Dict[str, Any]]:
         """按空间约束 + 类别/文本过滤查询 POI。"""
-        # ???????????? null/?????????????
+        # 中文注释：容错处理，防止上游传入 null / 非对象导致字段访问异常。
         if not isinstance(spatial_context, dict):
             spatial_context = {}
 
@@ -124,19 +124,26 @@ class POIRepository:
 
         where_parts: List[str] = []
         params: List[Any] = []
+        order_sql = "ORDER BY p.id ASC"
 
         # 关键守卫：必须有空间约束，避免误触全表扫描。
         if boundary_wkt:
             where_parts.append("ST_Within(p.geom, ST_GeomFromText(%s, 4326))")
             params.append(boundary_wkt)
+            # 中文注释：边界查询按边界中心做 KNN 排序，避免 LIMIT 截断只落在某个类目。
+            order_sql = "ORDER BY p.geom <-> ST_Centroid(ST_GeomFromText(%s, 4326)) ASC"
         elif viewport_wkt:
             where_parts.append("ST_Within(p.geom, ST_GeomFromText(%s, 4326))")
             params.append(viewport_wkt)
+            # 中文注释：视口查询同样使用中心点排序，保证“全类目”场景结果更具代表性。
+            order_sql = "ORDER BY p.geom <-> ST_Centroid(ST_GeomFromText(%s, 4326)) ASC"
         elif center and radius > 0:
             where_parts.append(
                 "ST_DWithin(p.geom::geography, ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography, %s)"
             )
             params.extend([center[0], center[1], radius])
+            # 中文注释：圆形搜索按圆心邻近度排序，贴合“附近”语义预期。
+            order_sql = "ORDER BY p.geom <-> ST_SetSRID(ST_MakePoint(%s, %s), 4326) ASC"
         else:
             return []
 
@@ -162,6 +169,12 @@ class POIRepository:
                 params.extend([wildcard, wildcard, wildcard, wildcard])
             where_parts.append("(" + " OR ".join(term_parts) + ")")
 
+        # 中文注释：补齐排序子句参数，复用已校验输入，避免重复解析几何对象。
+        if order_sql.startswith("ORDER BY p.geom <-> ST_Centroid"):
+            params.append(boundary_wkt or viewport_wkt)
+        elif order_sql.startswith("ORDER BY p.geom <-> ST_SetSRID") and center:
+            params.extend([center[0], center[1]])
+
         sql = """
             SELECT
                 p.id,
@@ -176,7 +189,7 @@ class POIRepository:
                 ST_Y(p.geom) AS lat
             FROM pois p
             WHERE
-        """ + " AND ".join(where_parts) + " ORDER BY p.id ASC LIMIT %s"
+        """ + " AND ".join(where_parts) + f" {order_sql} LIMIT %s"
 
         params.append(int(limit))
 
@@ -227,8 +240,10 @@ class POIRepository:
                 ST_Y(p.geom) AS lat
             FROM pois p
             WHERE
-        """ + " AND ".join(where_parts) + " ORDER BY p.id ASC LIMIT %s"
+        """ + " AND ".join(where_parts) + " ORDER BY p.geom <-> ST_Centroid(ST_GeomFromText(%s, 4326)) ASC LIMIT %s"
 
+        # 中文注释：区域对比也按边界中心做空间排序，降低导入顺序对统计结论的干扰。
+        params.append(boundary_wkt.strip())
         params.append(int(limit))
 
         with self._connect() as conn:
