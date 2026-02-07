@@ -14,11 +14,11 @@ import {
 import {
   extractLastUserMessage,
   decideExecutionMode,
+  executeSpatialPlanWithFallback,
   runNarrativeSpatialJob,
   toLegacySSEPayload
 } from '../../services/spatialJobRunner.js'
 import { parseIntent } from './planner.js'
-import { executeQuery } from './executor.js'
 
 // 会话内存缓存：保存本次请求的日志上下文与结果。
 const ragSessions = new Map()
@@ -456,7 +456,14 @@ async function aiRoutes(fastify) {
     }
 
     try {
-      return await executeQuery(queryPlan, poiFeatures, options)
+      const spatialContext = options.spatialContext || options.context || {}
+      return await executeSpatialPlanWithFallback({
+        queryPlan,
+        poiFeatures,
+        spatialContext,
+        options,
+        requestId: request.body?.request_id
+      })
     } catch (err) {
       return reply.status(500).send({ error: err.message })
     }

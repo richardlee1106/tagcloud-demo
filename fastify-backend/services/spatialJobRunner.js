@@ -642,6 +642,61 @@ async function computeSpatialWithFallback({
  * Narrative 任务主执行函数。
  * 可被 sync 路由直接调用，也可被 worker 消费。
  */
+/**
+ * Execute a pre-built queryPlan through Python-primary policy with Node fallback.
+ * This keeps /api/ai/execute aligned with the migrated runtime path.
+ */
+export async function executeSpatialPlanWithFallback({
+  queryPlan,
+  poiFeatures = [],
+  spatialContext = {},
+  options = {},
+  requestId = randomUUID(),
+  reporter = {}
+} = {}) {
+  if (!queryPlan || typeof queryPlan !== 'object') {
+    throw new Error('queryPlan is required')
+  }
+
+  const report = {
+    reportStage: reporter.reportStage || (async () => {}),
+    reportProgress: reporter.reportProgress || (async () => {}),
+    reportPartial: reporter.reportPartial || (async () => {}),
+    reportText: reporter.reportText || (async () => {})
+  }
+
+  const migrationDecision = resolveSpatialMigrationDecision({
+    requestId,
+    queryPlan,
+    options
+  })
+
+  await report.reportStage('executor', {
+    route: migrationDecision.use_python_primary ? 'python_primary' : 'node_primary',
+    migration: migrationDecision
+  })
+
+  const envelope = await computeSpatialWithFallback({
+    requestId,
+    queryPlan,
+    spatialContext,
+    options,
+    poiFeatures,
+    reporter: report,
+    migrationDecision
+  })
+
+  const normalized = normalizeExecutorEnvelope(envelope)
+  return {
+    success: normalized.success !== false,
+    results: normalized.results || {},
+    diagnostics: {
+      compute_mode: migrationDecision?.use_python_primary ? 'python_primary' : 'node_primary',
+      migration: migrationDecision
+    }
+  }
+}
+
 export async function runNarrativeSpatialJob(payload, reporter = {}) {
   // reporter 全部允许空实现，便于多种调用场景。
   const report = {
@@ -842,6 +897,7 @@ export function toLegacySSEPayload(jobResult) {
 export default {
   extractLastUserMessage,
   decideExecutionMode,
+  executeSpatialPlanWithFallback,
   runNarrativeSpatialJob,
   toLegacySSEPayload
 }
