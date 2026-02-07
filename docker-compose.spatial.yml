@@ -1,7 +1,14 @@
-# GeoLoom-RAG 完整空间数据库
-# 基于 kartoza/postgis + 手动安装 pgvector
+version: '3.9'
 
+# 本地空间开发环境编排
+# 组件说明：
+# - spatial-db: PostGIS 主库
+# - redis: Jobs 队列后端
+# - python-compute: 空间计算服务（gRPC）
+# - backend: Fastify 网关
+# - node-worker: 异步任务消费进程
 services:
+  # PostGIS 数据库（含 pg_trgm 扩展）
   spatial-db:
     image: kartoza/postgis:16-3.4
     container_name: geoloom-spatial-db
@@ -10,20 +17,101 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: 123456
       POSTGRES_DB: geoloom
-      # 允许扩展安装
       POSTGRES_MULTIPLE_EXTENSIONS: postgis,hstore,pg_trgm
     ports:
       - "5432:5432"
     volumes:
-      # 数据持久化
       - spatial_db_data:/var/lib/postgresql/data
-      # 初始化脚本（安装 pgvector）
       - ./docker-init-spatial:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
       timeout: 5s
       retries: 5
+
+  # Redis 队列（BullMQ 后端）
+  redis:
+    image: redis:7-alpine
+    container_name: geoloom-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+
+  # Python 空间计算服务
+  python-compute:
+    image: python:3.11-slim
+    container_name: geoloom-python-compute
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - ./fastify-backend:/app
+    command: >
+      sh -c "pip install -r python_service/requirements.txt &&
+      python python_service/grpc_server.py"
+    environment:
+      POSTGRES_HOST: spatial-db
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: 123456
+      POSTGRES_DATABASE: geoloom
+      SPATIAL_GRPC_HOST: 0.0.0.0
+      SPATIAL_GRPC_PORT: 50051
+    ports:
+      - "50051:50051"
+    depends_on:
+      spatial-db:
+        condition: service_healthy
+
+  # Node 网关（对外 API 入口）
+  backend:
+    build:
+      context: ./fastify-backend
+    container_name: geoloom-backend
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: spatial-db
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: 123456
+      POSTGRES_DATABASE: geoloom
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      SPATIAL_GRPC_ENDPOINT: python-compute:50051
+      # 独立 worker 模式下关闭内联 worker，避免重复消费
+      ENABLE_INLINE_SPATIAL_WORKER: "false"
+      PORT: 3200
+    ports:
+      - "3200:3200"
+    depends_on:
+      spatial-db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      python-compute:
+        condition: service_started
+
+  # Node 任务消费进程
+  node-worker:
+    build:
+      context: ./fastify-backend
+    container_name: geoloom-node-worker
+    restart: unless-stopped
+    command: ["node", "workers/spatialWorker.js"]
+    environment:
+      POSTGRES_HOST: spatial-db
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: 123456
+      POSTGRES_DATABASE: geoloom
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      SPATIAL_GRPC_ENDPOINT: python-compute:50051
+    depends_on:
+      redis:
+        condition: service_started
+      python-compute:
+        condition: service_started
 
 volumes:
   spatial_db_data:

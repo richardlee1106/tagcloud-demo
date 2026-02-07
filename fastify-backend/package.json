@@ -9,7 +9,13 @@
     "dev": "node --watch server.js",
     "migrate:vectors": "node scripts/migrate_to_pgvector.js",
     "verify:vectors": "node scripts/verify_vectors.js",
-    "import:pois": "node scripts/import_poi_data.js"
+    "import:pois": "node scripts/import_poi_data.js",
+    "worker:spatial": "node workers/spatialWorker.js",
+    "python:grpc": "python python_service/grpc_server.py",
+    "python:http": "python python_service/app.py",
+    "dev:stack": "node scripts/dev_stack.js",
+    "smoke:jobs": "node scripts/smoke_jobs_flow.js",
+    "bench:jobs": "node scripts/bench_jobs.js"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.0",
@@ -21,7 +27,11 @@
     "latlon-geohash": "^2.0.0",
     "openai": "^6.16.0",
     "pg": "^8.16.3",
-    "proj4": "^2.20.2"
+    "proj4": "^2.20.2",
+    "@grpc/grpc-js": "^1.14.0",
+    "@grpc/proto-loader": "^0.8.0",
+    "bullmq": "^5.61.0",
+    "ioredis": "^5.8.1"
   },
   "engines": {
     "node": ">=18.0.0"

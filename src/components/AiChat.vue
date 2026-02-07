@@ -77,41 +77,6 @@
         </div>
         <div class="message-content">
           <!-- 嵌入式 Pipeline 追踪器 (当有阶段信息时显示) -->
-          <div v-if="msg.role === 'assistant' && msg.stage" class="thinking-process-embed">
-            <div class="pipeline-trace">
-              <div class="trace-step" :class="{ 
-                active: isTyping && msg.stage === 'planner' && index === messages.length - 1, 
-                completed: msg.stage !== 'planner' || (index < messages.length - 1 || !isTyping)
-              }">
-                <div class="step-dot"></div>
-                <div class="step-label">意图规划</div>
-              </div>
-              <div class="trace-line" :class="{ completed: msg.stage !== 'planner' || (index < messages.length - 1 || !isTyping) }"></div>
-              <div class="trace-step" :class="{ 
-                active: isTyping && msg.stage === 'executor' && index === messages.length - 1, 
-                completed: ['writer'].includes(msg.stage) || (index < messages.length - 1 || !isTyping)
-              }">
-                <div class="step-dot"></div>
-                <div class="step-label">空间计算</div>
-              </div>
-              <div class="trace-line" :class="{ completed: ['writer'].includes(msg.stage) || (index < messages.length - 1 || !isTyping) }"></div>
-              <div class="trace-step" :class="{ 
-                active: isTyping && msg.stage === 'writer' && index === messages.length - 1,
-                completed: (index < messages.length - 1 || !isTyping)
-              }">
-                <div class="step-dot"></div>
-                <div class="step-label">结果生成</div>
-              </div>
-            </div>
-            <div class="thinking-subtitle-embed">
-              {{ (index < messages.length - 1 || !isTyping) ? '查询已完成' :
-                 msg.stage === 'planner' ? '正在解析您的地理查询意图...' : 
-                 msg.stage === 'executor' ? '正在调动 PostGIS 进行全量空间检索...' : 
-                 msg.stage === 'writer' ? '正在基于统计特征生成专业解读...' : 'GeoLoom-RAG 正在运行...' }}
-            </div>
-          </div>
-
-          <!-- 仅在有内容时显示消息气泡内容 -->
           <div v-if="msg.content && msg.content.trim()" class="message-text" v-html="renderMarkdown(msg.content)"></div>
           
           <!-- 嵌入式标签云（在文本下方显示，增加视觉引导） -->
@@ -171,6 +136,7 @@ import {
   getCurrentProviderInfo
 } from '../utils/aiService.js';
 import EmbeddedTagCloud from './EmbeddedTagCloud.vue';
+import { marked } from 'marked';
 
 const props = defineProps({
   // 当前选中的 POI 数据
@@ -220,10 +186,16 @@ const messages = ref([]);
 const inputText = ref('');
 const isTyping = ref(false);
 const currentStage = ref(''); // 'planner', 'executor', 'writer'
+const streamQueue = ref('');
+const streamTimer = ref(null);
+const activeMessageIndex = ref(-1);
+const streamRenderStep = 4;
+const streamRenderIntervalMs = 16;
 const isOnline = ref(false);
 const messagesContainer = ref(null);
 const inputRef = ref(null);
 const extractedPOIs = ref([]); // AI 提取的 POI 名称列表
+let statusTimer = null;
 
 // 计算 POI 数量
 const poiCount = computed(() => props.poiFeatures?.length || 0);
@@ -261,35 +233,137 @@ async function checkOnlineStatus() {
 }
 
 // 发送消息
+
+function normalizeSelectedCategories(rawSelectedCategories) {
+  if (!Array.isArray(rawSelectedCategories) || rawSelectedCategories.length === 0) {
+    return [];
+  }
+
+  const flattened = [];
+  for (const item of rawSelectedCategories) {
+    if (Array.isArray(item) && item.length > 0) {
+      const leaf = item[item.length - 1];
+      if (typeof leaf === 'string' && leaf.trim()) {
+        flattened.push(leaf.trim());
+      }
+      continue;
+    }
+
+    if (typeof item === 'string' && item.trim()) {
+      flattened.push(item.trim());
+    }
+  }
+
+  return [...new Set(flattened)];
+}
+
+function hasCustomSelection(spatialContext, regions) {
+  const hasPolygon = Array.isArray(spatialContext?.boundary) && spatialContext.boundary.length >= 3;
+  const hasCircle = Boolean(spatialContext?.center) && String(spatialContext?.mode || '').toLowerCase() === 'circle';
+  const hasRegion = Array.isArray(regions) && regions.length > 0;
+  return hasPolygon || hasCircle || hasRegion;
+}
+
+function enqueueStreamChunk(chunk, messageIndex) {
+  if (!chunk || typeof chunk !== 'string') return;
+
+  activeMessageIndex.value = messageIndex;
+  streamQueue.value += chunk;
+
+  if (streamTimer.value) return;
+
+  streamTimer.value = window.setInterval(() => {
+    if (!streamQueue.value || activeMessageIndex.value < 0) {
+      if (!streamQueue.value) {
+        window.clearInterval(streamTimer.value);
+        streamTimer.value = null;
+      }
+      return;
+    }
+
+    const currentMessage = messages.value[activeMessageIndex.value];
+    if (!currentMessage) {
+      streamQueue.value = '';
+      window.clearInterval(streamTimer.value);
+      streamTimer.value = null;
+      return;
+    }
+
+    const delta = streamQueue.value.slice(0, streamRenderStep);
+    streamQueue.value = streamQueue.value.slice(streamRenderStep);
+    currentMessage.content += delta;
+
+    // ??????????????????????
+    scrollToBottom(true, 'auto');
+
+    if (!streamQueue.value) {
+      window.clearInterval(streamTimer.value);
+      streamTimer.value = null;
+    }
+  }, streamRenderIntervalMs);
+}
+
+async function flushStreamQueue() {
+  if (activeMessageIndex.value < 0 || !streamQueue.value) return;
+
+  const currentMessage = messages.value[activeMessageIndex.value];
+  if (currentMessage) {
+    currentMessage.content += streamQueue.value;
+  }
+
+  streamQueue.value = '';
+
+  if (streamTimer.value) {
+    window.clearInterval(streamTimer.value);
+    streamTimer.value = null;
+  }
+
+  await nextTick();
+  scrollToBottom(true, 'auto');
+}
+
+function resetStreamState() {
+  streamQueue.value = '';
+  activeMessageIndex.value = -1;
+  if (streamTimer.value) {
+    window.clearInterval(streamTimer.value);
+    streamTimer.value = null;
+  }
+}
+
+marked.setOptions({
+  gfm: true,
+  breaks: true
+});
+
 async function sendMessage() {
   const text = inputText.value.trim();
   if (!text || isTyping.value || !isOnline.value) return;
 
-  // 添加用户消息
+  // ??????
   messages.value.push({
     role: 'user',
     content: text,
     timestamp: Date.now()
   });
   inputText.value = '';
-  
-  await nextTick();
-  scrollToBottom();
 
-  // 准备 AI 请求
+  await nextTick();
+  scrollToBottom(true, 'auto');
+
+  // ?? AI ??
   isTyping.value = true;
+  resetStreamState();
 
   try {
-    // 调试：输出 POI 数据状态
-    console.log('[AiChat] 发送消息时 POI 数量:', props.poiFeatures?.length || 0);
-    
-    // 构建用户消息（不再在前端构建 system prompt，由后端处理）
+    console.log('[AiChat] Sending message with POI count:', props.poiFeatures?.length || 0);
+
     const apiMessages = messages.value.map(m => ({
       role: m.role,
       content: m.content
     }));
 
-    // 添加 AI 消息占位
+    // ?? AI ????
     const aiMessageIndex = messages.value.length;
     messages.value.push({
       role: 'assistant',
@@ -297,19 +371,23 @@ async function sendMessage() {
       timestamp: Date.now()
     });
 
-    // 流式接收响应 - POI 数据和选项发送到后端处理
-    // 收集对话上下文及空间约束
+    const spatialContext = {
+      boundary: props.boundaryPolygon,
+      mode: props.drawMode,
+      center: props.circleCenter,
+      viewport: props.mapBounds
+    };
+
+    const normalizedSelectedCategories = normalizeSelectedCategories(props.selectedCategories);
     const options = {
       globalAnalysis: props.globalAnalysisEnabled,
-      selectedCategories: props.selectedCategories,
-      // 传递具体的边界原始数据，让后端 Executor 做硬过滤
-      spatialContext: {
-        boundary: props.boundaryPolygon,
-        mode: props.drawMode,
-        center: props.circleCenter,
-        viewport: props.mapBounds
+      selectedCategories: normalizedSelectedCategories,
+      sourcePolicy: {
+        enforceUiConstraints: true,
+        hasCustomArea: hasCustomSelection(spatialContext, props.regions),
+        hasCategoryFilter: normalizedSelectedCategories.length > 0
       },
-      // 多选区上下文 (新增)
+      spatialContext,
       regions: props.regions.map(r => ({
         id: r.id,
         name: r.name,
@@ -321,53 +399,49 @@ async function sendMessage() {
       }))
     };
 
-    // 发送请求给后端 AI Pipeline
     await sendChatMessageStream(
-      apiMessages, 
+      apiMessages,
       (chunk) => {
-        messages.value[aiMessageIndex].content += chunk;
-        scrollToBottom();
+        enqueueStreamChunk(chunk, aiMessageIndex);
       },
-      options, // 传递全域感知开关状态和空间上下文
-      props.poiFeatures, // POI 数据发送到后端
-      // 接收元数据回调
+      options,
+      props.poiFeatures,
       (type, data) => {
         if (type === 'stage') {
           currentStage.value = data;
-          // 将当前阶段记录在消息对象中，以便持久化显示
-          if (messages.value[aiMessageIndex]) {
-            messages.value[aiMessageIndex].stage = data;
-          }
+          return;
         }
+
         if (type === 'pois' && Array.isArray(data)) {
-           console.log('[AiChat] 收到后端结构化 POI 数据:', data.length);
-           extractedPOIs.value = data;
-           // 将 POI 数据附加到消息对象，供嵌入式标签云使用
-           if (messages.value[aiMessageIndex]) {
-             messages.value[aiMessageIndex].pois = data;
-             messages.value[aiMessageIndex].intentMode = 
-               options.spatialContext?.mode === 'Polygon' ? 'micro' : 'macro';
-           }
+          console.log('[AiChat] Received structured POIs:', data.length);
+          extractedPOIs.value = data;
+          if (messages.value[aiMessageIndex]) {
+            messages.value[aiMessageIndex].pois = data;
+            messages.value[aiMessageIndex].intentMode =
+              spatialContext?.mode === 'Polygon' ? 'micro' : 'macro';
+          }
         }
       }
     );
 
+    await flushStreamQueue();
   } catch (error) {
-    console.error('[AiChat] 发送消息失败:', error);
+    console.error('[AiChat] Failed to send message:', error);
     messages.value.push({
       role: 'assistant',
-      content: `❌ 抱歉，请求失败：${error.message}`,
+      content: `Request failed: ${error.message}`,
       timestamp: Date.now()
     });
   } finally {
+    await flushStreamQueue();
+    resetStreamState();
     isTyping.value = false;
     currentStage.value = '';
     await nextTick();
-    scrollToBottom();
+    scrollToBottom(true, 'auto');
   }
 }
 
-// 发送快捷操作
 function sendQuickAction(prompt) {
   inputText.value = prompt;
   sendMessage();
@@ -392,6 +466,8 @@ function handleTagClick(tag) {
 function clearChat() {
   messages.value = [];
   extractedPOIs.value = [];
+  currentStage.value = '';
+  resetStreamState();
 }
 
 // 保存对话记录
@@ -437,15 +513,15 @@ function handleScroll() {
 }
 
 // 滚动到底部 (平滑)
-function scrollToBottom(force = false) {
+function scrollToBottom(force = false, behavior = 'smooth') {
   if (userScrolledUp.value && !force) return
-  
-  // 使用 nextTick 确保 DOM 更新后滚动
+
+  // ?? nextTick ?? DOM ?????
   nextTick(() => {
     if (messagesContainer.value) {
       messagesContainer.value.scrollTo({
         top: messagesContainer.value.scrollHeight,
-        behavior: 'smooth'
+        behavior
       })
     }
   })
@@ -455,6 +531,13 @@ onUnmounted(() => {
   if (messagesContainer.value) {
     messagesContainer.value.removeEventListener('scroll', handleScroll)
   }
+
+  if (statusTimer) {
+    clearInterval(statusTimer)
+    statusTimer = null
+  }
+
+  resetStreamState()
 })
 
 // 插入换行
@@ -475,38 +558,27 @@ function formatTime(timestamp) {
 }
 
 // 增强的 Markdown 渲染（支持表格）
-function renderMarkdown(text) {
-  if (!text) return '';
-  
-  // 先处理表格（在其他转换之前）
-  text = renderTables(text);
-  
-  return text
-    // 代码块
-    .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code class="language-$1">$2</code></pre>')
-    // 行内代码
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    // 粗体
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    // 斜体
-    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
-    // 标题 (处理 # 到 ####)
-    .replace(/^#### (.+)$/gm, '<h5>$1</h5>')
-    .replace(/^### (.+)$/gm, '<h4>$1</h4>')
-    .replace(/^## (.+)$/gm, '<h3>$1</h3>')
-    .replace(/^# (.+)$/gm, '<h2>$1</h2>')
-    // 列表 (简单的正则处理，不够完美但可用)
-    .replace(/^- (.+)$/gm, '<li>• $1</li>')
-    // 有序列表
-    .replace(/^(\d+)\. (.+)$/gm, '<li><span class="list-num">$1.</span> $2</li>')
-    // 水平分割线
-    .replace(/^---$/gm, '<hr>')
-    // 段落换行
-    .replace(/\n\n/g, '<div class="spacer"></div>')
-    .replace(/\n/g, '<br>');
+function sanitizeRenderedHtml(html) {
+  if (!html) return '';
+
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/\son\w+="[^"]*"/gi, '')
+    .replace(/\son\w+='[^']*'/gi, '')
+    .replace(/javascript:/gi, '');
 }
 
-// 渲染 Markdown 表格
+function renderMarkdown(text) {
+  if (!text) return '';
+
+  const rawHtml = marked.parse(text, {
+    gfm: true,
+    breaks: true
+  });
+
+  return sanitizeRenderedHtml(rawHtml);
+}
+
 function renderTables(text) {
   const lines = text.split('\n');
   let result = [];
@@ -677,19 +749,20 @@ function clearExtractedPOIs() {
 
 // 监听消息变化，自动提取 POI
 watch(messages, (newMessages) => {
+  if (isTyping.value) return;
+
   if (newMessages.length > 0) {
     const lastMsg = newMessages[newMessages.length - 1];
     if (lastMsg.role === 'assistant' && lastMsg.content) {
       const pois = extractPOIsFromResponse(lastMsg.content);
       if (pois.length > 0) {
         extractedPOIs.value = pois;
-        console.log('[AiChat] 提取到 POI:', pois);
+        console.log('[AiChat] ??? POI:', pois);
       }
     }
   }
 }, { deep: true });
 
-// 监听 POI 数据变化，提示用户
 watch(() => props.poiFeatures, (newVal, oldVal) => {
   if (newVal?.length > 0 && newVal.length !== oldVal?.length) {
     // 可以在这里添加提示消息
@@ -700,7 +773,10 @@ watch(() => props.poiFeatures, (newVal, oldVal) => {
 onMounted(() => {
   checkOnlineStatus();
   // 定期检查服务状态
-  setInterval(checkOnlineStatus, 30000);
+  if (statusTimer) {
+    clearInterval(statusTimer);
+  }
+  statusTimer = setInterval(checkOnlineStatus, 30000);
 });
 
 /**
@@ -1099,6 +1175,21 @@ defineExpose({
   line-height: 1.6;
 }
 
+.message-text :deep(ul),
+.message-text :deep(ol) {
+  margin: 8px 0;
+  padding-left: 20px;
+}
+
+.message-text :deep(blockquote) {
+  margin: 10px 0;
+  padding: 8px 12px;
+  border-left: 3px solid rgba(99, 102, 241, 0.65);
+  background: rgba(99, 102, 241, 0.08);
+  color: #dbeafe;
+  border-radius: 0 8px 8px 0;
+}
+
 .message-text :deep(.list-num) {
   font-weight: bold;
   color: #93c5fd;
@@ -1116,6 +1207,7 @@ defineExpose({
 }
 
 /* Markdown 表格样式 */
+.message-text :deep(table),
 .message-text :deep(.md-table) {
   width: 100%;
   border-collapse: collapse;
@@ -1126,13 +1218,17 @@ defineExpose({
   overflow: hidden;
 }
 
+.message-text :deep(table th),
+.message-text :deep(table td),
 .message-text :deep(.md-table th),
+.message-text :deep(table td),
 .message-text :deep(.md-table td) {
   padding: 10px 12px;
   text-align: left;
   border-bottom: 1px solid rgba(75, 85, 99, 0.4);
 }
 
+.message-text :deep(table th),
 .message-text :deep(.md-table th) {
   background: rgba(99, 102, 241, 0.15);
   color: #a5b4fc;
@@ -1144,10 +1240,12 @@ defineExpose({
   color: #d1d5db;
 }
 
+.message-text :deep(table tr:last-child td),
 .message-text :deep(.md-table tr:last-child td) {
   border-bottom: none;
 }
 
+.message-text :deep(table tr:hover td),
 .message-text :deep(.md-table tr:hover td) {
   background: rgba(99, 102, 241, 0.08);
 }

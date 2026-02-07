@@ -13,104 +13,25 @@ import { getLLMConfig } from '../../services/llm.js'
  * Writer System Prompt
  * 专注于基于压缩数据生成自然语言回答
  */
-const WRITER_SYSTEM_PROMPT = `你是「GeoLoom-RAG 空间认知助手」，一个专业的地理信息分析专家。
+const WRITER_SYSTEM_PROMPT = `You are GeoLoom-RAG, a spatial analysis assistant.
+Use only the structured evidence in {result_context}.
 
-## 身份限制
-- 你是 GeoLoom-RAG 团队开发的智能地理助手
-- 禁止透露底层模型信息
+Hard rules:
+- Grounded only: never invent POIs, numbers, boundaries or region names.
+- Section gating:
+  - Mention multi-region comparison only when mode=region_comparison and comparison data exists.
+  - Mention vernacular/fuzzy regions only when those arrays are non-empty.
+  - Do not mention comparison workflows when the user did not select multiple regions.
+- If source_policy.category_source is all_categories, clearly state that the analysis covers all POI categories in the active spatial boundary.
+- If source_policy.category_source is ui_selector, clearly state that category filtering comes from the UI selector.
 
-## 当前数据上下文
-{result_context}
-
-## 核心能力：多维空间分析
-你需要基于上述数据，从以下维度深度解读区域特征：
-
-### 1. 业态结构分析
-- 主导业态是什么？占比如何？
-- 业态多样性如何？（是单一功能区还是混合功能区？）
-- 缺失哪些常见业态？（潜在商业机会）
-
-### 2. 空间分布规律
-- POI 是均匀分布还是聚集分布？
-- 热点区域集中在哪里？（根据 H3 网格分析）
-- 是否存在明显的功能分区？
-
-### 3. 代表性地标识别
-- 区域内有哪些**真正具有地标价值**的 POI？
-- 地标应该是：辨识度高、知名度广、可用于定位的设施
-- **绝对排除**：公厕、宿舍、体育场、配套设施等不具地标意义的 POI
-
-### 4. 区域定性判断
-- 这是什么类型的区域？（商业区/居民区/文教区/工业区/综合区）
-- 该区域的核心功能是什么？
-- 该区域适合什么人群？
-
-### 5. 空间网络结构解读（如有图分析数据）
-- **枢纽识别**：哪些区域是"核心节点"？它们为什么重要？（POI 密度高、连接度强）
-- **桥梁作用**：哪些区域起到"连接不同功能区"的作用？
-- **社区划分**：区域是否形成了明显的"功能区块"？各区块的主导业态是什么？
-- **网络拓扑洞察**：用通俗语言解释图分析结果，如"A点在区域网络中起到枢纽作用，串联了X、Y两个功能区"
-
-### 6. 多选区对比分析 (对比模式)
-- **直接指明差异**：通过数据（如POI数量、类别（大类、中类）占比）指出不同选区的核心区别
-- **业态结构对比**：比较各选区的优势业态（如"选区1商业更发达，选区2教育资源丰富"）
-- **功能定位对比**：基于数据推断不同选区的功能属性（居住/商业/混合）
-- **相似性分析**：指出共性特征
-
-## 回答规范
-1. **先直接回答核心问题**（2-3句话概括）
-2. **分点陈述分析结论**（使用 ### 标题分节）
-3. **适度使用数据佐证**（引用百分比、数量等）
-4. **给出可行建议**（如适用）
-5. **承认数据不足**（如信息不够则明确说明）
-
-## ⭐ Grounded Generation（可追溯引用）
-当在回答中提及具体 POI 时，请直接提及名称，**不需要**附加 ID。
-例如：推荐「光谷广场」，距离约 500m。
-
-## 🎯 热点区域识别与描述
-基于空间聚类分析结果，识别并描述以下类型的区域：
-- **商业热点**：餐饮、购物、娱乐设施密集区域
-- **文教区域**：学校、培训机构、文化设施聚集区
-- **居住社区**：生活服务设施配套完善的居住区
-- **产业园区**：科技公司、办公楼集中的区域
-
-描述时应包含：
-1. 区域名称（基于主导业态命名，如"光谷商圈"、"湖北大学科教文化区"）
-2. 空间范围（大致边界描述）
-3. 核心特征（主导业态、密度水平）
-4. 代表性POI（2-3个典型地点）
-
-## 📍 语义模糊区域（Vernacular Region）
-识别非行政区划的民间认知空间：
-- 基于POI聚类结果定义区域边界
-- 使用通俗易懂的区域名称
-- 描述区域的功能定位和人地关系
-- 示例："光谷商圈"、"武昌小吃街"、"青山区老工业区"
-**JSON 脚本规范 (Strict):**
-- 必须包裹在 \`\`\`json ... \`\`\` 代码块中。
-- 位于回答的最末尾。
-- 包含 3-5 个步骤。
-- \`step\`: 序号。
-- \`focus\`: 关注点名称 (对应 POI 名称) 或 "overview" (全局)。
-- \`voice_text\`: 对应的语音解说词 (中文)。
-- \`duration\`: 镜头停留时间 (毫秒)。
-
-### 示例格式:
-## 区域概况
-这里是...
-
-## 商业氛围
-...
-
-\`\`\`json
-{
-  "narrative_flow": [
-    { "step": 1, "focus": "overview", "voice_text": "让我们鸟瞰这片区域...", "duration": 5000 },
-    { "step": 2, "focus": "万达广场", "voice_text": "如果您喜欢购物...", "duration": 6000 }
-  ]
-}
-\`\`\`
+Output style:
+1) Start with a 1-2 sentence direct answer.
+2) Then provide 2-4 concise markdown sections that are truly relevant to available evidence.
+3) Keep suggestions practical (0-3 bullets), avoid generic boilerplate.
+4) Use markdown tables only when they improve readability.
+5) If evidence is insufficient, state uncertainty and what is missing.
+6) Match the user's language and tone.
 `
 
 /**
@@ -124,11 +45,38 @@ const WRITER_SYSTEM_PROMPT = `你是「GeoLoom-RAG 空间认知助手」，一�
  * @param {Object} executorResult - Executor 输出
  * @returns {string} 格式化的上下文字符串
  */
-function buildResultContext(executorResult) {
+function buildResultContext(executorResult, options = {}) {
   const { results } = executorResult
   if (!results) return '⚠️ 无可用数据'
   
   const sections = []
+
+  const sourcePolicy = options?.sourcePolicy
+  if (sourcePolicy) {
+    const categorySourceMap = {
+      ui_selector: 'UI category selector',
+      all_categories: 'all categories within boundary',
+      planner: 'query intent categories',
+      planner_only: 'query intent categories'
+    }
+
+    const geometrySourceMap = {
+      custom_area: 'custom drawn/uploaded region',
+      viewport_fallback: 'current viewport'
+    }
+
+    const selectedCategories = Array.isArray(sourcePolicy.selected_categories)
+      ? sourcePolicy.selected_categories
+      : []
+
+    const sourceText = categorySourceMap[sourcePolicy.category_source] || 'query intent categories'
+    const geometryText = geometrySourceMap[sourcePolicy.geometry_source] || 'current viewport'
+    const categoryDetail = selectedCategories.length > 0
+      ? selectedCategories.join(', ')
+      : 'all categories'
+
+    sections.push(`**Data Scope**\n- Geometry source: ${geometryText}\n- Category source: ${sourceText}\n- Category filter: ${categoryDetail}`)
+  }
   
   // 0. 执行错误/异常提示
   if (results.execution_failure || results.error_message) {
@@ -441,7 +389,7 @@ export async function* generateAnswer(userQuestion, executorResult, options = {}
   console.log('[Writer] 开始生成回答')
   
   // 构建精简上下文
-  const resultContext = buildResultContext(executorResult)
+  const resultContext = buildResultContext(executorResult, options)
   const systemPrompt = WRITER_SYSTEM_PROMPT.replace('{result_context}', resultContext)
   
   // 检查是否需要澄清

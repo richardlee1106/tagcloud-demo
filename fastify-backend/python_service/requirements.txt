@@ -1,0 +1,15 @@
+# Python 计算服务依赖（MVP）
+# - Flask: HTTP health/metrics
+# - grpcio: gRPC server/runtime
+# - psycopg2: PostGIS 访问
+# - scikit-learn/hdbscan: 聚类
+# - shapely/alphashape: 边界生成
+flask>=3.0.0
+grpcio>=1.62.0
+grpcio-tools>=1.62.0
+psycopg2-binary>=2.9.9
+numpy>=1.26.0
+scikit-learn>=1.4.0
+hdbscan>=0.8.33
+shapely>=2.0.3
+alphashape>=1.3.1

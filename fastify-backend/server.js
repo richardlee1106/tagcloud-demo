@@ -1,81 +1,106 @@
 /**
- * GeoLoom-RAG 后端服务
- * 基于 Fastify 构建的轻量级 API 服务
- * 
- * 集成：
- * - PostgreSQL + PostGIS (空间数据存储与查询)
- * - pgvector (向量检索，统一在 PostgreSQL 中)
- * - 本地 LLM (意图解析与回答生成)
+ * Fastify 主入口（Node 网关）
+ *
+ * 角色定位：
+ * 1) 对外暴露统一 HTTP API。
+ * 2) 管理基础依赖生命周期（DB / 向量库 / 队列 / gRPC 客户端）。
+ * 3) 根据配置决定是否在 API 进程内联启动 worker（开发态方便，生产通常独立进程）。
  */
-
 import 'dotenv/config'
 import Fastify from 'fastify'
 import cors from '@fastify/cors'
 
-// 导入路由
+// 业务路由：AI 聊天兼容层、Jobs 主协议、空间与检索辅助接口。
 import aiRoutes from './routes/ai/index.js'
+import jobRoutes from './routes/jobs/index.js'
 import spatialRoutes from './routes/spatial/index.js'
 import searchRoutes from './routes/search.js'
 import categoryRoutes from './routes/category.js'
 
-// 导入服务
+// 基础服务：数据库、向量库、任务队列、gRPC 客户端、worker。
 import { initDatabase, closeDatabase } from './services/database.js'
 import { initVectorDB, closeVectorDB } from './services/vectordb.js'
+import { initQueueServices, closeQueueServices, getQueueMode } from './services/queue.js'
+import { closeGrpcClient } from './services/grpcClient.js'
+import { startSpatialWorker } from './workers/spatialWorker.js'
 
-const fastify = Fastify({
-  logger: true
-})
+// 开启 logger 便于排障；生产可按需要切换为 pino transport。
+const fastify = Fastify({ logger: true })
 
-// 注册 CORS 插件
+// CORS 放开给前端开发环境和网关反代环境使用。
 await fastify.register(cors, {
   origin: true,
   methods: ['GET', 'POST', 'OPTIONS'],
   credentials: true
 })
 
-// 注册路由
+// 统一 API 路由前缀，避免误走根目录 mock。
 fastify.register(aiRoutes, { prefix: '/api/ai' })
+fastify.register(jobRoutes, { prefix: '/api/jobs' })
 fastify.register(spatialRoutes, { prefix: '/api/spatial' })
 fastify.register(searchRoutes, { prefix: '/api/search' })
 fastify.register(categoryRoutes, { prefix: '/api/category' })
 
-// 健康检查
+// 最小健康探针：用于 docker healthcheck / k8s 探活。
 fastify.get('/health', async () => {
   return { status: 'ok', timestamp: new Date().toISOString() }
 })
 
-// 优雅关闭
+/**
+ * 优雅关闭：保证进程退出前尽量释放外部连接。
+ * 注意：这里按依赖方向逆序关闭，减少“已关闭资源仍被调用”的概率。
+ */
 const gracefulShutdown = async (signal) => {
-  console.log(`\n收到 ${signal} 信号，正在关闭服务...`)
+  console.log(`\nReceived ${signal}, shutting down...`)
   await fastify.close()
   await closeDatabase()
   await closeVectorDB()
+  await closeQueueServices()
+  closeGrpcClient()
   process.exit(0)
 }
 
 process.on('SIGINT', () => gracefulShutdown('SIGINT'))
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'))
 
-// 启动服务
+/**
+ * 启动流程：
+ * 1) 连接 PostGIS。
+ * 2) 初始化 pgvector（可选能力）。
+ * 3) 初始化 Jobs 队列。
+ * 4) 按需启动内联 worker。
+ * 5) 监听 HTTP 端口。
+ */
 const start = async () => {
   try {
-    // 初始化数据库连接
-    console.log('🔌 正在连接 PostgreSQL + PostGIS...')
+    console.log('Connecting PostgreSQL + PostGIS...')
     await initDatabase()
-    
-    // 初始化 pgvector（向量检索，可选，失败不影响启动）
-    console.log('🔌 正在初始化 pgvector 向量扩展...')
+
+    console.log('Initializing pgvector support...')
     await initVectorDB()
-    
-    // 启动 HTTP 服务
-    const port = parseInt(process.env.PORT) || 3200
+    console.log('Initializing job queue...')
+    await initQueueServices()
+
+    // ?????memory ????????????????? API ???????
+    const queueMode = getQueueMode()
+    const inlineWorkerEnabledByConfig = process.env.ENABLE_INLINE_SPATIAL_WORKER !== 'false'
+    const mustUseInlineWorker = queueMode === 'memory'
+
+    if (mustUseInlineWorker || inlineWorkerEnabledByConfig) {
+      if (mustUseInlineWorker && !inlineWorkerEnabledByConfig) {
+        console.warn('[Server] ENABLE_INLINE_SPATIAL_WORKER=false ignored: memory queue requires inline worker')
+      }
+      console.log('Starting inline spatial worker...')
+      await startSpatialWorker()
+    }
+
+    const port = parseInt(process.env.PORT || '3200', 10)
     const host = '0.0.0.0'
     await fastify.listen({ port, host })
-    
-    console.log(`\n🚀 GeoLoom-RAG Backend 运行在 http://${host}:${port}`)
-    console.log(`🤖 LLM API 端点: ${process.env.LLM_BASE_URL || '未配置'}`)
-    console.log(`📍 空间查询 API: http://${host}:${port}/api/spatial/query`)
-    console.log(`🔍 快速搜索 API: http://${host}:${port}/api/search/quick\n`)
+
+    console.log(`\nGeoLoom-RAG backend: http://${host}:${port}`)
+    console.log(`Spatial query API: http://${host}:${port}/api/spatial/query`)
+    console.log(`Jobs API: http://${host}:${port}/api/jobs/narrative`)
   } catch (err) {
     fastify.log.error(err)
     process.exit(1)

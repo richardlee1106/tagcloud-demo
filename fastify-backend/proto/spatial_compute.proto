@@ -1,0 +1,53 @@
+// 空间计算 gRPC 协议
+//
+// 约定：
+// - Node 调用 ComputeSpatial，并以流式事件消费计算阶段。
+// - payload/hints/spatial_context 使用 JSON 字符串，便于快速迭代字段而不频繁改 proto。
+syntax = "proto3";
+
+package spatialcompute;
+
+service SpatialComputeService {
+  // 单次请求返回事件流：STAGE / PROGRESS / PARTIAL / FINAL / ERROR
+  rpc ComputeSpatial(ComputeRequest) returns (stream ComputeEvent);
+}
+
+message ComputeRequest {
+  // 请求唯一标识（通常与 job_id 对齐）
+  string request_id = 1;
+
+  // 业务查询类型（poi_search / area_analysis ...）
+  string query_type = 2;
+
+  // 空间上下文 JSON（viewport/boundary/circle 等）
+  string spatial_context = 3;
+
+  // 类别过滤词
+  repeated string categories = 4;
+
+  // 额外提示 JSON（query_plan、开关、语义词等）
+  string hints = 5;
+
+  // 执行模式：sync | async
+  string mode = 6;
+}
+
+enum EventType {
+  EVENT_TYPE_UNSPECIFIED = 0;
+  STAGE = 1;
+  PROGRESS = 2;
+  PARTIAL = 3;
+  FINAL = 4;
+  ERROR = 5;
+}
+
+message ComputeEvent {
+  // 事件类型
+  EventType type = 1;
+
+  // 事件负载 JSON
+  string payload = 2;
+
+  // 事件时间戳（毫秒）
+  int64 ts = 3;
+}

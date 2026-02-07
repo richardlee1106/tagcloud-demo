@@ -9,6 +9,9 @@ const { Pool } = pg;
 // 数据库连接池
 let pool = null;
 
+// rating ????????????????? NULL ?? SQL ?????
+const POI_RATING_SELECT_SQL = 'NULL::double precision AS rating';
+
 /**
  * 初始化数据库连接
  */
@@ -135,7 +138,7 @@ export async function findPOIsWithinRadius(lon, lat, radiusMeters, filters = {})
       p.category_big,
       p.category_mid,
       p.category_small,
-      p.rating,
+      ${POI_RATING_SELECT_SQL},
       ST_Distance(
         p.geom::geography,
         ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography
@@ -164,7 +167,12 @@ export async function findPOIsWithinRadius(lon, lat, radiusMeters, filters = {})
   sql += ` ORDER BY distance_meters LIMIT $${paramIndex}`;
   // 核心修改：用户想要全量数据，我们将默认上限提升到 50万
   // 只要前端敢要，后端就敢给
-  params.push(limit > 2000 ? limit : 500000);
+  const maxLimit = parseInt(process.env.POI_QUERY_MAX_LIMIT || '20000', 10);
+  const normalizedLimit = Number(limit);
+  const safeLimit = Number.isFinite(normalizedLimit)
+    ? Math.max(1, Math.min(normalizedLimit, maxLimit))
+    : Math.min(100, maxLimit);
+  params.push(safeLimit);
   
   const result = await query(sql, params);
   return result.rows;
@@ -199,7 +207,7 @@ export async function findPOIsByDirection(centerLon, centerLat, direction, radiu
       p.category_big,
       p.category_mid,
       p.category_small,
-      p.rating,
+      ${POI_RATING_SELECT_SQL},
       ST_Distance(
         p.geom::geography,
         ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography
@@ -587,7 +595,7 @@ export async function findPOIsFiltered(options) {
     SELECT 
       p.id, p.name, p.address, p.type,
       p.category_big, p.category_mid, p.category_small,
-      p.rating,
+      ${POI_RATING_SELECT_SQL},
       ST_X(p.geom) AS lon, ST_Y(p.geom) AS lat
   `;
 
@@ -650,7 +658,12 @@ export async function findPOIsFiltered(options) {
   */
   
   sql += ` ORDER BY distance_meters LIMIT $${paramIndex}`;
-  params.push(limit);
+  const maxLimit = parseInt(process.env.POI_QUERY_MAX_LIMIT || '20000', 10);
+  const normalizedLimit = Number(limit);
+  const safeLimit = Number.isFinite(normalizedLimit)
+    ? Math.max(1, Math.min(normalizedLimit, maxLimit))
+    : Math.min(100, maxLimit);
+  params.push(safeLimit);
   
   try {
     console.log('[DB SQL Debug]', sql);
@@ -664,7 +677,8 @@ export async function findPOIsFiltered(options) {
     return result.rows;
   } catch (err) {
     console.error('[DB] 高级过滤查询失败:', err.message);
-    return [];
+    // ????????? 500 ??????????????????????
+    throw err;
   }
 }
 
@@ -745,7 +759,12 @@ export async function quickSearch(options) {
   }
   
   sql += ` LIMIT $${paramIndex}`;
-  params.push(limit);
+  const maxLimit = parseInt(process.env.POI_QUERY_MAX_LIMIT || '20000', 10);
+  const normalizedLimit = Number(limit);
+  const safeLimit = Number.isFinite(normalizedLimit)
+    ? Math.max(1, Math.min(normalizedLimit, maxLimit))
+    : Math.min(100, maxLimit);
+  params.push(safeLimit);
   
   try {
     const startTime = Date.now();
@@ -903,7 +922,7 @@ export async function findPOIsBySpatialFilter(options = {}) {
       p.category_big,
       p.category_mid,
       p.category_small,
-      p.rating,
+      ${POI_RATING_SELECT_SQL},
       ST_X(p.geom) AS lon,
       ST_Y(p.geom) AS lat
     FROM pois p
@@ -930,7 +949,12 @@ export async function findPOIsBySpatialFilter(options = {}) {
   }
 
   sql += ` LIMIT $${paramIndex}`;
-  params.push(limit);
+  const maxLimit = parseInt(process.env.POI_QUERY_MAX_LIMIT || '20000', 10);
+  const normalizedLimit = Number(limit);
+  const safeLimit = Number.isFinite(normalizedLimit)
+    ? Math.max(1, Math.min(normalizedLimit, maxLimit))
+    : Math.min(100, maxLimit);
+  params.push(safeLimit);
 
   try {
     const result = await query(sql, params);

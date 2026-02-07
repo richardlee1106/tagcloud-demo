@@ -1,55 +1,73 @@
-# Spatial-RAG TagCloud v1.0
+# Spatial-RAG 本地开发报告
 
-基于空间增强检索生成（Spatial-RAG）架构的语义态势感知词云系统。
+## 1. 系统概览
 
-## 🌟 核心理念 (v1.0)
+当前后端架构为 **Node 网关 + Python 空间计算**，目标是保证“空间约束 + 语义检索 + 方向问答”的最小闭环可用。
 
-本项目已全面转向以 **PostgreSQL + PostGIS** 为核心的数据管理方案，不再依赖本地大型 GeoJSON 文件。
+主要组成：
 
-- **高性能**: 采用 ST_DWithin 等空间引擎函数实现秒级区域检索。
-- **智能化**: 集成 LLM 意图解析，支持自然语言直接查询地理实体。
-- **自适应**: 动态重心引力词云布局，实时反馈区域语义权重。
+- 前端：Vue 3 + Vite
+- 网关：fastify-backend
+- 计算服务：fastify-backend/python_service
+- 队列：BullMQ + Redis（无 Redis 时降级 memory）
+- 数据库：PostgreSQL + PostGIS（可选 pgvector）
 
-## 🛠️ 技术栈
+## 2. 本地启动
 
-- **Frontend**: Vue 3 (Vite), D3.js, Web Workers
-- **Backend**: Fastify, PostgreSQL with PostGIS & pgvector
-- **AI**: Local LLM (via LM Studio / Ollama), OpenAI-compatible API
-
-## 🚀 快速开始
-
-### 1. 数据库准备
-
-确保已安装 PostgreSQL 并启用 PostGIS 扩展。
-导入数据脚本：
-
-```bash
-psql -h localhost -U postgres -d tagcloud -f fastify-backend/scripts/sql/init_database.sql
-```
-
-### 2. 后端启动
+### 2.1 推荐方式
 
 ```bash
 cd fastify-backend
-npm install
-npm start
+npm run dev:stack
 ```
 
-> Note: Local dev uses Fastify `/api/*` via the Vite proxy (http://localhost:3200). The root `/api/ai/*` serverless mocks are for Vercel only.
+启动策略：
 
-### 3. 前端启动
+- 有 Redis 配置：启动独立 worker + backend
+- 无 Redis 配置：跳过独立 worker，backend 内联 worker
+
+这个策略用于避免 memory 队列的跨进程失效（入队后无人消费）。
+
+### 2.2 前端启动
 
 ```bash
 npm install
 npm run dev
 ```
 
-## 📂 目录结构
+默认地址：
 
-- `/src`: 前端 Vue 源码
-- `/fastify-backend`: 后端服务，包含空间查询与 AI 逻辑
-- `/public`: 静态资源（不含大规模地理数据）
+- 前端：http://localhost:5173
+- 后端：http://localhost:3200
 
-## 🛡️ License
+## 3. 接口说明
 
-MIT
+### 3.1 兼容接口
+
+- `POST /api/ai/chat`
+
+保留 SSE 事件：`stage` `pois` `boundary` `spatial_clusters` `vernacular_regions` `fuzzy_regions`
+
+新增可选事件：`job` `progress` `partial` `refined_result`
+
+### 3.2 Jobs 接口
+
+- `POST /api/jobs/narrative`
+- `GET /api/jobs/:job_id`
+- `GET /api/jobs/:job_id/stream`
+- `GET /api/jobs/:job_id/result`
+
+## 4. 验证脚本
+
+在 `fastify-backend` 目录执行：
+
+```bash
+npm run smoke:jobs
+npm run bench:jobs -- 10 6
+```
+
+## 5. 常见问题
+
+1. Vite 代理报 `ECONNREFUSED`：检查后端是否启动。
+2. Jobs 超时：检查是否误用了“无 Redis + 独立 worker”。
+3. 检索结果为空：检查空间边界、分类过滤、数据存在性。

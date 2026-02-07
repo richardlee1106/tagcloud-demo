@@ -318,6 +318,31 @@ async function execBasicMode(plan, frontendPOIs, options = {}) {
   }
 
   // 0. 解析空间硬边界 (从前端 spatialContext 中提取)
+  const normalizeUiCategories = (rawCategories = []) => {
+    if (!Array.isArray(rawCategories) || rawCategories.length === 0) return []
+
+    const flattened = []
+    for (const item of rawCategories) {
+      if (Array.isArray(item) && item.length > 0) {
+        const leaf = item[item.length - 1]
+        if (typeof leaf === 'string' && leaf.trim()) flattened.push(leaf.trim())
+      } else if (typeof item === 'string' && item.trim()) {
+        flattened.push(item.trim())
+      }
+    }
+
+    return [...new Set(flattened)]
+  }
+
+  const uiSelectedCategories = normalizeUiCategories(options?.selectedCategories)
+  if (uiSelectedCategories.length > 0) {
+    // UI selector takes top priority for hard category filtering.
+    plan.categories = uiSelectedCategories
+  } else if (options?.sourcePolicy?.enforceUiConstraints) {
+    // Without UI category filter, keep category scope as all categories.
+    plan.categories = []
+  }
+
   let hardBoundaryWKT = null
   const spatialContext = options.spatialContext
   
@@ -2012,8 +2037,12 @@ function matchesRating(poi, ratingRange) {
   const [minRating, maxRating] = ratingRange;
   const props = poi.properties || poi;
   const rating = props.rating;
-  if (minRating !== null && (rating === null || rating === undefined || rating < minRating)) return false;
-  if (maxRating !== null && (rating === null || rating === undefined || rating > maxRating)) return false;
+
+  // rating ????? POI ?????????????????????
+  if (rating === null || rating === undefined) return true;
+
+  if (minRating !== null && rating < minRating) return false;
+  if (maxRating !== null && rating > maxRating) return false;
   return true;
 }
 
@@ -2056,7 +2085,9 @@ function filterFromFrontendPOIs(pois, plan, anchorCoords = null) {
   // 评分过滤
   if (plan.rating_range?.[0]) {
     filtered = filtered.filter(poi => {
-      const rating = poi.properties?.rating || poi.rating || 0
+      const rating = poi.properties?.rating ?? poi.rating
+      // rating ??????????????????
+      if (rating === null || rating === undefined) return true
       return rating >= plan.rating_range[0]
     })
   }

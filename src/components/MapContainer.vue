@@ -1551,59 +1551,67 @@ function clearPolygon() {
  * @param {Array} coordinates - GeoJSON 格式的多边形坐标数组 [[lng, lat], ...]
  */
 function addUploadedPolygon(coordinates) {
-  // 清除之前的多边形
-  clearPolygon();
-  
-  // 将 GeoJSON 坐标转换为 OpenLayers 多边形
+  if (!Array.isArray(coordinates) || coordinates.length < 3) {
+    import('element-plus').then(({ ElNotification }) => {
+      ElNotification({
+        title: 'Upload failed',
+        message: 'Invalid polygon coordinates in uploaded file.',
+        type: 'error',
+        duration: 3500
+      });
+    });
+    return;
+  }
+
+  // Keep upload behavior aligned with draw behavior: uploaded polygons become regions.
+  if (!canAddRegion.value) {
+    import('element-plus').then(({ ElNotification }) => {
+      ElNotification({
+        title: 'Region limit reached',
+        message: `Only ${MAX_REGIONS} regions are allowed. Remove one before uploading another.`,
+        type: 'warning',
+        duration: 4000
+      });
+    });
+    return;
+  }
+
+  const closedCoordinates = [...coordinates];
+  const first = closedCoordinates[0];
+  const last = closedCoordinates[closedCoordinates.length - 1];
+  if (!last || first[0] !== last[0] || first[1] !== last[1]) {
+    closedCoordinates.push(first);
+  }
+
   const poiCoordSys = import.meta.env.VITE_POI_COORD_SYS || 'gcj02';
-  const olCoords = coordinates.map(coord => {
+  const olCoords = closedCoordinates.map(coord => {
     let [lon, lat] = coord;
-    // 如果系统配置为 wgs84，则说明输入数据（如上传的 GeoJSON）是 wgs84，需要转为 gcj02 以匹配底图
     if (poiCoordSys.toLowerCase() === 'wgs84') {
       [lon, lat] = wgs84ToGcj02(lon, lat);
     }
     return fromLonLat([lon, lat]);
   });
+
   const geometry = new Polygon([olCoords]);
-  
-  // 创建多边形要素
-  const polygonFeature = new Feature({
-    geometry: geometry
-  });
-  
-  // 设置样式（与绘制的多边形样式一致）
-  polygonFeature.setStyle(new Style({
-    fill: new Fill({
-      color: 'rgba(0, 123, 255, 0.2)'
-    }),
-    stroke: new Stroke({
-      color: '#007bff',
-      width: 2,
-      lineDash: [5, 5]
-    })
-  }));
-  
-  // 添加到图层
+  const polygonFeature = new Feature({ geometry });
   polygonLayerSource.addFeature(polygonFeature);
-  
-  // 关键：设置当前几何状态，以便后续数据更新时能自动筛选
+
   currentGeometry = geometry;
   currentGeometryType = 'Polygon';
-  
-  // 立即触发一次筛选和高亮
-  onPolygonComplete(geometry);
-  
-  // 缩放到多边形范围
+
+  // Route through multi-region completion so labels, region IDs and context are consistent.
+  onPolygonCompleteMulti(geometry, polygonFeature);
+
   const extent = geometry.getExtent();
   map.value.getView().fit(extent, {
     padding: [50, 50, 50, 50],
     duration: 500
   });
-  
-  console.log('[MapContainer] 已添加上传的多边形并触发筛选');
+
+  console.log('[MapContainer] Uploaded polygon is registered as a region');
 }
 
-// 暴露给父组件的方法
+// ?????????
 defineExpose({ map, openPolygonDraw, closePolygonDraw, showHighlights, clearHighlights, clearPolygon, flyTo, addUploadedPolygon });
 
 // --- WGS84 转 GCJ-02 工具函数 ---

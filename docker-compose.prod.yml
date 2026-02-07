@@ -1,25 +1,26 @@
+version: '3.9'
+
+# 生产部署编排（Node 网关 + Python 计算 + Redis 队列）
 services:
-  # 1. 空间数据库 (PostGIS + pgvector)
+  # 主数据库：PostGIS + pgvector 扩展
   spatial-db:
     image: geoloom-spatial-db:latest
     build:
       context: .
       dockerfile: ./docker/Dockerfile.db
     container_name: geoloom-spatial-db
-    shm_size: '512mb'
     restart: unless-stopped
+    shm_size: '512mb'
     env_file: .env
     environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=geoloom2026  # 直接写死密码，避免读取不到变量
-      - POSTGRES_DB=geoloom
-      - POSTGRES_MULTIPLE_EXTENSIONS=postgis,hstore,pg_trgm,vector
-      # 明确指定数据存放路径，配合 volumes 确保数据持久化不丢失
-      - PGDATA=/var/lib/postgresql/data/pgdata
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-geoloom2026}
+      POSTGRES_DB: geoloom
+      POSTGRES_MULTIPLE_EXTENSIONS: postgis,hstore,pg_trgm,vector
+      PGDATA: /var/lib/postgresql/data/pgdata
     ports:
       - "5432:5432"
     volumes:
-      # 直接映射宿主机物理目录，不再使用 Docker 自动管理的内部卷，防止路径混乱
       - /geoloom_db_data:/var/lib/postgresql/data
       - ./docker-init-spatial:/docker-entrypoint-initdb.d
     healthcheck:
@@ -30,40 +31,102 @@ services:
     networks:
       - geoloom-network
 
-  # 2. 后端 API 服务 (Fastify)
-  backend:
-    build: 
-      context: ./fastify-backend
-    container_name: geoloom-backend
+  # 队列后端：BullMQ 依赖 Redis
+  redis:
+    image: redis:7-alpine
+    container_name: geoloom-redis
     restart: unless-stopped
-    # 核心：直接把宿主机代码文件夹挂载进去，这样你在 1Panel 改的代码会立即生效
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    networks:
+      - geoloom-network
+
+  # Python 空间计算服务（gRPC）
+  python-compute:
+    image: python:3.11-slim
+    container_name: geoloom-python-compute
+    restart: unless-stopped
+    working_dir: /app
     volumes:
       - ./fastify-backend:/app
-      # 排除 node_modules，防止宿主机和容器环境冲突
-      - /app/node_modules
-    # 核心：直接告诉 Docker 读 .env 文件，不要在下面写 ${...}，防止被服务器空的 shell 变量覆盖
-    env_file: .env
+    command: >
+      sh -c "pip install -r python_service/requirements.txt &&
+      python python_service/grpc_server.py"
     environment:
-      - POSTGRES_HOST=spatial-db
-      - POSTGRES_PORT=5432
-      - POSTGRES_DATABASE=geoloom
-      - POSTGRES_DB=geoloom
-      - PORT=3000
+      POSTGRES_HOST: spatial-db
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-geoloom2026}
+      POSTGRES_DATABASE: geoloom
+      SPATIAL_GRPC_HOST: 0.0.0.0
+      SPATIAL_GRPC_PORT: 50051
     ports:
-      - "3000:3000"
+      - "50051:50051"
     depends_on:
       spatial-db:
         condition: service_healthy
     networks:
       - geoloom-network
+
+  # Node 公网网关
+  backend:
+    build:
+      context: ./fastify-backend
+    container_name: geoloom-backend
+    restart: unless-stopped
+    volumes:
+      - ./fastify-backend:/app
+      - /app/node_modules
+    env_file: .env
+    environment:
+      POSTGRES_HOST: spatial-db
+      POSTGRES_PORT: 5432
+      POSTGRES_DATABASE: geoloom
+      POSTGRES_DB: geoloom
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      SPATIAL_GRPC_ENDPOINT: python-compute:50051
+      # 生产推荐独立 worker，避免 API 实例重启影响任务消费
+      ENABLE_INLINE_SPATIAL_WORKER: "false"
+      PORT: 3000
+    ports:
+      - "3000:3000"
+    depends_on:
+      spatial-db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      python-compute:
+        condition: service_started
+    networks:
+      - geoloom-network
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
-volumes:
-  # 注意：由于上面改成了物理路径映射，这个声明其实已经不生效了，但保留定义防止报错
-  spatial_db_data:
-    driver: local
+  # 独立 worker（重计算任务消费者）
+  node-worker:
+    build:
+      context: ./fastify-backend
+    container_name: geoloom-node-worker
+    restart: unless-stopped
+    command: ["node", "workers/spatialWorker.js"]
+    env_file: .env
+    environment:
+      POSTGRES_HOST: spatial-db
+      POSTGRES_PORT: 5432
+      POSTGRES_DATABASE: geoloom
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      SPATIAL_GRPC_ENDPOINT: python-compute:50051
+    depends_on:
+      redis:
+        condition: service_started
+      python-compute:
+        condition: service_started
+    networks:
+      - geoloom-network
 
 networks:
   geoloom-network:
-    driver: bridge 
+    driver: bridge

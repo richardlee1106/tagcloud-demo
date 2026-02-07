@@ -114,7 +114,7 @@
     </header>
     <main 
       class="bottom-split" 
-      :class="{ 'ai-expanded': aiExpanded }"
+      :class="{ 'ai-expanded': aiExpanded, 'is-dragging': isDragging1 }"
       v-loading="isLoading" 
       element-loading-text="正在加载数据..."
       element-loading-background="rgba(0, 0, 0, 0.7)"
@@ -210,6 +210,10 @@
     </main>
     
     <!-- AI 助手浮动按钮（AI收起时显示） -->
+    <button class="narrative-entry-btn" @click="goToNarrative">
+      Narrative Mode
+    </button>
+
     <div v-if="!aiExpanded" class="ai-fab" @click="toggleAiPanel">
       <div class="ai-fab-icon">
         <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
@@ -224,6 +228,7 @@
 
 <script setup>
 import { ref, shallowRef, onMounted, nextTick, computed } from 'vue';
+import { useRouter } from 'vue-router';
 import { ElNotification } from 'element-plus';
 import ControlPanel from './components/ControlPanel.vue';
 import TagCloud from './components/TagCloud.vue';
@@ -231,6 +236,8 @@ import MapContainer from './components/MapContainer.vue';
 import AiChat from './components/AiChat.vue';
 import { semanticSearch } from './utils/aiService';
 import { useRegions } from './composables/useRegions';
+
+const router = useRouter();
 
 // 多选区管理
 const { regions, getRegionsContext } = useRegions();
@@ -341,6 +348,10 @@ if (aiExpanded.value) {
 }
 
 // 叠加模式状态
+function goToNarrative() {
+  router.push('/narrative');
+}
+
 const activeGroups = ref([]); // [{ name: 'A', features: [] }, ...]
 const heatmapEnabled = ref(false); // 新增热力图同步状态
 
@@ -423,9 +434,7 @@ function onDrag(e) {
   splitPercentage1.value = newPercent;
   
   // 实时更新布局
-  requestAnimationFrame(() => {
-    handleResize();
-  });
+  handleResize();
 }
 
 // 停止拖拽
@@ -1401,6 +1410,13 @@ html, body, #app {
               opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+.bottom-split.is-dragging .left-section,
+.bottom-split.is-dragging .map-panel,
+.bottom-split.is-dragging .tag-panel,
+.bottom-split.is-dragging .ai-panel {
+  transition: none !important;
+}
+
 .panel-hidden {
   width: 0 !important;
   opacity: 0;
@@ -1484,6 +1500,33 @@ html, body, #app {
 
 
 /* AI 浮动按钮 */
+.narrative-entry-btn {
+  position: fixed;
+  right: 24px;
+  bottom: 28px;
+  z-index: 1001;
+  padding: 10px 16px;
+  border: 1px solid rgba(129, 140, 248, 0.45);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.82);
+  color: #e5e7eb;
+  font-size: 13px;
+  font-weight: 600;
+  backdrop-filter: blur(8px);
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.narrative-entry-btn:hover {
+  transform: translateY(-1px);
+  border-color: rgba(129, 140, 248, 0.75);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.35);
+}
+
+.narrative-entry-btn:active {
+  transform: translateY(0);
+}
+
 .ai-fab {
   position: fixed;
   bottom: 24px;
@@ -1664,6 +1707,15 @@ html, body, #app {
   
   .ai-fab:active {
     transform: translateX(-50%) scale(0.95);
+  }
+}
+
+@media (max-width: 768px) {
+  .narrative-entry-btn {
+    right: 12px;
+    bottom: 88px;
+    padding: 8px 12px;
+    font-size: 12px;
   }
 }
 </style>
