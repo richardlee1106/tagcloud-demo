@@ -1,0 +1,67 @@
+{
+  "percent": 60,
+  "samples": 500,
+  "expected_range_percent": [
+    49,
+    71
+  ],
+  "all_within_expected": true,
+  "checked_at": "2026-02-07T08:22:25.755Z",
+  "by_query_type": [
+    {
+      "query_type": "poi_search",
+      "python_primary_count": 303,
+      "samples": 500,
+      "python_ratio_percent": 60.6,
+      "expected_range_percent": [
+        49,
+        71
+      ],
+      "within_expected": true
+    },
+    {
+      "query_type": "area_analysis",
+      "python_primary_count": 302,
+      "samples": 500,
+      "python_ratio_percent": 60.4,
+      "expected_range_percent": [
+        49,
+        71
+      ],
+      "within_expected": true
+    },
+    {
+      "query_type": "fuzzy_regions",
+      "python_primary_count": 300,
+      "samples": 500,
+      "python_ratio_percent": 60,
+      "expected_range_percent": [
+        49,
+        71
+      ],
+      "within_expected": true
+    },
+    {
+      "query_type": "graph_reasoning",
+      "python_primary_count": 311,
+      "samples": 500,
+      "python_ratio_percent": 62.2,
+      "expected_range_percent": [
+        49,
+        71
+      ],
+      "within_expected": true
+    },
+    {
+      "query_type": "region_comparison",
+      "python_primary_count": 300,
+      "samples": 500,
+      "python_ratio_percent": 60,
+      "expected_range_percent": [
+        49,
+        71
+      ],
+      "within_expected": true
+    }
+  ]
+}
