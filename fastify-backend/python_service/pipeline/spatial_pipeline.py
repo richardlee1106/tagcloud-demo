@@ -11,6 +11,7 @@ from typing import Any, Dict, Iterable, Iterator, List, Tuple
 from shapely.geometry import MultiPoint, Point, Polygon, mapping
 
 from algorithms.alpha_shape import build_alpha_shape
+from algorithms.direction_filter import filter_pois_by_direction, resolve_direction_from_query_plan
 from algorithms.hdbscan_cluster import cluster_points
 from algorithms.membership import compute_membership
 from db.repository import POIRepository
@@ -327,6 +328,10 @@ class SpatialPipeline:
         migration_hints = hints.get("migration") if isinstance(hints.get("migration"), dict) else {}
         py_data_source = str(migration_hints.get("py_data_source") or "python").lower()
 
+        query_plan = hints.get("query_plan") if isinstance(hints.get("query_plan"), dict) else {}
+        direction_hint = resolve_direction_from_query_plan(query_plan, semantic_query=semantic_query)
+        anchor_hint = query_plan.get("anchor") if isinstance(query_plan, dict) else None
+
         yield {
             "type": "STAGE",
             "payload": {
@@ -356,6 +361,15 @@ class SpatialPipeline:
                 limit=8000,
             )
 
+        direction_applied = direction_hint is not None
+        if direction_applied:
+            pois = filter_pois_by_direction(
+                pois,
+                direction=direction_hint,
+                anchor=anchor_hint,
+                limit=8000,
+            )
+
         yield {
             "type": "PROGRESS",
             "payload": {
@@ -363,6 +377,8 @@ class SpatialPipeline:
                 "progress": 0.25,
                 "poi_count": len(pois),
                 "candidate_source": candidate_source,
+                "direction": direction_hint,
+                "direction_applied": direction_applied,
             },
         }
 
@@ -384,6 +400,8 @@ class SpatialPipeline:
                             "cluster_count": 0,
                             "h3_resolution": _dynamic_h3_resolution(_extract_area_km2(spatial_context)),
                             "candidate_source": candidate_source,
+                            "direction": direction_hint,
+                            "direction_applied": direction_applied,
                         },
                     },
                 },
@@ -529,6 +547,8 @@ class SpatialPipeline:
                 "h3_resolution": h3_resolution,
                 "query_type": query_type,
                 "candidate_source": candidate_source,
+                "direction": direction_hint,
+                "direction_applied": direction_applied,
             },
         }
 
@@ -543,6 +563,8 @@ class SpatialPipeline:
                     "input_area_km2": round(area_km2, 3),
                     "candidate_source": candidate_source,
                     "source_policy": source_policy if isinstance(source_policy, dict) else {},
+                    "direction": direction_hint,
+                    "direction_applied": direction_applied,
                 },
             },
         }
