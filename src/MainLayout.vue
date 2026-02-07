@@ -1084,17 +1084,30 @@ async function refreshManualSelectionSource(options = {}) {
     fitView = false,
     keepMapHighlight = true,
     silent = true,
-    limit = MAX_MANUAL_FETCH_LIMIT
+    limit = MAX_MANUAL_FETCH_LIMIT,
+    allowViewportFallback = false
   } = options;
 
   const requestToken = ++manualFilterRequestToken;
   const categoryLeaves = getSelectedCategoryLeaves(selectedCategoryPath.value);
+  const hasCategoryFilter = categoryLeaves.length > 0;
+  const hasCustomArea = hasManualSpatialSelection();
+
+  // 业务约束：未选择“选区”且未选择“类别”时，手动筛选池必须保持空，
+  // 避免页面初始化时自动拉取整个视窗（例如 20000 条）导致计数与用户意图不一致。
+  if (!hasCustomArea && !hasCategoryFilter && !allowViewportFallback) {
+    return applySelectionResults([], {
+      updateTagCloud,
+      fitView: false,
+      keepMapHighlight
+    });
+  }
 
   try {
     const features = await fetchManualFilteredFeatures(categoryLeaves, { limit });
     if (requestToken !== manualFilterRequestToken) return [];
 
-    // Apply a strict client-side clip after backend fetch to keep rendered POIs inside the chosen area.
+    // 后端筛选结果仍进行一次前端严格裁剪，保证最终渲染 POI 100% 在约束内。
     const strictFeatures = filterFeaturesClientSide(features, categoryLeaves);
     return applySelectionResults(strictFeatures, { updateTagCloud, fitView, keepMapHighlight });
   } catch (error) {
@@ -1719,8 +1732,10 @@ const handleMapMoveEnd = throttle((bounds) => {
   mapBounds.value = bounds;
   // console.log('[App] Map bounds updated:', bounds);
 
-  // 无手动选区时，视野变化应实时驱动 POI 来源更新，保证“仅 bbox 模式”数量随屏幕变化。
-  if (!hasManualSpatialSelection()) {
+  const hasCategoryFilter = getSelectedCategoryLeaves(selectedCategoryPath.value).length > 0;
+
+  // 初始状态不自动拉取全视野 POI；只有“类别筛选 + 无选区”时才跟随视野更新。
+  if (!hasManualSpatialSelection() && hasCategoryFilter) {
     void refreshManualSelectionSource({
       updateTagCloud: false,
       fitView: false,
@@ -2009,14 +2024,6 @@ function handleReset() {
   if (controlPanelRefMap.value) {
     controlPanelRefMap.value.setSearchResult(false);
   }
-
-  // 重置后按默认规则回填“当前视野 + 全类别”数据，保证 AI 数据源与计数可用。
-  void refreshManualSelectionSource({
-    updateTagCloud: false,
-    fitView: false,
-    keepMapHighlight: false,
-    silent: true
-  });
 
   console.log('[App] 已完成初始化重置并同步分类状态');
   ElNotification.success({ title: '重置完成', message: '已清空选区、类别与结果数据。', offset: 80 });
