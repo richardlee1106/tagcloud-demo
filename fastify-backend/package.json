@@ -15,7 +15,8 @@
     "python:http": "python python_service/app.py",
     "dev:stack": "node scripts/dev_stack.js",
     "smoke:jobs": "node scripts/smoke_jobs_flow.js",
-    "bench:jobs": "node scripts/bench_jobs.js"
+    "bench:jobs": "node scripts/bench_jobs.js",
+    "check:dualrun": "node scripts/dual_run_parity_check.js"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.0",
