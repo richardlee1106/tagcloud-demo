@@ -265,6 +265,23 @@ def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return r * c
 
 
+def _top_membership_drivers(membership, top_n: int = 2) -> List[Dict[str, Any]]:
+    """Return top contributing factors for fuzzy-region explainability."""
+    factors = [
+        ("density", float(getattr(membership, "density", 0.0))),
+        ("purity", float(getattr(membership, "purity", 0.0))),
+        ("centrality", float(getattr(membership, "centrality", 0.0))),
+        ("compactness", float(getattr(membership, "compactness", 0.0))),
+        ("scale", float(getattr(membership, "scale", 0.0))),
+    ]
+
+    factors.sort(key=lambda item: item[1], reverse=True)
+    return [
+        {"factor": name, "value": round(value, 4)}
+        for name, value in factors[: max(1, top_n)]
+    ]
+
+
 def _filter_payload_candidates(
     candidates: List[Dict[str, Any]],
     *,
@@ -523,6 +540,14 @@ class SpatialPipeline:
                     "boundary": boundary_geojson,
                     "center": {"lon": center_lon, "lat": center_lat},
                     "boundary_method": boundary_method,
+                    "score_breakdown": {
+                        "density": membership.density,
+                        "purity": membership.purity,
+                        "centrality": membership.centrality,
+                        "compactness": membership.compactness,
+                        "scale": membership.scale,
+                    },
+                    "drivers": _top_membership_drivers(membership),
                 }
             )
 
@@ -558,6 +583,12 @@ class SpatialPipeline:
             },
         }
 
+        fuzzy_summary = {
+            "core": len([region for region in fuzzy_regions if region.get("level") == "core"]),
+            "transition": len([region for region in fuzzy_regions if region.get("level") == "transition"]),
+            "periphery": len([region for region in fuzzy_regions if region.get("level") == "periphery"]),
+        }
+
         final_results = {
             "mode": "python-spatial",
             "pois": pois[:500],
@@ -568,6 +599,7 @@ class SpatialPipeline:
             },
             "vernacular_regions": vernacular_regions[:10],
             "fuzzy_regions": fuzzy_regions[:10],
+            "fuzzy_summary": fuzzy_summary,
             "stats": {
                 "total_candidates": len(pois),
                 "cluster_count": len(vernacular_regions),
@@ -581,6 +613,9 @@ class SpatialPipeline:
                 "direction": direction_hint,
                 "direction_applied": direction_applied,
                 "boundary_method": boundary_methods[0] if len(set(boundary_methods)) == 1 and boundary_methods else "mixed",
+                "fuzzy_core_count": fuzzy_summary["core"],
+                "fuzzy_transition_count": fuzzy_summary["transition"],
+                "fuzzy_periphery_count": fuzzy_summary["periphery"],
             },
         }
 
