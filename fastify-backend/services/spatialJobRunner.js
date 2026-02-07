@@ -8,6 +8,7 @@ import { parseIntent, quickIntentClassify } from '../routes/ai/planner.js'
 import { executeQuery } from '../routes/ai/executor.js'
 import { generateAnswer, buildQuickReply } from '../routes/ai/writer.js'
 import { computeSpatialStream, isGrpcComputeEnabled } from './grpcClient.js'
+import { resolveSpatialMigrationDecision } from './migrationPolicy.js'
 
 // MVP 固定分流阈值，后续可根据压测结果调参。
 const ASYNC_RULES = {
@@ -337,12 +338,12 @@ function isSmallTalkQuestion(question = '') {
 
   const compact = normalized.replace(/[\s,.!?]/g, '')
   const smallTalkSet = new Set([
-    '\u4f60\u597d',     // ??
-    '\u60a8\u597d',     // ??
+    '\u4f60\u597d',     // nihao
+    '\u60a8\u597d',     // ninhao
     '\u55e8',             // ?
-    '\u54c8\u55bd',     // ??
-    '\u5728\u5417',     // ??
-    '\u5728\u4e0d\u5728', // ???
+    '\u54c8\u55bd',     // halou
+    '\u5728\u5417',     // zaima
+    '\u5728\u4e0d\u5728', // zaibuzai
     'hi',
     'hello',
     'hey'
@@ -434,7 +435,32 @@ export function decideExecutionMode({
 /**
  * 构造 gRPC 请求体。
  */
-function buildGrpcRequest({ requestId, queryPlan, spatialContext, options }) {
+function serializeCandidatesForGrpc(options = {}, poiFeatures = []) {
+  // In hybrid mode we may forward candidates, but skip oversized payloads.
+  if (typeof options?.candidatesJson === 'string') {
+    return options.candidatesJson
+  }
+
+  if (!Array.isArray(poiFeatures) || poiFeatures.length === 0) {
+    return ''
+  }
+
+  if (poiFeatures.length > 2000) {
+    return ''
+  }
+
+  try {
+    return JSON.stringify(poiFeatures)
+  } catch {
+    return ''
+  }
+}
+
+function buildGrpcRequest({ requestId, queryPlan, spatialContext, options, migrationDecision, poiFeatures }) {
+  const executionProfile = migrationDecision?.execution_profile || 'core'
+  const dryRun = migrationDecision?.dry_run === true
+  const candidatesJson = serializeCandidatesForGrpc(options, poiFeatures)
+
   return {
     request_id: requestId,
     query_type: queryPlan?.query_type || 'poi_search',
@@ -447,9 +473,13 @@ function buildGrpcRequest({ requestId, queryPlan, spatialContext, options }) {
         enableFuzzyRegion: options?.enableFuzzyRegion,
         enableVernacularRegion: options?.enableVernacularRegion,
         needBoundaryRefine: options?.needBoundaryRefine
-      }
+      },
+      migration: migrationDecision || null
     }),
-    mode: options?.mode || 'sync'
+    mode: options?.mode || 'sync',
+    candidates_json: candidatesJson,
+    execution_profile: executionProfile,
+    dry_run: dryRun
   }
 }
 
@@ -491,26 +521,62 @@ function normalizeExecutorEnvelope(rawPayload) {
  * 1) 优先 Python gRPC
  * 2) 异常时回退 Node executor
  */
+function runShadowPythonCompute({ requestId, queryPlan, spatialContext, options, poiFeatures, migrationDecision }) {
+  // Shadow run is best-effort and must never break the primary request.
+  computeSpatialStream(
+    buildGrpcRequest({
+      requestId,
+      queryPlan,
+      spatialContext,
+      options: { ...options, mode: 'sync' },
+      migrationDecision: { ...migrationDecision, dry_run: true },
+      poiFeatures
+    }),
+    () => Promise.resolve()
+  ).catch((err) => {
+    console.warn(`[SpatialJobRunner] shadow python compute failed: ${err.message}`)
+  })
+}
+
+/**
+ * Spatial compute strategy:
+ * 1) Prefer Python gRPC when migration policy allows
+ * 2) Fallback to Node executor when Python compute fails
+ * 3) Optional shadow run for dual-run diagnostics
+ */
 async function computeSpatialWithFallback({
   requestId,
   queryPlan,
   spatialContext,
   options,
   poiFeatures,
-  reporter
+  reporter,
+  migrationDecision
 }) {
-  const useGrpc = isGrpcComputeEnabled() && options.forceLocalExecutor !== true
+  const grpcEnabled = isGrpcComputeEnabled() && options.forceLocalExecutor !== true
+  const fallbackReasons = Array.isArray(migrationDecision?.reasons) ? [...migrationDecision.reasons] : []
+  if (!grpcEnabled) fallbackReasons.push('grpc_disabled')
 
-  if (useGrpc) {
+  const usePythonPrimary = grpcEnabled && migrationDecision?.use_python_primary === true
+
+  if (usePythonPrimary) {
     try {
       await reporter.reportStage('python_compute', {
         engine: 'grpc',
-        endpoint: process.env.SPATIAL_GRPC_ENDPOINT || '127.0.0.1:50051'
+        endpoint: process.env.SPATIAL_GRPC_ENDPOINT || '127.0.0.1:50051',
+        migration: migrationDecision
       })
 
       let finalPayload = null
       await computeSpatialStream(
-        buildGrpcRequest({ requestId, queryPlan, spatialContext, options }),
+        buildGrpcRequest({
+          requestId,
+          queryPlan,
+          spatialContext,
+          options,
+          migrationDecision,
+          poiFeatures
+        }),
         async (event) => {
           if (event.type === 'STAGE') {
             await reporter.reportStage(event.payload?.stage || 'python_stage', event.payload)
@@ -539,9 +605,25 @@ async function computeSpatialWithFallback({
     }
   }
 
+  if (grpcEnabled && migrationDecision?.shadow_enabled === true) {
+    runShadowPythonCompute({
+      requestId,
+      queryPlan,
+      spatialContext,
+      options,
+      poiFeatures,
+      migrationDecision
+    })
+  }
+
+  await reporter.reportStage('node_executor', {
+    reason: fallbackReasons.length > 0 ? fallbackReasons : ['python_not_selected']
+  })
+
   return executeQuery(queryPlan, poiFeatures, {
     ...options,
-    spatialContext
+    spatialContext,
+    migrationDecision
   })
 }
 
@@ -601,7 +683,7 @@ export async function runNarrativeSpatialJob(payload, reporter = {}) {
     }
   }
 
-  // ?? 1?Planner ????
+  // Stage 1: planner intent parsing
   await report.reportStage('planner', { request_id: requestId })
 
   let plannerOutput
@@ -645,9 +727,16 @@ export async function runNarrativeSpatialJob(payload, reporter = {}) {
     source_policy: enforced.policy
   })
 
-  // 阶段 2：空间执行
+  // Stage 2: spatial execution
+  const migrationDecision = resolveSpatialMigrationDecision({
+    requestId,
+    queryPlan,
+    options: effectiveOptions
+  })
+
   await report.reportStage('executor', {
-    route: 'python_first'
+    route: migrationDecision.use_python_primary ? 'python_primary' : 'node_primary',
+    migration: migrationDecision
   })
 
   const executorEnvelope = await computeSpatialWithFallback({
@@ -656,7 +745,8 @@ export async function runNarrativeSpatialJob(payload, reporter = {}) {
     spatialContext,
     options: effectiveOptions,
     poiFeatures,
-    reporter: report
+    reporter: report,
+    migrationDecision
   })
 
   const normalizedExecutor = normalizeExecutorEnvelope(executorEnvelope)
@@ -715,8 +805,9 @@ export async function runNarrativeSpatialJob(payload, reporter = {}) {
         confidence: plannerOutput?.confidence || plannerOutput?.queryPlan?.confidence || null,
         fast_path: plannerOutput?.fastPath || false
       },
-      compute_mode: isGrpcComputeEnabled() ? 'grpc_with_fallback' : 'local_executor_only',
-      source_policy: effectiveOptions.sourcePolicy || null
+      compute_mode: migrationDecision?.use_python_primary ? 'python_primary' : 'node_primary',
+      source_policy: effectiveOptions.sourcePolicy || null,
+      migration: migrationDecision
     }
   }
 }
