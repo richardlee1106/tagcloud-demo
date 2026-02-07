@@ -25,6 +25,7 @@ import geometry from '../../services/geometry.js'
 import clustering from '../../services/clustering.js'
 // Phase 5 优化：模糊区域生成 (Fuzzy Region)
 import fuzzyRegion from '../../services/fuzzyRegion.js'
+import { computeSpatialStream, isGrpcComputeEnabled } from '../../services/grpcClient.js'
 
 /**
  * 执行器配置
@@ -124,12 +125,173 @@ function getMaxBinsForResolution(resolution) {
 }
 
 /**
- * 阶段 2 主入口：执行查询
- * 
- * @param {Object} queryPlan - Planner 输出的查询计划
- * @param {Array} frontendPOIs - 前端传来的 POI 数据（用于区域分析模式）
- * @param {Object} options - 额外选项，包括 regions 上下文
- * @returns {Promise<Object>} ExecutorResult
+ * Python 主路径迁移辅助逻辑。
+ * - 仅在 executor 直连调用时生效。
+ * - 任何异常都不中断请求，失败即回退 Node。
+ */
+// 执行器直连场景优先走 Python 主路径。
+const PYTHON_EXECUTOR_QUERY_TYPES = new Set(['poi_search', 'area_analysis'])
+
+function normalizeExecutorCategories(rawCategories = []) {
+  if (!Array.isArray(rawCategories)) return []
+
+  return [...new Set(
+    rawCategories
+      .filter((item) => typeof item === 'string' && item.trim())
+      .map((item) => item.trim())
+  )]
+}
+
+function shouldUsePythonExecutor(queryPlan = {}, options = {}) {
+  if (process.env.EXECUTOR_PY_ENABLED === 'false') return false
+  if (options?.skipPythonExecutor === true) return false
+  if (options?.fallbackMode === true) return false
+  if (options?.forceLocalExecutor === true || options?.forceNodeFallback === true) return false
+
+  // spatialJobRunner 已负责灰度和回退，executor 不重复分流。
+  if (options?.migrationDecision) return false
+
+  if (!isGrpcComputeEnabled()) return false
+
+  const queryType = String(queryPlan?.query_type || 'poi_search').toLowerCase()
+  return PYTHON_EXECUTOR_QUERY_TYPES.has(queryType)
+}
+
+function serializeExecutorCandidates(frontendPOIs = [], options = {}) {
+  const pyDataSource = String(options?.pyDataSource || process.env.SPATIAL_PY_DATA_SOURCE || 'python').toLowerCase()
+
+  // Python 直查模式不传 candidates，避免 gRPC 负载过大。
+  if (pyDataSource === 'python') return ''
+  if (!Array.isArray(frontendPOIs) || frontendPOIs.length === 0) return ''
+  if (frontendPOIs.length > 2000) return ''
+
+  try {
+    return JSON.stringify(frontendPOIs)
+  } catch {
+    return ''
+  }
+}
+
+function normalizePythonExecutorResult(rawPayload = {}) {
+  const rawResult = (rawPayload?.results && typeof rawPayload.results === 'object')
+    ? rawPayload.results
+    : (rawPayload && typeof rawPayload === 'object' ? rawPayload : null)
+
+  if (!rawResult || typeof rawResult !== 'object') {
+    return null
+  }
+
+  const safeStats = rawResult.stats && typeof rawResult.stats === 'object'
+    ? { ...rawResult.stats }
+    : {}
+
+  return {
+    mode: rawResult.mode || 'python-spatial',
+    anchor: rawResult.anchor ?? null,
+    pois: Array.isArray(rawResult.pois) ? rawResult.pois : [],
+    boundary: rawResult.boundary ?? null,
+    area_profile: rawResult.area_profile ?? null,
+    landmarks: Array.isArray(rawResult.landmarks) ? rawResult.landmarks : [],
+    spatial_clusters: rawResult.spatial_clusters || { hotspots: [] },
+    vernacular_regions: Array.isArray(rawResult.vernacular_regions) ? rawResult.vernacular_regions : [],
+    fuzzy_regions: Array.isArray(rawResult.fuzzy_regions) ? rawResult.fuzzy_regions : [],
+    fuzzy_summary: rawResult.fuzzy_summary || { core: 0, transition: 0, periphery: 0 },
+    graph_reasoning: rawResult.graph_reasoning || null,
+    stats: safeStats
+  }
+}
+
+async function tryExecuteQueryViaPython(queryPlan, frontendPOIs, options = {}) {
+  if (!shouldUsePythonExecutor(queryPlan, options)) {
+    return null
+  }
+
+  const queryType = String(queryPlan?.query_type || 'poi_search').toLowerCase()
+  const spatialContext = options.spatialContext || options.context || {}
+  const categories = normalizeExecutorCategories(queryPlan?.categories)
+
+  const maxFetchLimit = parseInt(process.env.POI_QUERY_MAX_LIMIT || '20000', 10)
+  const defaultLimit = queryType === 'area_analysis'
+    ? Math.min(20000, maxFetchLimit)
+    : Math.min(8000, maxFetchLimit)
+  const requestedLimit = Number(options?.limit)
+  const safeLimit = Number.isFinite(requestedLimit)
+    ? Math.max(1, Math.min(Math.floor(requestedLimit), maxFetchLimit))
+    : defaultLimit
+
+  const regions = Array.isArray(options?.regions)
+    ? options.regions
+    : (Array.isArray(spatialContext?.regions) ? spatialContext.regions : [])
+
+  const sourcePolicy = options?.sourcePolicy || {}
+  const pyDataSource = String(options?.pyDataSource || process.env.SPATIAL_PY_DATA_SOURCE || 'python').toLowerCase()
+  const executionProfile = queryType === 'area_analysis' ? 'advanced' : 'core'
+  const requestId = options.requestId || `executor-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
+  try {
+    let finalPayload = null
+
+    await computeSpatialStream(
+      {
+        request_id: requestId,
+        query_type: queryType,
+        spatial_context: JSON.stringify(spatialContext || {}),
+        categories,
+        hints: JSON.stringify({
+          query_plan: queryPlan,
+          semantic_query: queryPlan?.semantic_query || '',
+          options: {
+            sourcePolicy,
+            selectedCategories: options?.selectedCategories || [],
+            regions,
+            limit: safeLimit,
+            maxFetchLimit
+          },
+          migration: {
+            py_data_source: pyDataSource,
+            execution_profile: executionProfile
+          }
+        }),
+        mode: options?.mode || 'sync',
+        candidates_json: serializeExecutorCandidates(frontendPOIs, { pyDataSource }),
+        execution_profile: executionProfile,
+        dry_run: false
+      },
+      async (event) => {
+        if (event.type === 'ERROR') {
+          throw new Error(event.payload?.message || 'Python executor returned ERROR event')
+        }
+
+        if (event.type === 'FINAL') {
+          finalPayload = event.payload
+        }
+      }
+    )
+
+    const normalizedResult = normalizePythonExecutorResult(finalPayload)
+    if (!normalizedResult) {
+      throw new Error('Python executor returned empty FINAL payload')
+    }
+
+    normalizedResult.stats = {
+      ...normalizedResult.stats,
+      executor_engine: 'python_grpc',
+      fetch_limit: safeLimit
+    }
+
+    console.log(`[Executor] Python 主路径命中: ${queryType}, POI=${normalizedResult.pois.length}`)
+    return normalizedResult
+  } catch (error) {
+    // Python 路径失败不影响主流程，继续回退 Node。
+    console.warn(`[Executor] Python 主路径失败，回退 Node: ${error.message}`)
+    return null
+  }
+}
+
+/**
+ * Executor 主入口。
+ * - 核心 query_type 优先尝试 Python 主路径。
+ * - Python 不可用时保持 Node 确定性回退。
  */
 export async function executeQuery(queryPlan, frontendPOIs = [], options = {}) {
   const startTime = Date.now()
@@ -166,19 +328,24 @@ export async function executeQuery(queryPlan, frontendPOIs = [], options = {}) {
   }
   
   try {
-    let result
-    
-    // 根据 QueryPlan 决定执行路径
-    if (queryPlan.query_type === 'region_comparison') {
-      // 多选区对比模式
-      result = await execRegionComparison(queryPlan, options)
-    } else if (queryPlan.need_graph_reasoning) {
-      result = await execGraphMode(queryPlan, frontendPOIs, options)
-    } else if (queryPlan.aggregation_strategy?.enable || queryPlan.need_global_context) {
-      // 启用三通道中的“统计通道”或“混合通道”
-      result = await execAggregatedAnalysisMode(queryPlan, frontendPOIs, options)
-    } else {
-      result = await execBasicMode(queryPlan, frontendPOIs, options)
+    // 迁移阶段：优先尝试 Python 主路径计算。
+    // 仅在 executor 直连场景生效，JobRunner 保持原有编排。
+    let result = await tryExecuteQueryViaPython(queryPlan, frontendPOIs, options)
+
+    // Python 不可用时，回退到原有 Node 执行路径。
+    if (!result) {
+      // 按 queryPlan 选择 Node 分支。
+      if (queryPlan.query_type === 'region_comparison') {
+        // 多选区对比模式。
+        result = await execRegionComparison(queryPlan, options)
+      } else if (queryPlan.need_graph_reasoning) {
+        result = await execGraphMode(queryPlan, frontendPOIs, options)
+      } else if (queryPlan.aggregation_strategy?.enable || queryPlan.need_global_context) {
+        // 聚合 / 全局上下文分支。
+        result = await execAggregatedAnalysisMode(queryPlan, frontendPOIs, options)
+      } else {
+        result = await execBasicMode(queryPlan, frontendPOIs, options)
+      }
     }
     
     // 添加执行统计
