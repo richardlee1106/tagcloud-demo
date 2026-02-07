@@ -5,7 +5,6 @@
 import { randomUUID } from 'crypto'
 
 import { parseIntent, quickIntentClassify } from '../routes/ai/planner.js'
-import { executeQuery } from '../routes/ai/executor.js'
 import { generateAnswer, buildQuickReply } from '../routes/ai/writer.js'
 import { computeSpatialStream, isGrpcComputeEnabled } from './grpcClient.js'
 import { resolveSpatialMigrationDecision } from './migrationPolicy.js'
@@ -15,6 +14,102 @@ import { resolveSourcePolicy } from './sourcePolicy.js'
 const ASYNC_RULES = {
   maxSyncCandidates: 8000,
   maxSyncAreaKm2WithRefine: 20
+}
+
+// Lazy-load legacy Node executor only when fallback is required.
+// This keeps gateway startup lean when Python is the primary compute path.
+let cachedLegacyExecuteQuery = null
+
+async function getLegacyExecuteQuery() {
+  if (typeof cachedLegacyExecuteQuery === 'function') {
+    return cachedLegacyExecuteQuery
+  }
+
+  const legacyModule = await import('../routes/ai/executor.js')
+  if (typeof legacyModule.executeQuery !== 'function') {
+    throw new Error('legacy Node executor is unavailable')
+  }
+
+  cachedLegacyExecuteQuery = legacyModule.executeQuery
+  return cachedLegacyExecuteQuery
+}
+
+const ADVANCED_QUERY_TYPES = new Set([
+  'area_analysis',
+  'fuzzy_regions',
+  'vernacular_region',
+  'graph_reasoning',
+  'region_comparison'
+])
+
+function normalizeQueryType(queryPlan = {}) {
+  const rawType = queryPlan?.query_type || queryPlan?.queryType || 'poi_search'
+  return String(rawType).trim().toLowerCase() || 'poi_search'
+}
+
+// Migration closeout rule: advanced spatial queries should stay on Python.
+// Legacy Node executor is allowed only for explicit forceNodeFallback or legacy policy.
+function shouldUseMinimalNodeFallback(queryPlan = {}, options = {}) {
+  if (options.forceNodeFallback === true || options.forceLocalExecutor === true) {
+    return false
+  }
+
+  const policy = String(process.env.SPATIAL_NODE_ADVANCED_FALLBACK || 'minimal').trim().toLowerCase()
+  if (policy === 'legacy' || policy === 'always') {
+    return false
+  }
+
+  if (policy === 'disabled') {
+    return true
+  }
+
+  return ADVANCED_QUERY_TYPES.has(normalizeQueryType(queryPlan))
+}
+
+function emptyGraphReasoningSummary() {
+  return {
+    node_count: 0,
+    edge_count: 0,
+    component_count: 0,
+    components: [],
+    top_hubs: [],
+    avg_degree: 0,
+    distance_threshold_m: 280
+  }
+}
+
+function buildMinimalNodeFallbackEnvelope(queryPlan = {}, fallbackReasons = []) {
+  const queryType = normalizeQueryType(queryPlan)
+  const fallbackPolicy = String(process.env.SPATIAL_NODE_ADVANCED_FALLBACK || 'minimal').trim().toLowerCase()
+
+  return {
+    success: true,
+    results: {
+      mode: 'node-minimal-fallback',
+      pois: [],
+      boundary: null,
+      spatial_clusters: { hotspots: [] },
+      target_regions: [],
+      region_analyses: [],
+      comparison: null,
+      vernacular_regions: [],
+      fuzzy_regions: [],
+      graph_reasoning: emptyGraphReasoningSummary(),
+      stats: {
+        total_candidates: 0,
+        cluster_count: 0,
+        query_type: queryType,
+        executor_engine: 'node_minimal_fallback',
+        fallback_policy: fallbackPolicy,
+        degraded: true
+      }
+    },
+    diagnostics: {
+      engine: 'node-minimal-fallback',
+      query_type: queryType,
+      fallback_reasons: fallbackReasons
+    }
+  }
 }
 
 /**
@@ -641,7 +736,30 @@ async function computeSpatialWithFallback({
     node_path: nodePath
   })
 
-  const nodeEnvelope = await executeQuery(queryPlan, poiFeatures, {
+  if (shouldUseMinimalNodeFallback(queryPlan, options)) {
+    const queryType = normalizeQueryType(queryPlan)
+    fallbackReasons.push(`minimal_node_fallback:${queryType}`)
+
+    await reporter.reportStage('node_executor_minimal', {
+      query_type: queryType,
+      policy: String(process.env.SPATIAL_NODE_ADVANCED_FALLBACK || 'minimal').trim().toLowerCase(),
+      reason: 'advanced_query_routed_to_python_only'
+    })
+
+    const minimalEnvelope = normalizeExecutorEnvelope(
+      buildMinimalNodeFallbackEnvelope(queryPlan, fallbackReasons)
+    )
+
+    return {
+      ...minimalEnvelope,
+      _compute_path: nodePath,
+      _fallback_reasons: fallbackReasons
+    }
+  }
+
+  const legacyExecuteQuery = await getLegacyExecuteQuery()
+
+  const nodeEnvelope = await legacyExecuteQuery(queryPlan, poiFeatures, {
     ...options,
     spatialContext,
     migrationDecision,
