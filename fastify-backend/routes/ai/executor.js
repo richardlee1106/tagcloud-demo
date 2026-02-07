@@ -2064,198 +2064,121 @@ function getPolygonCenter(ring) {
  * 
  * 综合评分公式: FinalScore = α*Spatial + β*Functional + γ*Semantic + δ*GraphCentrality
  */
-async function execGraphMode(plan, frontendPOIs, options = {}) {
-  console.log('[Executor] 进入图推理模式')
-  
-  const result = {
-    mode: 'graph_analysis',
-    anchor: null,
-    pois: [],
-    area_profile: null,
-    landmarks: [],
-    graph_analysis: null, // 图分析结果
-    fuzzy_regions: [],    // 模糊区域数据 (Inherited from Aggregated)
-    stats: {
-      total_candidates: 0,
-      filtered_count: 0,
-      graph_reasoning_applied: true
+// Node ????????????
+// - ????? Python ???????
+// - ? Python ?????Node ????????????????????????
+function buildFallbackGraphAnalysisFromHotspots(hotspots = []) {
+  const safeHotspots = Array.isArray(hotspots) ? hotspots : []
+  const maxDensity = safeHotspots.reduce((max, item) => Math.max(max, Number(item?.density || 0)), 0) || 1
+
+  const hubs = safeHotspots.slice(0, 8).map((item, index) => {
+    const dominant = item?.dominantCategories?.[0]?.category || item?.theme || 'mixed'
+    const density = Number(item?.density || 0)
+    const poiCount = Number(item?.poiCount || 0)
+
+    return {
+      representativePOI: `${dominant}-hub-${index + 1}`,
+      mainCategory: dominant,
+      pageRank: Number((density / maxDensity).toFixed(3)),
+      degree: Math.max(1, Math.round(poiCount / 20))
     }
+  })
+
+  const totalGrids = safeHotspots.length
+  const totalConnections = totalGrids > 1 ? Math.round((totalGrids * (totalGrids - 1)) / 2) : 0
+  const avgConnectivity = totalGrids > 0 ? Number((totalConnections / totalGrids).toFixed(2)) : 0
+
+  const totalPoiInHotspots = safeHotspots.reduce((sum, item) => sum + Number(item?.poiCount || 0), 0)
+  const communities = safeHotspots.slice(0, 5).map((item) => {
+    const dominant = item?.dominantCategories?.[0]?.category || 'mixed'
+    const poiCount = Number(item?.poiCount || 0)
+    return {
+      dominantCategory: dominant,
+      gridCount: 1,
+      categoryRatio: totalPoiInHotspots > 0
+        ? ((poiCount / totalPoiInHotspots) * 100).toFixed(1)
+        : '0.0'
+    }
+  })
+
+  const insights = []
+  if (totalGrids > 0) {
+    insights.push({ text: `Fallback graph built from ${totalGrids} hotspot cells.` })
+  }
+  if (hubs.length > 0) {
+    insights.push({ text: `Top hub: ${hubs[0].representativePOI}.` })
   }
 
-  // 1. 首先执行聚合分析获取候选数据
-  const aggregatedResult = await execAggregatedAnalysisMode(plan, frontendPOIs, options)
-  
-  // 复制基础结果
-  result.anchor = aggregatedResult.anchor
-  result.area_profile = aggregatedResult.area_profile
-  result.landmarks = aggregatedResult.landmarks
-  result.fuzzy_regions = aggregatedResult.fuzzy_regions || [] // 继承模糊区域数据
-  result.stats.total_candidates = aggregatedResult.stats?.total_candidates || 0
-  
-  // 2. 动态导入图服务（避免循环依赖）
-  let graphService
-  try {
-    graphService = await import('../../services/graph.js')
-  } catch (err) {
-    console.error('[Executor] 图服务导入失败:', err.message)
-    // 降级返回聚合结果
-    result.mode = 'aggregated_analysis_fallback'
-    result.pois = aggregatedResult.pois
-    result.graph_analysis = { error: '图服务不可用' }
-    return result
+  return {
+    global: {
+      totalGrids,
+      totalConnections,
+      avgConnectivity
+    },
+    hubs,
+    bridges: [],
+    communities,
+    insights
   }
-
-  // 3. 收集用于图分析的 POI 数据
-  // 优先使用数据库检索的原始候选集，如果没有则用前端数据
-  let poisForGraph = []
-  
-  const spatialContext = options.spatialContext || options.context || {}
-  let searchCenter = null
-  const normalizedSpatialCenter = normalizeCenterPoint(spatialContext.center)
-  
-  if (normalizedSpatialCenter) {
-    searchCenter = normalizedSpatialCenter
-  } else if (spatialContext.viewport) {
-    searchCenter = {
-      lon: (spatialContext.viewport[0] + spatialContext.viewport[2]) / 2,
-      lat: (spatialContext.viewport[1] + spatialContext.viewport[3]) / 2
-    }
-  } else if (result.anchor) {
-    searchCenter = { lon: result.anchor.lon, lat: result.anchor.lat }
-  }
-
-  // 从数据库获取更多 POI 用于图分析
-  if (searchCenter) {
-    const graphSearchPlan = { 
-      ...plan, 
-      categories: [], // 全类目以便分析网络结构
-      limit: 2000     // 图分析需要更多数据点
-    }
-    
-    let hardBoundaryWKT = null
-    if (spatialContext.boundary && spatialContext.mode === 'Polygon') {
-      hardBoundaryWKT = pointsToWKT(spatialContext.boundary)
-    } else if (normalizedSpatialCenter && (spatialContext.mode === 'Circle' || spatialContext.mode === 'circle')) {
-      const circleRadius = Number(spatialContext.radius ?? plan.radius_m ?? 3000)
-      hardBoundaryWKT = circleToWKT(normalizedSpatialCenter, circleRadius)
-    } else if (spatialContext.viewport) {
-      hardBoundaryWKT = bboxToWKT(spatialContext.viewport)
-    }
-    
-    try {
-      poisForGraph = await searchFromDatabase(
-        searchCenter, 
-        plan.radius_m || 3000, 
-        graphSearchPlan, 
-        hardBoundaryWKT
-      )
-      console.log(`[Executor] 图分析数据检索: ${poisForGraph.length} 条`)
-    } catch (err) {
-      console.warn('[Executor] 图分析数据检索失败:', err.message)
-    }
-  }
-
-  // 兜底使用前端数据
-  if (poisForGraph.length < 10 && Array.isArray(frontendPOIs) && frontendPOIs.length > 0) {
-    poisForGraph = frontendPOIs
-    console.log(`[Executor] 使用前端数据进行图分析: ${poisForGraph.length} 条`)
-  }
-
-  // 4. 执行图推理
-  if (poisForGraph.length >= 5) {
-    const graphResult = graphService.analyzeGraph(poisForGraph, {
-      resolution: plan.aggregation_strategy?.resolution || 9
-    })
-
-    if (graphResult.success) {
-      result.graph_analysis = graphResult.graph_analysis
-      result.stats.graph_node_count = graphResult.stats?.node_count
-      result.stats.graph_edge_count = graphResult.stats?.edge_count
-      result.stats.graph_duration_ms = graphResult.stats?.duration_ms
-
-      // 5. 基于图分析结果增强 POI 选择
-      // 优先选择位于枢纽区域的 POI
-      const hubH3Indices = new Set(
-        (graphResult.graph_analysis.hubs || []).map(h => h.h3Index)
-      )
-      const bridgeH3Indices = new Set(
-        (graphResult.graph_analysis.bridges || []).map(b => b.h3Index)
-      )
-
-      // 为每个候选 POI 计算图加权分数
-      const enhancedPOIs = aggregatedResult.pois.map(poi => {
-        const lat = poi.lat || (poi.geometry?.coordinates ? poi.geometry.coordinates[1] : null)
-        const lon = poi.lon || (poi.geometry?.coordinates ? poi.geometry.coordinates[0] : null)
-        
-        let graphBonus = 0
-        if (lat != null && lon != null) {
-          try {
-            const poiH3 = h3.latLngToCell(lat, lon, plan.aggregation_strategy?.resolution || 9)
-            if (hubH3Indices.has(poiH3)) {
-              graphBonus = 0.3 // 枢纽区域加分
-              poi.graph_role = 'hub'
-            } else if (bridgeH3Indices.has(poiH3)) {
-              graphBonus = 0.2 // 桥梁区域加分
-              poi.graph_role = 'bridge'
-            }
-          } catch (e) {
-            // 忽略 H3 错误
-          }
-        }
-        
-        poi.graph_bonus = graphBonus
-        poi.enhanced_score = (poi.score || 0.5) + graphBonus
-        return poi
-      })
-
-      // 按增强分数重排序
-      enhancedPOIs.sort((a, b) => (b.enhanced_score || 0) - (a.enhanced_score || 0))
-      
-      result.pois = compressPOIs(
-        enhancedPOIs.slice(0, plan.sampling_strategy?.count || 20),
-        result.anchor?.name
-      )
-
-      // 为枢纽 POI 添加标记
-      result.pois.forEach(poi => {
-        if (poi.graph_role) {
-          poi.tags = poi.tags || []
-          if (poi.graph_role === 'hub') {
-            poi.tags.push('区域枢纽')
-          } else if (poi.graph_role === 'bridge') {
-            poi.tags.push('连接节点')
-          }
-        }
-      })
-
-      console.log(`[Executor] 图推理增强完成: ${result.pois.length} POIs, ` +
-                  `${graphResult.graph_analysis.hubs?.length || 0} 枢纽, ` +
-                  `${graphResult.graph_analysis.communities?.length || 0} 社区`)
-    } else {
-      console.warn('[Executor] 图推理失败:', graphResult.error)
-      result.pois = aggregatedResult.pois
-      result.graph_analysis = { error: graphResult.error }
-    }
-  } else {
-    console.log('[Executor] POI 数量不足，跳过图推理')
-    result.pois = aggregatedResult.pois
-    result.graph_analysis = { error: 'POI 数量不足（需要至少 5 个）' }
-  }
-
-  result.stats.filtered_count = result.pois.length
-  return result
 }
 
-// =====================================================
-// 辅助函数
-// =====================================================
+function buildFallbackGraphReasoningFromHotspots(hotspots = [], pois = []) {
+  const safeHotspots = Array.isArray(hotspots) ? hotspots : []
+  const safePois = Array.isArray(pois) ? pois : []
+  const analysis = buildFallbackGraphAnalysisFromHotspots(safeHotspots)
+
+  const nodeCount = safePois.length
+  const edgeCount = analysis.hubs.reduce((sum, item) => sum + Number(item?.degree || 0), 0)
+  const componentCount = safeHotspots.length > 0 ? Math.max(1, Math.ceil(safeHotspots.length / 4)) : 0
+
+  return {
+    node_count: nodeCount,
+    edge_count: edgeCount,
+    component_count: componentCount,
+    components: componentCount > 0 ? [nodeCount] : [],
+    top_hubs: analysis.hubs.map((hub, index) => ({
+      id: index + 1,
+      name: hub.representativePOI,
+      degree: hub.degree
+    })),
+    avg_degree: nodeCount > 0 ? Number(((2 * edgeCount) / nodeCount).toFixed(3)) : 0,
+    distance_threshold_m: null
+  }
+}
 
 /**
- * 从数据库搜索 POI
+ * ??????Node ??????
+ *
+ * ???
+ * - ????????? Python?Node ?? Python ???????
+ * - ????????????????????????????????????
  */
-/**
- * 从数据库搜索 POI
- */
+async function execGraphMode(plan, frontendPOIs, options = {}) {
+  console.warn('[Executor] graph_reasoning uses Node lightweight fallback; prefer Python primary path')
+
+  const aggregatedResult = await execAggregatedAnalysisMode(plan, frontendPOIs, options)
+  const hotspots = Array.isArray(aggregatedResult?.spatial_clusters?.hotspots)
+    ? aggregatedResult.spatial_clusters.hotspots
+    : []
+
+  const graphAnalysis = buildFallbackGraphAnalysisFromHotspots(hotspots)
+  const graphReasoning = buildFallbackGraphReasoningFromHotspots(hotspots, aggregatedResult?.pois || [])
+
+  return {
+    ...aggregatedResult,
+    mode: 'graph_analysis_fallback',
+    graph_analysis: graphAnalysis,
+    graph_reasoning: graphReasoning,
+    stats: {
+      ...(aggregatedResult?.stats || {}),
+      graph_reasoning_applied: false,
+      graph_fallback_applied: true,
+      executor_engine: aggregatedResult?.stats?.executor_engine || 'node_fallback'
+    }
+  }
+}
+
+
 async function searchFromDatabase(anchor, radius, plan, geometryWKT = null) {
   console.log('[Executor Debug] 进入 searchFromDatabase. Anchor:', anchor, 'Radius:', radius, 'Cats:', plan.categories);
   try {
@@ -2822,241 +2745,272 @@ function circleToWKT(center, radiusM, segments = 72) {
  * @param {Object} options - 选项，包含 regions 上下文数据
  * @returns {Promise<Object>} 对比结果
  */
+/**
+ * ?????????Node ??????
+ *
+ * ???
+ * - ???? Python region_comparison ???
+ * - Node ????????????????????????? SQL ????
+ */
 async function execRegionComparison(queryPlan, options = {}) {
-  const { regions = [] } = options
-  const targetRegionIds = queryPlan.target_regions || []
-  
-  console.log(`[Executor] 多选区对比模式: 目标选区 ${targetRegionIds.join(', ')}`)
-  console.log(`[Executor] 可用选区: ${regions.map(r => r.id).join(', ')}`)
-  
-  // 验证目标选区是否存在
-  const targetRegions = regions.filter(r => targetRegionIds.includes(r.id))
-  
+  const regions = Array.isArray(options?.regions) ? options.regions : []
+
+  const requestedIds = Array.isArray(queryPlan?.target_regions) && queryPlan.target_regions.length > 0
+    ? queryPlan.target_regions
+    : regions.map((region) => region?.id).filter((id) => id !== undefined && id !== null)
+
+  const requestedIdSet = new Set(requestedIds.map((id) => String(id)))
+  const targetRegions = regions.filter((region) => requestedIdSet.has(String(region?.id)))
+
   if (targetRegions.length < 2) {
-    console.warn(`[Executor] 对比分析需要至少2个选区，当前只有 ${targetRegions.length} 个`)
     return {
       mode: 'region_comparison',
-      error: '对比分析需要至少2个有效选区',
+      error: '???????? 2 ?????',
       comparison: null,
-      stats: { 
+      target_regions: requestedIds,
+      region_analyses: [],
+      pois: [],
+      area_profile: null,
+      landmarks: [],
+      stats: {
         valid_regions: targetRegions.length,
-        requested_regions: targetRegionIds.length
+        requested_regions: requestedIds.length,
+        executor_engine: 'node_fallback',
+        region_fallback_applied: true
       }
     }
   }
-  
-  // 对每个选区进行分析
+
   const regionAnalyses = []
-  
   for (const region of targetRegions) {
-    const analysis = await analyzeRegion(region, queryPlan)
-    regionAnalyses.push(analysis)
+    regionAnalyses.push(await analyzeRegion(region, queryPlan))
   }
-  
-  // 计算跨选区对比
-  const comparison = computeRegionComparison(regionAnalyses, queryPlan.comparison_dimensions)
-  
+
+  const comparison = computeRegionComparison(regionAnalyses, queryPlan?.comparison_dimensions)
+
   return {
     mode: 'region_comparison',
-    target_regions: targetRegionIds,
+    target_regions: requestedIds,
     region_analyses: regionAnalyses,
     comparison,
-    pois: [], // 对比模式不返回具体 POI，只返回统计
+    pois: [],
     area_profile: null,
     landmarks: [],
     stats: {
+      valid_regions: regionAnalyses.length,
+      requested_regions: requestedIds.length,
       regions_analyzed: regionAnalyses.length,
-      total_pois: regionAnalyses.reduce((sum, r) => sum + r.poi_count, 0)
+      total_pois: regionAnalyses.reduce((sum, item) => sum + Number(item?.poi_count || 0), 0),
+      executor_engine: 'node_fallback',
+      region_fallback_applied: true
     }
   }
 }
 
+
 /**
- * 分析单个选区
+ * ???????Node ??????
+ *
+ * ???
+ * - ???????? region.pois / region.stats?
+ * - ??? Node fallback ??????? SQL ?????????
  */
 async function analyzeRegion(region, queryPlan) {
-  const { id, name, boundaryWKT, pois = [], stats } = region
-  
-  // 如果前端已经传了 POI 数据，直接使用
-  let regionPois = pois
-  
-  // 如果没有 POI 数据但有 WKT，从数据库查询
-  if (regionPois.length === 0 && boundaryWKT) {
-    try {
-      const categories = queryPlan.categories || []
-      regionPois = await queryPoisInRegion(boundaryWKT, categories)
-    } catch (err) {
-      console.error(`[Executor] 查询选区 ${name} POI 失败:`, err.message)
-    }
-  }
-  
-  // 计算类别分布
+  const safeRegion = region && typeof region === 'object' ? region : {}
+  const safeStats = safeRegion.stats && typeof safeRegion.stats === 'object' ? safeRegion.stats : {}
+  const regionPois = Array.isArray(safeRegion.pois) ? safeRegion.pois : []
+
+  const selectedCategories = Array.isArray(queryPlan?.categories)
+    ? queryPlan.categories.map((item) => String(item || '').trim()).filter(Boolean)
+    : []
+
   const categoryDistribution = {}
-  const majorCategoryDistribution = {} // 大类分布
-  
-  regionPois.forEach(poi => {
-    const props = poi.properties || poi
-    const category = props['小类'] || props['中类'] || props.category || '未分类'
-    const majorCategory = props['大类'] || '其他'
-    
+  const majorCategoryDistribution = {}
+
+  const matchesCategoryFilter = (poiProps) => {
+    if (selectedCategories.length === 0) return true
+
+    const haystacks = [
+      String(poiProps.category_small || poiProps.categorySmall || poiProps.category || '').toLowerCase(),
+      String(poiProps.category_mid || poiProps.categoryMid || poiProps.category || '').toLowerCase(),
+      String(poiProps.category_big || poiProps.categoryBig || poiProps.category || '').toLowerCase(),
+      String(poiProps.type || '').toLowerCase()
+    ]
+
+    return selectedCategories.some((keyword) => {
+      const normalizedKeyword = String(keyword).toLowerCase()
+      return haystacks.some((field) => field.includes(normalizedKeyword))
+    })
+  }
+
+  // ??????? POI ?????
+  for (const poi of regionPois) {
+    const props = poi?.properties || poi || {}
+    if (!matchesCategoryFilter(props)) continue
+
+    const small = props.category_small || props.categorySmall || props.category || ''
+    const mid = props.category_mid || props.categoryMid || props.category || ''
+    const big = props.category_big || props.categoryBig || props.type || ''
+
+    const category = small || mid || big || props.type || 'unknown'
+    const majorCategory = big || mid || 'other'
+
     categoryDistribution[category] = (categoryDistribution[category] || 0) + 1
     majorCategoryDistribution[majorCategory] = (majorCategoryDistribution[majorCategory] || 0) + 1
-  })
-  
-  // 排序获取 Top 类别
+  }
+
+  // ?? POI ?????????????????????????????
+  if (Object.keys(categoryDistribution).length === 0 && safeStats.categories && typeof safeStats.categories === 'object') {
+    for (const [category, count] of Object.entries(safeStats.categories)) {
+      const numericCount = Number(count || 0)
+      if (!Number.isFinite(numericCount) || numericCount <= 0) continue
+      categoryDistribution[category] = (categoryDistribution[category] || 0) + numericCount
+      majorCategoryDistribution[category] = (majorCategoryDistribution[category] || 0) + numericCount
+    }
+  }
+
+  const poiCountFromDistribution = Object.values(categoryDistribution).reduce((sum, count) => sum + Number(count || 0), 0)
+  const poiCount = poiCountFromDistribution > 0
+    ? poiCountFromDistribution
+    : Number(safeStats.poiCount || safeRegion.poiCount || 0)
+
+  const ratioDenominator = poiCount > 0 ? poiCount : 1
+
   const topCategories = Object.entries(categoryDistribution)
-    .sort((a, b) => b[1] - a[1])
+    .sort((a, b) => Number(b[1]) - Number(a[1]))
     .slice(0, 10)
-    .map(([name, count]) => ({ name, count, ratio: (count / regionPois.length * 100).toFixed(1) + '%' }))
-  
+    .map(([name, count]) => ({
+      name,
+      count,
+      ratio: `${((Number(count) / ratioDenominator) * 100).toFixed(1)}%`
+    }))
+
   const topMajorCategories = Object.entries(majorCategoryDistribution)
-    .sort((a, b) => b[1] - a[1])
+    .sort((a, b) => Number(b[1]) - Number(a[1]))
     .slice(0, 5)
-    .map(([name, count]) => ({ name, count, ratio: (count / regionPois.length * 100).toFixed(1) + '%' }))
-  
+    .map(([name, count]) => ({
+      name,
+      count,
+      ratio: `${((Number(count) / ratioDenominator) * 100).toFixed(1)}%`
+    }))
+
   return {
-    id,
-    name,
-    poi_count: regionPois.length,
+    id: safeRegion.id,
+    name: safeRegion.name || `region-${safeRegion.id || 'unknown'}`,
+    poi_count: poiCount,
     category_distribution: categoryDistribution,
     major_category_distribution: majorCategoryDistribution,
     top_categories: topCategories,
     top_major_categories: topMajorCategories,
-    center: region.center
+    center: safeRegion.center,
+    source: regionPois.length > 0 ? 'payload' : 'payload_stats'
   }
 }
 
-/**
- * 从数据库查询选区内的 POI
- */
-async function queryPoisInRegion(boundaryWKT, categories = []) {
-  const db = await import('../../services/db.js').then(m => m.default)
-  
-  let sql = `
-    SELECT id, name, type,
-           category_big, category_mid, category_small,
-           ST_X(geom) as lon, ST_Y(geom) as lat
-    FROM pois
-    WHERE ST_Within(geom, ST_GeomFromText($1, 4326))
-  `
-  const params = [boundaryWKT]
-  
-  if (categories.length > 0) {
-    sql += ` AND (category_small = ANY($2) OR category_mid = ANY($2) OR category_big = ANY($2))`
-    params.push(categories)
-  }
-  
-  sql += ` LIMIT 10000`
-  
-  try {
-    const result = await db.query(sql, params)
-    return result.rows || []
-  } catch (err) {
-    console.error('[Executor] 查询选区 POI 失败:', err.message)
-    return []
-  }
-}
 
 /**
- * 计算跨选区对比
+ * ????????????
  */
 function computeRegionComparison(regionAnalyses, dimensions = []) {
-  if (regionAnalyses.length < 2) return null
-  
+  if (!Array.isArray(regionAnalyses) || regionAnalyses.length < 2) return null
+
   const similarities = []
   const differences = []
-  
-  // 比较各选区的主要类别
+
   const allMajorCategories = new Set()
-  regionAnalyses.forEach(r => {
-    Object.keys(r.major_category_distribution).forEach(cat => allMajorCategories.add(cat))
+  regionAnalyses.forEach((analysis) => {
+    Object.keys(analysis?.major_category_distribution || {}).forEach((category) => allMajorCategories.add(category))
   })
-  
-  // 计算每个大类在各选区的占比差异
-  allMajorCategories.forEach(category => {
-    const ratios = regionAnalyses.map(r => {
-      const count = r.major_category_distribution[category] || 0
+
+  for (const category of allMajorCategories) {
+    const ratios = regionAnalyses.map((analysis) => {
+      const count = Number(analysis?.major_category_distribution?.[category] || 0)
+      const total = Number(analysis?.poi_count || 0)
+      const ratio = total > 0 ? (count / total) * 100 : 0
       return {
-        region: r.name,
+        region: analysis?.name || 'unknown',
         count,
-        ratio: r.poi_count > 0 ? (count / r.poi_count * 100) : 0
+        ratio
       }
     })
-    
-    // 计算占比差异
-    const maxRatio = Math.max(...ratios.map(r => r.ratio))
-    const minRatio = Math.min(...ratios.map(r => r.ratio))
+
+    const maxRatio = Math.max(...ratios.map((item) => item.ratio))
+    const minRatio = Math.min(...ratios.map((item) => item.ratio))
     const ratioGap = maxRatio - minRatio
-    
-    if (ratioGap < 5) {
-      // 差异小于 5%，视为相似
-      if (maxRatio > 5) { // 只关注占比超过 5% 的类别
-        similarities.push({
-          dimension: category,
-          description: `各选区${category}占比相近 (${minRatio.toFixed(1)}% ~ ${maxRatio.toFixed(1)}%)`,
-          ratios
-        })
-      }
-    } else {
-      // 差异明显
-      const maxRegion = ratios.find(r => r.ratio === maxRatio)
-      const minRegion = ratios.find(r => r.ratio === minRatio)
+
+    if (ratioGap < 5 && maxRatio > 5) {
+      similarities.push({
+        dimension: category,
+        description: `${category} share is close across regions (${minRatio.toFixed(1)}% ~ ${maxRatio.toFixed(1)}%)`,
+        ratios: ratios.map((item) => ({
+          ...item,
+          ratio: `${item.ratio.toFixed(1)}%`,
+          ratio_value: Number(item.ratio.toFixed(2))
+        }))
+      })
+      continue
+    }
+
+    if (ratioGap >= 5) {
+      const maxRegion = ratios.find((item) => item.ratio === maxRatio)
+      const minRegion = ratios.find((item) => item.ratio === minRatio)
+
       differences.push({
         dimension: category,
-        description: `${maxRegion.region}的${category}占比(${maxRatio.toFixed(1)}%)明显高于${minRegion.region}(${minRatio.toFixed(1)}%)`,
-        gap: ratioGap.toFixed(1) + '%',
-        ratios
+        description: `${maxRegion?.region || 'regionA'} has higher ${category} share (${maxRatio.toFixed(1)}%) than ${minRegion?.region || 'regionB'} (${minRatio.toFixed(1)}%)`,
+        gap: `${ratioGap.toFixed(1)}%`,
+        gap_value: Number(ratioGap.toFixed(2)),
+        ratios: ratios.map((item) => ({
+          ...item,
+          ratio: `${item.ratio.toFixed(1)}%`,
+          ratio_value: Number(item.ratio.toFixed(2))
+        }))
       })
     }
-  })
-  
-  // 按差异大小排序
-  differences.sort((a, b) => parseFloat(b.gap) - parseFloat(a.gap))
-  
-  // 生成对比摘要
-  const summary = generateComparisonSummary(regionAnalyses, differences, similarities)
-  
+  }
+
+  differences.sort((a, b) => Number(b.gap_value || 0) - Number(a.gap_value || 0))
+
   return {
-    regions_compared: regionAnalyses.map(r => r.name),
-    total_pois_compared: regionAnalyses.reduce((sum, r) => sum + r.poi_count, 0),
+    regions_compared: regionAnalyses.map((analysis) => analysis?.name || 'unknown'),
+    total_pois_compared: regionAnalyses.reduce((sum, analysis) => sum + Number(analysis?.poi_count || 0), 0),
     similarities: similarities.slice(0, 5),
     differences: differences.slice(0, 10),
-    summary
+    dimensions: Array.isArray(dimensions) ? dimensions : [],
+    summary: generateComparisonSummary(regionAnalyses, differences, similarities)
   }
 }
 
+
 /**
- * 生成对比摘要文本
+ * ????????
  */
 function generateComparisonSummary(regionAnalyses, differences, similarities) {
-  const lines = []
-  
-  // 基本信息
-  const regionNames = regionAnalyses.map(r => r.name).join('与')
-  lines.push(`${regionNames}对比分析：`)
-  
-  // POI 总量对比
-  const poiCounts = regionAnalyses.map(r => `${r.name}(${r.poi_count}个POI)`)
-  lines.push(`- POI总量: ${poiCounts.join(', ')}`)
-  
-  // 主要差异
+  const names = regionAnalyses.map((analysis) => analysis?.name || 'unknown').join(' / ')
+  const lines = [`${names} comparison`]
+
+  const poiSummary = regionAnalyses
+    .map((analysis) => `${analysis?.name || 'unknown'}(${Number(analysis?.poi_count || 0)} POI)`)
+    .join(' / ')
+  lines.push(`- POI totals: ${poiSummary}`)
+
   if (differences.length > 0) {
-    lines.push(`- 主要差异(${differences.length}项):`)
-    differences.slice(0, 3).forEach(d => {
-      lines.push(`  · ${d.description}`)
+    lines.push(`- Key differences (${differences.length})`)
+    differences.slice(0, 3).forEach((item) => {
+      lines.push(`  - ${item.description}`)
     })
   }
-  
-  // 相似点
+
   if (similarities.length > 0) {
-    lines.push(`- 相似特征(${similarities.length}项):`)
-    similarities.slice(0, 2).forEach(s => {
-      lines.push(`  · ${s.description}`)
+    lines.push(`- Shared patterns (${similarities.length})`)
+    similarities.slice(0, 2).forEach((item) => {
+      lines.push(`  - ${item.description}`)
     })
   }
-  
+
   return lines.join('\n')
 }
+
 
 export default {
   executeQuery,
