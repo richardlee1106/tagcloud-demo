@@ -1,9 +1,4 @@
-"""Alpha-shape 边界生成。
-
-说明：
-- 优先 alpha-shape 生成“贴合点集”的不规则边界。
-- 若失败/缺依赖，回退 convex hull，保证结果稳定可返回。
-"""
+"""Alpha-shape boundary generation with deterministic fallbacks."""
 
 from __future__ import annotations
 
@@ -19,7 +14,7 @@ except Exception:  # pragma: no cover - optional dependency
 
 
 def _as_polygon(geometry) -> Optional[Polygon]:
-    """把复杂几何规整为单个 Polygon。"""
+    """Convert complex geometry payloads into a single Polygon."""
     if geometry is None:
         return None
 
@@ -30,9 +25,9 @@ def _as_polygon(geometry) -> Optional[Polygon]:
         return max(geometry.geoms, key=lambda geom: geom.area)
 
     if geometry.geom_type == "GeometryCollection":
-        polys = [geom for geom in geometry.geoms if geom.geom_type == "Polygon"]
-        if polys:
-            return max(polys, key=lambda geom: geom.area)
+        polygons = [geom for geom in geometry.geoms if geom.geom_type == "Polygon"]
+        if polygons:
+            return max(polygons, key=lambda geom: geom.area)
 
     return None
 
@@ -43,34 +38,36 @@ def build_alpha_shape(
     alpha: float,
     min_polygon_area_m2: float = 800.0,
 ):
-    """根据点集构建边界并返回 GeoJSON。"""
-    pts = list(coordinates)
-    if len(pts) < 3:
+    """Build boundary geometry and return GeoJSON + boundary metadata."""
+    points = list(coordinates)
+    if len(points) < 3:
         return None
 
     polygon = None
+    method = "alpha_shape"
+
     if alphashape is not None:
         try:
-            polygon = _as_polygon(alphashape.alphashape(pts, alpha))
+            polygon = _as_polygon(alphashape.alphashape(points, alpha))
         except Exception:
             polygon = None
 
-    # 兜底：至少返回凸包，保证下游可视化不断链。
     if polygon is None:
-        polygon = MultiPoint(pts).convex_hull
+        method = "convex_hull_fallback"
+        polygon = MultiPoint(points).convex_hull
 
-    # buffer(0) 常用于修复轻微拓扑错误。
     polygon = unary_union([polygon]).buffer(0)
     polygon = _as_polygon(polygon)
     if polygon is None:
         return None
 
-    # 粗略换算面积（用于过滤过小噪声区域）。
-    approx_area_m2 = float(polygon.area) * (111_320.0**2)
+    approx_area_m2 = float(polygon.area) * (111_320.0 ** 2)
     if approx_area_m2 < min_polygon_area_m2:
         return None
 
     return {
         "geojson": mapping(polygon),
         "area_m2": approx_area_m2,
+        "method": method,
+        "alpha": float(alpha),
     }

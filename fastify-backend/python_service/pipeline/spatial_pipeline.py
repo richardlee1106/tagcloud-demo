@@ -404,8 +404,8 @@ class SpatialPipeline:
                             "candidate_source": candidate_source,
                             "direction": direction_hint,
                             "direction_applied": direction_applied,
-                    "cluster_engine": cluster_result.engine,
-                    "noise_count": cluster_result.noise_count,
+                            "boundary_method": "none",
+                            "boundary_methods": [],
                         },
                     },
                 },
@@ -454,6 +454,7 @@ class SpatialPipeline:
         vernacular_regions = []
         fuzzy_regions = []
         hotspots = []
+        boundary_methods: List[str] = []
 
         # 对每个簇进行命名、边界与 membership 计算。
         for cluster_id, indices in grouped_indices.items():
@@ -488,7 +489,14 @@ class SpatialPipeline:
                 min_polygon_area_m2=800.0,
             )
 
-            boundary_geojson = alpha_polygon["geojson"] if alpha_polygon else mapping(MultiPoint(cluster_points_list).convex_hull)
+            if alpha_polygon:
+                boundary_geojson = alpha_polygon["geojson"]
+                boundary_method = alpha_polygon.get("method", "alpha_shape")
+            else:
+                boundary_geojson = mapping(MultiPoint(cluster_points_list).convex_hull)
+                boundary_method = "convex_hull_fallback"
+
+            boundary_methods.append(boundary_method)
 
             vernacular_regions.append(
                 {
@@ -499,6 +507,7 @@ class SpatialPipeline:
                     "boundary": boundary_geojson,
                     "dominant_category": top_category,
                     "membership": asdict(membership),
+                    "boundary_method": boundary_method,
                 }
             )
 
@@ -510,6 +519,7 @@ class SpatialPipeline:
                     "level": membership.level,
                     "boundary": boundary_geojson,
                     "center": {"lon": center_lon, "lat": center_lat},
+                    "boundary_method": boundary_method,
                 }
             )
 
@@ -557,6 +567,7 @@ class SpatialPipeline:
                 "candidate_source": candidate_source,
                 "direction": direction_hint,
                 "direction_applied": direction_applied,
+                "boundary_method": boundary_methods[0] if len(set(boundary_methods)) == 1 and boundary_methods else "mixed",
             },
         }
 
@@ -573,6 +584,7 @@ class SpatialPipeline:
                     "source_policy": source_policy if isinstance(source_policy, dict) else {},
                     "direction": direction_hint,
                     "direction_applied": direction_applied,
+                    "boundary_methods": boundary_methods,
                 },
             },
         }
