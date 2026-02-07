@@ -651,14 +651,7 @@ function constraintToGeometryWKT(constraint, forBackend = false) {
     return null;
   }
 
-  if (constraint.kind === 'polygon' && Array.isArray(constraint.points)) {
-    return polygonToWKT(constraint.points, { forBackend });
-  }
-
-  if (constraint.kind === 'circle' && Array.isArray(constraint.center)) {
-    return circleToWKT(constraint.center, constraint.radius, 72, { forBackend });
-  }
-
+  // 优先使用选区原始 WKT，确保圆形等绘制边界与地图上看到的形状完全一致。
   if (typeof constraint.wkt === 'string' && constraint.wkt.trim()) {
     if (!forBackend || !shouldProjectToGcjForFilter) {
       return constraint.wkt.trim();
@@ -668,6 +661,14 @@ function constraintToGeometryWKT(constraint, forBackend = false) {
     if (points.length >= 3) {
       return polygonToWKT(points, { forBackend: true });
     }
+  }
+
+  if (constraint.kind === 'polygon' && Array.isArray(constraint.points)) {
+    return polygonToWKT(constraint.points, { forBackend });
+  }
+
+  if (constraint.kind === 'circle' && Array.isArray(constraint.center)) {
+    return circleToWKT(constraint.center, constraint.radius, 72, { forBackend });
   }
 
   return null;
@@ -1017,14 +1018,32 @@ function pointInCircle(point, center, radiusMeters) {
   return haversineDistanceMeters(point, centerPoint) <= radius;
 }
 
+function getConstraintClipPolygon(constraint) {
+  if (!constraint || typeof constraint !== 'object') {
+    return [];
+  }
+
+  if (constraint.kind === 'polygon' && Array.isArray(constraint.points) && constraint.points.length >= 3) {
+    return constraint.points;
+  }
+
+  if (typeof constraint.wkt === 'string' && constraint.wkt.trim()) {
+    return normalizePolygonPoints(polygonPointsFromWKT(constraint.wkt));
+  }
+
+  return [];
+}
+
 function isPointWithinAnyConstraint(point, constraints) {
   if (!Array.isArray(constraints) || constraints.length === 0) {
     return false;
   }
 
   return constraints.some((constraint) => {
-    if (constraint.kind === 'polygon' && Array.isArray(constraint.points)) {
-      return pointInPolygon(point, constraint.points);
+    // 先按边界多边形判断，确保“所见即所得”的严格裁剪结果。
+    const clipPolygon = getConstraintClipPolygon(constraint);
+    if (clipPolygon.length >= 3) {
+      return pointInPolygon(point, clipPolygon);
     }
 
     if (constraint.kind === 'circle' && Array.isArray(constraint.center)) {
