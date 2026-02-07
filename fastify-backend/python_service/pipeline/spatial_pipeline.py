@@ -331,6 +331,19 @@ def _filter_payload_candidates(
     return filtered
 
 
+def _resolve_limit(raw_value: Any, *, default_value: int, max_value: int) -> int:
+    """Resolve runtime limit with strict numeric clamp."""
+    try:
+        parsed = int(raw_value)
+    except (TypeError, ValueError):
+        parsed = default_value
+
+    if parsed <= 0:
+        parsed = default_value
+
+    return max(1, min(parsed, max_value))
+
+
 class SpatialPipeline:
     """核心流水线：查询候选 -> 聚类 -> 边界 -> membership -> 输出事件流。"""
 
@@ -466,6 +479,9 @@ class SpatialPipeline:
             }
             return
 
+        max_fetch_limit = _resolve_limit(hints_options.get("maxFetchLimit"), default_value=20000, max_value=500000)
+        fetch_limit = _resolve_limit(hints_options.get("limit"), default_value=8000, max_value=max_fetch_limit)
+
         yield {
             "type": "STAGE",
             "payload": {
@@ -484,7 +500,7 @@ class SpatialPipeline:
                 spatial_context=spatial_context,
                 categories=categories,
                 terms=terms,
-                limit=8000,
+                limit=fetch_limit,
             )
             candidate_source = "payload"
         else:
@@ -492,7 +508,7 @@ class SpatialPipeline:
                 spatial_context=spatial_context,
                 categories=categories,
                 terms=terms,
-                limit=8000,
+                limit=fetch_limit,
             )
 
         direction_applied = direction_hint is not None
@@ -501,7 +517,7 @@ class SpatialPipeline:
                 pois,
                 direction=direction_hint,
                 anchor=anchor_hint,
-                limit=8000,
+                limit=fetch_limit,
             )
 
         graph_summary = analyze_spatial_graph(pois) if need_graph_reasoning else None
@@ -519,6 +535,42 @@ class SpatialPipeline:
                 "graph_nodes": graph_summary.get("node_count", 0) if graph_summary else 0,
             },
         }
+
+        if query_type == "poi_fetch":
+            final_results = {
+                "mode": "poi_fetch",
+                "pois": pois[:fetch_limit],
+                "boundary": None,
+                "spatial_clusters": {"hotspots": []},
+                "vernacular_regions": [],
+                "fuzzy_regions": [],
+                "fuzzy_summary": {"core": 0, "transition": 0, "periphery": 0},
+                "graph_reasoning": _empty_graph_summary(),
+                "stats": {
+                    "total_candidates": len(pois),
+                    "query_type": query_type,
+                    "candidate_source": candidate_source,
+                    "direction": direction_hint,
+                    "direction_applied": direction_applied,
+                    "fetch_limit": fetch_limit,
+                },
+            }
+
+            yield {
+                "type": "FINAL",
+                "payload": {
+                    "success": True,
+                    "results": final_results,
+                    "diagnostics": {
+                        "engine": "python-spatial-pipeline",
+                        "query_type": query_type,
+                        "fetch_limit": fetch_limit,
+                        "candidate_source": candidate_source,
+                        "source_policy": source_policy if isinstance(source_policy, dict) else {},
+                    },
+                },
+            }
+            return
 
         # 无结果时仍返回 FINAL，保持协议稳定。
         if not pois:

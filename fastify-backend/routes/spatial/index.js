@@ -9,6 +9,7 @@ import db from '../../services/database.js';
 import milvus from '../../services/vectordb.js';
 import { resolveAnchor } from '../../services/geocoder.js';
 import { createRAGSession } from '../../services/ragLogger.js';
+import { computeSpatialStream, isGrpcComputeEnabled } from '../../services/grpcClient.js';
 
 /**
  * LLM 意图解析 Prompt
@@ -554,6 +555,11 @@ ${context}
       return reply.code(400).send({ error: 'regions must be an array when provided' });
     }
 
+    // ???????????????????????? SQL / gRPC ???
+    const normalizedCategories = categories
+      .filter((cat) => typeof cat === 'string' && cat.trim())
+      .map((cat) => cat.trim());
+
     const polygonCoordsToWKT = (coords = []) => {
       if (!Array.isArray(coords) || coords.length < 3) return null;
 
@@ -698,44 +704,132 @@ ${context}
         return {
           success: true,
           count: 0,
-          features: []
+          features: [],
+          diagnostics: {
+            engine: 'none',
+            reason: 'no_spatial_constraint'
+          }
         };
       }
 
-      const batches = await Promise.all(
-        queryGeometries.map((wkt) => db.findPOIsFiltered({
-          categories,
-          geometry: wkt,
-          limit
-        }))
-      );
-
-      const rawResults = mergeRows(batches.flat());
       const maxLimit = parseInt(process.env.POI_QUERY_MAX_LIMIT || '20000', 10);
       const normalizedLimit = Number(limit);
       const safeLimit = Number.isFinite(normalizedLimit)
         ? Math.max(1, Math.min(normalizedLimit, maxLimit))
         : Math.min(100, maxLimit);
+
+      const toFeature = (poi) => {
+        const lon = Number.parseFloat(poi?.lon);
+        const lat = Number.parseFloat(poi?.lat);
+        if (!Number.isFinite(lon) || !Number.isFinite(lat)) {
+          return null;
+        }
+
+        return {
+          type: 'Feature',
+          id: poi?.id || poi?.poiid,
+          geometry: {
+            type: 'Point',
+            coordinates: [lon, lat]
+          },
+          properties: {
+            name: poi?.name,
+            address: poi?.address,
+            type: poi?.type,
+            category_mid: poi?.category_mid,
+            category_small: poi?.category_small,
+          }
+        };
+      };
+
+      const preferPythonFetch = process.env.SPATIAL_FETCH_PY_ENABLED !== 'false';
+      if (preferPythonFetch && isGrpcComputeEnabled()) {
+        try {
+          const requestId = `fetch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+          const spatialContext = {
+            mode: 'Polygon',
+            regions: queryGeometries.map((wkt, index) => ({
+              id: index + 1,
+              kind: 'polygon',
+              wkt
+            }))
+          };
+
+          let finalPayload = null;
+          await computeSpatialStream(
+            {
+              request_id: requestId,
+              query_type: 'poi_fetch',
+              spatial_context: JSON.stringify(spatialContext),
+              categories: normalizedCategories,
+              hints: JSON.stringify({
+                semantic_query: '',
+                options: {
+                  limit: safeLimit,
+                  maxFetchLimit: maxLimit,
+                  sourcePolicy: {
+                    has_category_filter: normalizedCategories.length > 0,
+                    has_custom_area: queryGeometries.length > 0,
+                    selected_categories: normalizedCategories
+                  }
+                }
+              }),
+              mode: 'sync',
+              candidates_json: '',
+              execution_profile: 'core',
+              dry_run: false
+            },
+            async (event) => {
+              if (event.type === 'ERROR') {
+                throw new Error(event.payload?.message || 'Python fetch returned ERROR event');
+              }
+              if (event.type === 'FINAL') {
+                finalPayload = event.payload;
+              }
+            }
+          );
+
+          const pythonRows = Array.isArray(finalPayload?.results?.pois)
+            ? finalPayload.results.pois
+            : [];
+          const results = mergeRows(pythonRows).slice(0, safeLimit);
+
+          return {
+            success: true,
+            count: results.length,
+            features: results.map(toFeature).filter(Boolean),
+            diagnostics: {
+              engine: 'python_grpc',
+              fallback: false,
+              request_id: requestId,
+              query_geometries: queryGeometries.length
+            }
+          };
+        } catch (pythonError) {
+          fastify.log.warn({ err: pythonError }, '[spatial/fetch] Python fetch failed, fallback to Node SQL');
+        }
+      }
+
+      const batches = await Promise.all(
+        queryGeometries.map((wkt) => db.findPOIsFiltered({
+          categories: normalizedCategories,
+          geometry: wkt,
+          limit: safeLimit
+        }))
+      );
+
+      const rawResults = mergeRows(batches.flat());
       const results = rawResults.slice(0, safeLimit);
 
       return {
         success: true,
         count: results.length,
-        features: results.map(p => ({
-          type: 'Feature',
-          id: p.id || p.poiid,
-          geometry: {
-            type: 'Point',
-            coordinates: [parseFloat(p.lon), parseFloat(p.lat)]
-          },
-          properties: {
-            name: p.name,
-            address: p.address,
-            type: p.type,
-            category_mid: p.category_mid,
-            category_small: p.category_small,
-          }
-        }))
+        features: results.map(toFeature).filter(Boolean),
+        diagnostics: {
+          engine: 'node_sql_fallback',
+          fallback: true,
+          query_geometries: queryGeometries.length
+        }
       };
     } catch (error) {
       fastify.log.error(error);
