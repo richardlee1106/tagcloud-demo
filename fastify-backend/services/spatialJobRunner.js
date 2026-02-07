@@ -523,6 +523,16 @@ function normalizeExecutorEnvelope(rawPayload) {
   }
 }
 
+function resolveComputeMode(executorEnvelope, migrationDecision) {
+  const computePath = executorEnvelope?._compute_path
+  if (computePath === 'python_primary' || computePath === 'node_primary' || computePath === 'node_fallback') {
+    return computePath
+  }
+
+  return migrationDecision?.use_python_primary ? 'python_primary' : 'node_primary'
+}
+
+
 /**
  */
 /**
@@ -602,11 +612,17 @@ async function computeSpatialWithFallback({
       )
 
       if (finalPayload) {
-        return normalizeExecutorEnvelope(finalPayload)
+        const normalizedPython = normalizeExecutorEnvelope(finalPayload)
+        return {
+          ...normalizedPython,
+          _compute_path: 'python_primary',
+          _fallback_reasons: fallbackReasons
+        }
       }
 
       throw new Error('Python compute stream ended without FINAL payload')
     } catch (err) {
+      fallbackReasons.push(`python_error:${err.message}`)
       await reporter.reportStage('python_fallback', {
         reason: err.message
       })
@@ -625,15 +641,26 @@ async function computeSpatialWithFallback({
     })
   }
 
+  const nodePath = usePythonPrimary ? 'node_fallback' : 'node_primary'
+
   await reporter.reportStage('node_executor', {
-    reason: fallbackReasons.length > 0 ? fallbackReasons : ['python_not_selected']
+    reason: fallbackReasons.length > 0 ? fallbackReasons : ['python_not_selected'],
+    node_path: nodePath
   })
 
-  return executeQuery(queryPlan, poiFeatures, {
+  const nodeEnvelope = await executeQuery(queryPlan, poiFeatures, {
     ...options,
     spatialContext,
-    migrationDecision
+    migrationDecision,
+    fallbackMode: nodePath === 'node_fallback'
   })
+
+  const normalizedNode = normalizeExecutorEnvelope(nodeEnvelope)
+  return {
+    ...normalizedNode,
+    _compute_path: nodePath,
+    _fallback_reasons: fallbackReasons
+  }
 }
 
 /**
@@ -691,7 +718,8 @@ export async function executeSpatialPlanWithFallback({
     success: normalized.success !== false,
     results: normalized.results || {},
     diagnostics: {
-      compute_mode: migrationDecision?.use_python_primary ? 'python_primary' : 'node_primary',
+      compute_mode: resolveComputeMode(normalized, migrationDecision),
+      fallback_reasons: normalized?._fallback_reasons || [],
       migration: migrationDecision
     }
   }
@@ -869,7 +897,8 @@ export async function runNarrativeSpatialJob(payload, reporter = {}) {
         confidence: plannerOutput?.confidence || plannerOutput?.queryPlan?.confidence || null,
         fast_path: plannerOutput?.fastPath || false
       },
-      compute_mode: migrationDecision?.use_python_primary ? 'python_primary' : 'node_primary',
+      compute_mode: resolveComputeMode(normalizedExecutor, migrationDecision),
+      fallback_reasons: normalizedExecutor?._fallback_reasons || [],
       source_policy: effectiveOptions.sourcePolicy || null,
       migration: migrationDecision
     }
