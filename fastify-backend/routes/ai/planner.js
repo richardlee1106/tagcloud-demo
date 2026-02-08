@@ -381,17 +381,20 @@ function shouldUseRuleFastPath(question, context = {}) {
 
   const localHints = ['附近', '周边', '周围', '最近', '找', '哪里有', '推荐', '有没有']
   const macroHints = ['分析', '分布', '概况', '评估', '特征', '结构', '画像']
+  const directionHints = ['东侧', '西侧', '南侧', '北侧', '东边', '西边', '南边', '北边', '向东', '向西', '向南', '向北']
   const hasIntentHints = localHints.some((hint) => normalized.includes(hint)) ||
     macroHints.some((hint) => normalized.includes(hint))
+  const hasDirectionHints = directionHints.some((hint) => normalized.includes(hint))
+  const hasCategoryHints = extractCategoriesFromQuestion(question).length > 0
 
   const hasAreaContext = Boolean(context?.hasSelectedArea)
   const isShortQuery = normalized.length <= 36
 
-  if (isShortQuery && hasIntentHints) {
-    return { bypass: true, reason: 'short_query_with_intent' }
+  if (isShortQuery && (hasIntentHints || hasDirectionHints || hasCategoryHints)) {
+    return { bypass: true, reason: 'short_query_with_intent_or_direction' }
   }
 
-  if (hasAreaContext && hasIntentHints && normalized.length <= 56) {
+  if (hasAreaContext && (hasIntentHints || hasDirectionHints || hasCategoryHints) && normalized.length <= 56) {
     return { bypass: true, reason: 'selected_area_with_clear_intent' }
   }
 
@@ -1113,7 +1116,7 @@ export function quickIntentClassify(question) {
   
   // 1. 明确的微观检索 (Local Search)
   // 关键词：附近、周围、周边、最近、找、哪里有、有没有、推荐几个
-  const localKeywords = ['附近', '周围', '周边', '最近', '找', '哪里有', '有没有', '推荐几个']
+  const localKeywords = ['附近', '周围', '周边', '最近', '找', '哪里有', '有没有', '推荐几个', '东侧', '西侧', '南侧', '北侧', '东边', '西边', '南边', '北边']
   if (localKeywords.some(kw => q.includes(kw))) {
     plan.query_type = 'poi_search'
     plan.intent_mode = 'local_search'
