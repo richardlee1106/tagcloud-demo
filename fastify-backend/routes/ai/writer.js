@@ -13,28 +13,32 @@ import { getLLMConfig } from '../../services/llm.js'
  * Writer System Prompt
  * 专注于基于压缩数据生成自然语言回答
  */
-const WRITER_SYSTEM_PROMPT = `You are GeoLoom-RAG, a spatial analysis assistant.
-Use only the structured evidence in {result_context}.
+const WRITER_SYSTEM_PROMPT = `你是 GeoLoom 地理助手，帮用户看懂地图上的 POI 数据。
+请只使用 {result_context} 中的结构化证据来回答。
 
-Hard rules:
-- Grounded only: never invent POIs, numbers, boundaries or region names.
-- Section gating:
-  - Mention multi-region comparison only when mode=region_comparison and comparison data exists.
-  - Mention vernacular/fuzzy regions only when those arrays are non-empty.
-  - Do not mention comparison workflows when the user did not select multiple regions.
-- If source_policy.category_source is all_categories, clearly state that the analysis covers all POI categories in the active spatial boundary.
-- If source_policy.category_source is ui_selector, clearly state that category filtering comes from the UI selector.
-- When spatial evidence includes hotspots, vernacular regions, or fuzzy regions, prioritize describing spatial patterns (clustering, density gradients, functional zoning) over listing individual POIs.
-- When membership scores or confidence levels are provided, communicate certainty levels naturally (e.g. "clearly forms a commercial core" vs "shows weak signs of clustering").
-- When H3 grid aggregation data is present, use it to describe spatial distribution patterns.
+## 语气要求
+- 像一个熟悉本地的朋友在聊天，不要像写论文
+- 用"这一带"、"周边"、"沿着…走"这样的口语化表达
+- 重点说用户关心的：哪里好吃、哪里热闹、哪里方便、哪里值得去
+- 避免出现"聚类"、"密度梯度"、"功能分区"、"置信度"等学术术语
+- 如果数据中有知名地标（大学、公园、商圈、地铁站），优先提及，这些是用户的参照物
+- 不要罗列楼栋号、五金店、停车场出口等琐碎 POI，除非用户明确在找
 
-Output style:
-1) Start with a 1-2 sentence direct answer.
-2) Then provide 2-4 concise markdown sections that are truly relevant to available evidence.
-3) Keep suggestions practical (0-3 bullets), avoid generic boilerplate.
-4) Use markdown tables only when they improve readability.
-5) If evidence is insufficient, state uncertainty and what is missing.
-6) Match the user's language and tone.
+## 硬性规则
+- 只基于证据回答，不编造 POI、数字或地名
+- 仅当 mode=region_comparison 且有对比数据时才提多选区对比
+- 不要提及 vernacular_regions 或 fuzzy_regions（这些是内部数据结构）
+- 如果 source_policy.category_source 是 all_categories，说明分析覆盖了所有类别
+- 如果 source_policy.category_source 是 ui_selector，说明只看了用户筛选的类别
+- 当证据不足时，坦诚说明而不是硬凑内容
+
+## 输出格式
+1) 用 1-2 句话直接回答用户的问题
+2) 然后用 2-3 个小节展开，每节用 **加粗标题**
+3) 如果有实用建议，用 1-3 条要点，要具体可操作
+4) 表格只在确实能帮助理解时使用（比如对比不同区域）
+5) 总长度控制在 300-500 字，不要写太长
+6) 用中文回答
 `
 
 const DEFAULT_WRITER_CONTEXT_LIMIT = 9000
@@ -383,37 +387,9 @@ function buildResultContext(executorResult, options = {}) {
     sections.push(regionText);
   }
 
-  // 7. 模糊区域 (Fuzzy Regions) - Narrative Mode 专用
-  if (results.fuzzy_regions?.length > 0) {
-    let fuzzyText = '🌌 **模糊区域边界模型**:\n';
-
-    const levelCounts = { core: 0, transition: 0, periphery: 0 };
-    results.fuzzy_regions.forEach(fr => {
-      const level = fr.level || 'transition';
-      if (levelCounts[level] !== undefined) levelCounts[level]++;
-    });
-
-    if (levelCounts.core + levelCounts.transition + levelCounts.periphery > 0) {
-      fuzzyText += `> 核心区 ${levelCounts.core} 个 | 过渡区 ${levelCounts.transition} 个 | 边缘区 ${levelCounts.periphery} 个\n\n`;
-    }
-
-    results.fuzzy_regions.forEach((fr, i) => {
-      const theme = fr.theme || fr.dominant_category || '综合';
-      const score = fr.score !== undefined ? `${Math.round(fr.score * 100)}%` : '-';
-      const levelMap = { core: '核心', transition: '过渡', periphery: '边缘' };
-      const levelLabel = levelMap[fr.level] || fr.level || '';
-      const centerStr = fr.center ? `(${fr.center.lat?.toFixed(4)}, ${fr.center.lon?.toFixed(4)})` : '';
-
-      fuzzyText += `- **[ID: ${fr.id}]** ${theme} | 置信度 ${score} | ${levelLabel} ${centerStr}\n`;
-
-      if (fr.drivers?.length > 0) {
-        const driverStr = fr.drivers.map(d => `${d.factor}=${(d.value * 100).toFixed(0)}%`).join(', ');
-        fuzzyText += `  主驱动因子: ${driverStr}\n`;
-      }
-    });
-    fuzzyText += '\n> 提示：请在 narrative_flow 中优先使用上述 [ID] 作为 focus 目标。\n';
-    sections.push(fuzzyText);
-  }
+  // 7. 模糊区域 (Fuzzy Regions) - 仅 Narrative Mode 使用，主路由跳过
+  // fuzzy_regions 数据仍通过 SSE 事件推送给前端 NarrativeMode.vue，
+  // 但不注入 Writer prompt，避免干扰主路由的回答质量。
   
   // 4. POI 列表（核心数据）- 仅当不是纯区域分析时显示
   const skipPoiList = results.stats?.skip_poi_search === true
@@ -427,8 +403,8 @@ function buildResultContext(executorResult, options = {}) {
     // Phase 2 优化：Grounded Generation - 为每个 POI 添加可追溯 ID
     displayPOIs.forEach((poi, i) => {
       const dist = poi.distance_m > 0 ? `${poi.distance_m}m` : ''
-      const info = [poi.category, dist].filter(Boolean).join(' | ')
-      // 添加 ID 标记，供 LLM 引用
+      const cat = poi.category_small || poi.category_mid || poi.category_big || poi.category || poi.type || ''
+      const info = [cat, dist].filter(Boolean).join(' | ')
       const poiId = poi.id || poi.poiid || `poi_${i + 1}`
       poiText += `${i + 1}. **${poi.name}** [ID:${poiId}] [${info}]\n`
     })

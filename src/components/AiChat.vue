@@ -47,30 +47,6 @@
 
     <!-- 消息列表 -->
 
-    <!-- 三阶段进度：意图处理 -> 空间分析 -> 组织回答 -->
-    <div v-if="isTyping || normalizedStageKey" class="thinking-process-embed">
-      <div class="pipeline-trace">
-        <template v-for="(step, idx) in stageSteps" :key="step.key">
-          <div
-            class="trace-step"
-            :class="{
-              active: stageActiveIndex === idx,
-              completed: stageActiveIndex > idx
-            }"
-          >
-            <div class="step-dot"></div>
-            <span class="step-label">{{ step.label }}</span>
-          </div>
-          <div
-            v-if="idx < stageSteps.length - 1"
-            class="trace-line"
-            :class="{ completed: stageActiveIndex > idx }"
-          ></div>
-        </template>
-      </div>
-      <div class="thinking-subtitle-embed">{{ currentStageHint }}</div>
-    </div>
-
     <div class="chat-messages" ref="messagesContainer">
       <!-- 欢迎消息 -->
       <div v-if="messages.length === 0" class="welcome-message">
@@ -101,6 +77,29 @@
           </template>
         </div>
         <div class="message-content">
+          <!-- 三阶段 Pipeline 追踪器（嵌入 assistant 消息内） -->
+          <div v-if="msg.role === 'assistant' && (msg.pipelineCompleted || (isTyping && index === messages.length - 1))"
+               class="pipeline-tracker-inline">
+            <div class="pipeline-trace-inline">
+              <template v-for="(step, idx) in stageSteps" :key="step.key">
+                <div class="trace-step-inline"
+                     :class="{
+                       active: !msg.pipelineCompleted && stageActiveIndex === idx,
+                       completed: msg.pipelineCompleted || stageActiveIndex > idx
+                     }">
+                  <div class="step-dot-inline">
+                    <svg v-if="msg.pipelineCompleted || stageActiveIndex > idx" viewBox="0 0 16 16" width="10" height="10">
+                      <path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z" fill="currentColor"/>
+                    </svg>
+                  </div>
+                  <span class="step-label-inline">{{ step.label }}</span>
+                </div>
+                <div v-if="idx < stageSteps.length - 1" class="trace-connector"
+                     :class="{ completed: msg.pipelineCompleted || stageActiveIndex > idx }"></div>
+              </template>
+            </div>
+            <div v-if="!msg.pipelineCompleted && currentStageHint" class="pipeline-hint-inline">{{ currentStageHint }}</div>
+          </div>
           <!-- 嵌入式 Pipeline 追踪器 (当有阶段信息时显示) -->
           <div v-if="msg.content && msg.content.trim()" class="message-text" v-html="renderMarkdown(msg.content)"></div>
           
@@ -119,7 +118,6 @@
             v-if="msg.role === 'assistant' && hasSpatialEvidence(msg)"
             :clusters="msg.spatialClusters"
             :vernacular-regions="msg.vernacularRegions"
-            :fuzzy-regions="msg.fuzzyRegions"
             :boundary="msg.boundary"
             @locate="handleEvidenceLocate"
             @show-boundary="handleShowBoundary"
@@ -573,6 +571,9 @@ async function sendMessage() {
   } finally {
     await flushStreamQueue();
     resetStreamState();
+    if (messages.value[aiMessageIndex]) {
+      messages.value[aiMessageIndex].pipelineCompleted = true;
+    }
     isTyping.value = false;
     currentStage.value = '';
     await nextTick();
@@ -602,7 +603,6 @@ function handleTagClick(tag) {
 function hasSpatialEvidence(msg) {
   return msg.spatialClusters?.hotspots?.length > 0 ||
          msg.vernacularRegions?.length > 0 ||
-         msg.fuzzyRegions?.length > 0 ||
          !!msg.boundary;
 }
 
@@ -1438,117 +1438,89 @@ defineExpose({
   40% { transform: scale(1); opacity: 1; }
 }
 
-/* 新版 Pipeline 追踪器样式 (嵌入式) */
-.thinking-process-embed {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding-bottom: 12px;
-  /* 与 assistant 消息列左对齐，避免阶段条悬空在聊天区域中央。 */
-  margin: 0 16px 8px 62px;
-  border-bottom: 1px dashed rgba(255, 255, 255, 0.1);
-  width: auto;
-  max-width: none;
-  box-sizing: border-box;
+/* Pipeline 追踪器 (内联在 assistant 消息中) */
+.pipeline-tracker-inline {
+  padding: 8px 12px;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(99, 102, 241, 0.12);
+  border-radius: 10px;
+  margin-bottom: 6px;
 }
 
-.pipeline-trace {
+.pipeline-trace-inline {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  position: relative;
-  padding: 0 4px; /* 减少内边距 */
+  gap: 0;
 }
 
-.trace-step {
+.trace-step-inline {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 10px; /* 进一步增加间距 */
-  z-index: 2;
-  position: relative;
-  flex: 1;
-}
-
-.step-dot {
-  width: 14px; /* 继续调大 */
-  height: 14px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.3);
-  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-  position: relative;
-}
-
-.step-dot::after {
-  content: '';
-  position: absolute;
-  top: -4px;
-  left: -4px;
-  right: -4px;
-  bottom: -4px;
-  border-radius: 50%;
-  border: 1.5px solid transparent; /* 边框稍微加粗 */
-  transition: all 0.3s ease;
-}
-
-.trace-step.active .step-dot {
-  background: #00BFFF;
-  box-shadow: 0 0 12px rgba(0, 191, 255, 0.8);
-  transform: scale(1.2);
-}
-
-.trace-step.active .step-dot::after {
-  border-color: rgba(0, 191, 255, 0.4);
-  animation: pulse-ring 1.5s infinite linear;
-}
-
-.trace-step.completed .step-dot {
-  background: #10b981;
-  box-shadow: 0 0 8px rgba(16, 185, 129, 0.4);
-}
-
-.step-label {
-  font-size: 12px; /* 调大标签字体 */
-  color: rgba(255, 255, 255, 0.5); 
-  transition: all 0.3s ease;
+  gap: 5px;
   white-space: nowrap;
 }
 
-.trace-step.active .step-label {
-  color: #00BFFF;
-  font-weight: 600;
+.step-dot-inline {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: transparent;
+  transition: all 0.3s ease;
+  flex-shrink: 0;
 }
 
-.trace-step.completed .step-label {
-  color: #10b981;
+.trace-step-inline.active .step-dot-inline {
+  background: rgba(99, 102, 241, 0.3);
+  box-shadow: 0 0 8px rgba(99, 102, 241, 0.5);
+  animation: dot-pulse 1.2s infinite ease-in-out;
 }
 
-.trace-line {
-  height: 2px;
-  flex: 1;
-  background: rgba(255, 255, 255, 0.15);
-  margin: 0 -15px; /* 适配更大的点 */
-  transform: translateY(-16px); /* 向上偏移对齐 dot (12 + 10 + 7 / 2 = ~16px) */
-  transition: all 0.5s ease;
-  z-index: 1;
+.trace-step-inline.completed .step-dot-inline {
+  background: rgba(16, 185, 129, 0.2);
+  color: #34d399;
 }
 
-.trace-line.completed {
-  background: #10b981;
-}
-
-.thinking-subtitle-embed {
+.step-label-inline {
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.6);
-  text-align: left;
-  font-style: italic;
-  min-height: 16px;
+  color: rgba(255, 255, 255, 0.4);
+  transition: color 0.3s;
 }
 
-@keyframes pulse-ring {
-  0% { transform: scale(0.9); opacity: 0.8; }
-  100% { transform: scale(1.8); opacity: 0; }
+.trace-step-inline.active .step-label-inline {
+  color: #a5b4fc;
+  font-weight: 500;
+}
+
+.trace-step-inline.completed .step-label-inline {
+  color: rgba(52, 211, 153, 0.7);
+}
+
+.trace-connector {
+  width: 20px;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.1);
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+
+.trace-connector.completed {
+  background: rgba(52, 211, 153, 0.3);
+}
+
+.pipeline-hint-inline {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.35);
+  margin-top: 4px;
+  font-style: italic;
+}
+
+@keyframes dot-pulse {
+  0%, 100% { opacity: 0.6; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.15); }
 }
 
 /* 输入区域 */
