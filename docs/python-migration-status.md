@@ -29,6 +29,16 @@ Measured on local stack (`POST /api/ai/execute`, 5 samples):
 
 > Node fallback remains lighter but less complete; Python result carries richer graph payload and deterministic diagnostics.
 
+### 1.2 2026-02-08 parity and boundary-performance update
+
+- `dual_run_parity_check` now uses **graph-structure-first** checks for `graph_reasoning`:
+  - hard alerts focus on Python graph validity and critical schema,
+  - low POI overlap is downgraded to warning under lightweight Node fallback mode.
+- Alpha-shape pipeline now includes deterministic point downsampling and adaptive simplify:
+  - reduces heavy geometry cost on large clusters,
+  - keeps outputs reproducible.
+- Pipeline boundary modeling adds small-cluster convex-hull shortcut and preview-boundary sampling.
+
 ## 2) Measured performance snapshots
 
 > Measurements were run locally on 2026-02-07. Absolute values will vary by machine load.

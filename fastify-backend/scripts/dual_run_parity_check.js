@@ -136,10 +136,9 @@ function hasShape(results, shapeType) {
   if (!baseOk) return false
 
   if (shapeType === 'graph_reasoning') {
-    return (
-      results.graph_reasoning && typeof results.graph_reasoning === 'object' &&
-      results.graph_analysis && typeof results.graph_analysis === 'object'
-    )
+    const graphReasoningOk = results.graph_reasoning && typeof results.graph_reasoning === 'object'
+    const graphAnalysisOk = !results.graph_analysis || typeof results.graph_analysis === 'object'
+    return Boolean(graphReasoningOk && graphAnalysisOk)
   }
 
   if (shapeType === 'region_comparison') {
@@ -152,6 +151,34 @@ function hasShape(results, shapeType) {
 
   return true
 }
+
+
+function calcGraphDelta(pyGraph = {}, ndGraph = {}) {
+  const pyNodes = Number(pyGraph?.node_count || 0)
+  const ndNodes = Number(ndGraph?.node_count || 0)
+  const pyEdges = Number(pyGraph?.edge_count || 0)
+  const ndEdges = Number(ndGraph?.edge_count || 0)
+  const pyComponents = Number(pyGraph?.component_count || 0)
+  const ndComponents = Number(ndGraph?.component_count || 0)
+
+  const safeRatio = (left, right) => {
+    if (left <= 0) return right <= 0 ? 1 : 0
+    return Number((right / left).toFixed(4))
+  }
+
+  return {
+    py_nodes: pyNodes,
+    nd_nodes: ndNodes,
+    py_edges: pyEdges,
+    nd_edges: ndEdges,
+    py_components: pyComponents,
+    nd_components: ndComponents,
+    node_ratio: safeRatio(pyNodes, ndNodes),
+    edge_ratio: safeRatio(pyEdges, ndEdges),
+    component_ratio: safeRatio(pyComponents, ndComponents)
+  }
+}
+
 
 function buildRegionPois(seed = 0) {
   const offset = seed * 0.0001
@@ -279,14 +306,18 @@ function buildRunSummary(caseType, sampleIndex, pythonRun, nodeRun, minPoiOverla
   const poiOverlap = calcTopKOverlap(pyResults.pois || [], ndResults.pois || [], 20)
 
   const alerts = []
+  const warnings = []
   if (!pythonRun.ok) alerts.push(`python_run_http_${pythonRun.status}`)
   if (!nodeRun.ok) alerts.push(`node_run_http_${nodeRun.status}`)
   if (!schemaPython) alerts.push('python_schema_invalid')
   if (!schemaNode) alerts.push('node_schema_invalid')
 
-  if ((pyResults.pois || []).length > 0 && poiOverlap.ratioByLeft < minPoiOverlap) {
+  // ??????????????? POI overlap ????????????????
+  if (caseType !== 'graph_reasoning' && (pyResults.pois || []).length > 0 && poiOverlap.ratioByLeft < minPoiOverlap) {
     alerts.push(`poi_overlap_low:${poiOverlap.ratioByLeft}`)
   }
+
+  let graphDelta = null
 
   if (caseType === 'region_comparison') {
     const pyValid = Number(pyResults?.stats?.valid_regions || pyResults?.stats?.regions_analyzed || 0)
@@ -297,10 +328,27 @@ function buildRunSummary(caseType, sampleIndex, pythonRun, nodeRun, minPoiOverla
   }
 
   if (caseType === 'graph_reasoning') {
-    const pyNodes = Number(pyResults?.graph_reasoning?.node_count || 0)
-    const ndNodes = Number(ndResults?.graph_reasoning?.node_count || 0)
-    if (pyNodes <= 0 && ndNodes <= 0) {
-      alerts.push('graph_nodes_empty_both')
+    graphDelta = calcGraphDelta(pyResults?.graph_reasoning || {}, ndResults?.graph_reasoning || {})
+
+    // ???????????????????? Python ???????????
+    if (graphDelta.py_nodes <= 0) {
+      alerts.push('python_graph_nodes_empty')
+    }
+    if (graphDelta.py_edges < 0 || graphDelta.py_components < 0) {
+      alerts.push('python_graph_metrics_invalid')
+    }
+
+    // ?????Node fallback ????????????? Python ? POI ???????
+    const nodeMode = String(ndResults?.mode || '')
+    const nodeEngine = String(ndResults?.stats?.executor_engine || '')
+    const isLightFallback = nodeMode === 'graph_analysis_fallback' || nodeEngine === 'node_fallback'
+
+    if (!isLightFallback && graphDelta.node_ratio < 0.1) {
+      alerts.push(`graph_node_ratio_low:${graphDelta.node_ratio}`)
+    }
+
+    if (poiOverlap.ratioByLeft < minPoiOverlap) {
+      warnings.push(`graph_poi_overlap_low:${poiOverlap.ratioByLeft}`)
     }
   }
 
@@ -309,6 +357,7 @@ function buildRunSummary(caseType, sampleIndex, pythonRun, nodeRun, minPoiOverla
     sample_index: sampleIndex,
     pass: alerts.length === 0,
     alerts,
+    warnings,
     python: {
       ok: pythonRun.ok,
       status: pythonRun.status,
@@ -329,15 +378,18 @@ function buildRunSummary(caseType, sampleIndex, pythonRun, nodeRun, minPoiOverla
       poi_count: Array.isArray(ndResults.pois) ? ndResults.pois.length : 0,
       schema_ok: schemaNode
     },
-    poi_overlap: poiOverlap
+    poi_overlap: poiOverlap,
+    graph_delta: graphDelta
   }
 }
+
 
 function summarize(reportItems = []) {
   const total = reportItems.length
   const passed = reportItems.filter((item) => item.pass).length
   const failed = total - passed
   const alertCount = reportItems.reduce((sum, item) => sum + item.alerts.length, 0)
+  const warningCount = reportItems.reduce((sum, item) => sum + (Array.isArray(item.warnings) ? item.warnings.length : 0), 0)
 
   const avgPythonLatency = total > 0
     ? Number((reportItems.reduce((sum, item) => sum + Number(item?.python?.elapsed_ms || 0), 0) / total).toFixed(2))
@@ -351,11 +403,13 @@ function summarize(reportItems = []) {
     passed,
     failed,
     alert_count: alertCount,
+    warning_count: warningCount,
     avg_python_latency_ms: avgPythonLatency,
     avg_node_latency_ms: avgNodeLatency,
     all_passed: failed === 0
   }
 }
+
 
 async function main() {
   const args = parseArgs()

@@ -277,6 +277,24 @@ def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return r * c
 
 
+def _sample_coordinates(coords: List[Tuple[float, float]], max_points: int) -> List[Tuple[float, float]]:
+    """Deterministically sample coordinates to cap heavy geometry operations."""
+    if max_points <= 0 or len(coords) <= max_points:
+        return coords
+
+    # ???????????????????????????????
+    step = max(1, len(coords) // max_points)
+    sampled = coords[::step]
+
+    if sampled and sampled[-1] != coords[-1]:
+        sampled = sampled + [coords[-1]]
+
+    if len(sampled) > max_points:
+        sampled = sampled[:max_points]
+
+    return sampled
+
+
 def _top_membership_drivers(membership, top_n: int = 2) -> List[Dict[str, Any]]:
     """Return top contributing factors for fuzzy-region explainability."""
     factors = [
@@ -698,7 +716,9 @@ class SpatialPipeline:
 
         # 先给前端一个“草图边界”做渐进体验。
         if len(coords) >= 3:
-            sketch_polygon = mapping(MultiPoint(coords).convex_hull)
+            # ??????????????????????????????????
+            preview_coords = _sample_coordinates(coords, 3000)
+            sketch_polygon = mapping(MultiPoint(preview_coords).convex_hull)
             yield {
                 "type": "PARTIAL",
                 "payload": {
@@ -714,6 +734,12 @@ class SpatialPipeline:
 
         cluster_result = cluster_points(coords)
         labels = cluster_result.labels
+
+        alpha_max_input_points = _resolve_limit(
+            hints_options.get("alphaMaxInputPoints"),
+            default_value=1200,
+            max_value=5000,
+        )
 
         grouped_indices: Dict[int, List[int]] = defaultdict(list)
         for idx, label in enumerate(labels):
@@ -763,18 +789,25 @@ class SpatialPipeline:
             )
 
             alpha = max(0.8, min(4.0, 2.0 - density + (bbox_area_m2 / 1_000_000.0)))
-            alpha_polygon = build_alpha_shape(
-                cluster_points_list,
-                alpha=alpha,
-                min_polygon_area_m2=800.0,
-            )
 
-            if alpha_polygon:
-                boundary_geojson = alpha_polygon["geojson"]
-                boundary_method = alpha_polygon.get("method", "alpha_shape")
-            else:
+            # ???????????????? alpha-shape ?????????????
+            if len(cluster_points_list) < 8:
                 boundary_geojson = mapping(MultiPoint(cluster_points_list).convex_hull)
-                boundary_method = "convex_hull_fallback"
+                boundary_method = "convex_hull_small_cluster"
+            else:
+                alpha_polygon = build_alpha_shape(
+                    cluster_points_list,
+                    alpha=alpha,
+                    min_polygon_area_m2=800.0,
+                    max_input_points=alpha_max_input_points,
+                )
+
+                if alpha_polygon:
+                    boundary_geojson = alpha_polygon["geojson"]
+                    boundary_method = alpha_polygon.get("method", "alpha_shape")
+                else:
+                    boundary_geojson = mapping(MultiPoint(cluster_points_list).convex_hull)
+                    boundary_method = "convex_hull_fallback"
 
             boundary_methods.append(boundary_method)
 
@@ -874,6 +907,7 @@ class SpatialPipeline:
                 "direction": direction_hint,
                 "direction_applied": direction_applied,
                 "boundary_method": boundary_methods[0] if len(set(boundary_methods)) == 1 and boundary_methods else "mixed",
+                "alpha_max_input_points": alpha_max_input_points,
                 "graph_component_count": graph_summary.get("component_count", 0) if graph_summary else 0,
                 "graph_edge_count": graph_summary.get("edge_count", 0) if graph_summary else 0,
                 "fuzzy_core_count": fuzzy_summary["core"],
