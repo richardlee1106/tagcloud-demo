@@ -115,6 +115,16 @@
             @tag-click="handleTagClick"
           />
 
+          <SpatialEvidenceCard
+            v-if="msg.role === 'assistant' && hasSpatialEvidence(msg)"
+            :clusters="msg.spatialClusters"
+            :vernacular-regions="msg.vernacularRegions"
+            :fuzzy-regions="msg.fuzzyRegions"
+            :boundary="msg.boundary"
+            @locate="handleEvidenceLocate"
+            @show-boundary="handleShowBoundary"
+          />
+
           <div v-if="msg.content && msg.content.trim()" class="message-time">{{ formatTime(msg.timestamp) }}</div>
         </div>
       </div>
@@ -161,6 +171,7 @@ import {
   getCurrentProviderInfo
 } from '../utils/aiService.js';
 import EmbeddedTagCloud from './EmbeddedTagCloud.vue';
+import SpatialEvidenceCard from './SpatialEvidenceCard.vue';
 import { marked } from 'marked';
 
 const props = defineProps({
@@ -194,6 +205,10 @@ const props = defineProps({
   // 地图视野边界 [minLon, minLat, maxLon, maxLat]
   mapBounds: {
     type: Array,
+    default: null
+  },
+  mapZoom: {
+    type: Number,
     default: null
   },
   selectedCategories: {
@@ -331,6 +346,14 @@ function hasCustomSelection(spatialContext, regions) {
   return hasPolygon || hasCircle || hasRegion;
 }
 
+function inferAnalysisScale(zoom) {
+  if (!zoom) return 'district';
+  if (zoom >= 16) return 'street';
+  if (zoom >= 14) return 'block';
+  if (zoom >= 12) return 'district';
+  return 'city';
+}
+
 function enqueueStreamChunk(chunk, messageIndex) {
   if (!chunk || typeof chunk !== 'string') return;
 
@@ -443,7 +466,15 @@ async function sendMessage() {
       mode: props.drawMode,
       center: props.circleCenter,
       radius: props.circleRadius,
-      viewport: props.mapBounds
+      viewport: props.mapBounds,
+      mapZoom: props.mapZoom,
+      analysisScale: inferAnalysisScale(props.mapZoom),
+      interactionHints: {
+        hasDrawnRegion: props.regions?.length > 0,
+        regionCount: props.regions?.length || 0,
+        isComparing: (props.regions?.length || 0) >= 2,
+        poiCount: props.poiFeatures?.length || 0
+      }
     };
 
     const normalizedRegions = props.regions.map(r => ({
@@ -563,10 +594,26 @@ function handleRenderToMap(pois) {
 // 标签云：标签点击
 function handleTagClick(tag) {
   console.log('[AiChat] 标签点击:', tag.name);
-  // 可以触发地图定位到该 POI
   if (tag.originalPoi) {
     emit('render-pois-to-map', [tag.originalPoi]);
   }
+}
+
+function hasSpatialEvidence(msg) {
+  return msg.spatialClusters?.hotspots?.length > 0 ||
+         msg.vernacularRegions?.length > 0 ||
+         msg.fuzzyRegions?.length > 0 ||
+         !!msg.boundary;
+}
+
+function handleEvidenceLocate(center) {
+  if (!center) return;
+  const poi = { lon: center.lon || center[0], lat: center.lat || center[1] };
+  emit('render-pois-to-map', [{ type: 'Feature', geometry: { type: 'Point', coordinates: [poi.lon, poi.lat] }, properties: { _source: 'evidence_locate' } }]);
+}
+
+function handleShowBoundary(boundary) {
+  emit('ai-boundary', boundary);
 }
 
 // 清空对话

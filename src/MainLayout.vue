@@ -203,12 +203,17 @@
                   :circle-center="circleCenterGeo"
                   :circle-radius="circleRadiusMeters"
                   :map-bounds="mapBounds"
+                  :map-zoom="mapZoom"
                   :global-analysis-enabled="globalAnalysisEnabled"
                   :selected-categories="selectedCategoryPath"
                   :regions="regions"
                   @close="toggleAiPanel"
                   @render-to-tagcloud="handleRenderAIResult"
-                  @render-pois-to-map="handleRenderPoisToMap" />
+                  @render-pois-to-map="handleRenderPoisToMap"
+                  @ai-boundary="handleAiBoundary"
+                  @ai-spatial-clusters="handleAiSpatialClusters"
+                  @ai-vernacular-regions="handleAiVernacularRegions"
+                  @ai-fuzzy-regions="handleAiFuzzyRegions" />
         </div>
       </section>
     </main>
@@ -268,6 +273,7 @@ const clickedFeatureId = ref(null); // 当前点击的要素（常亮状态）
 const filterEnabled = ref(false); // 是否开启实时视野过滤
 
 const mapBounds = ref(null); // 当前地图视野边界 [minLon, minLat, maxLon, maxLat]
+const mapZoom = ref(null); // 当前地图缩放级别
 const isLoading = ref(false); // 全局/区域加载状态
 
 // 绘图模式状态
@@ -1608,6 +1614,33 @@ function handleRenderPoisToMap(pois) {
   });
 }
 
+const latestAiEvidence = ref({
+  boundary: null,
+  spatialClusters: null,
+  vernacularRegions: null,
+  fuzzyRegions: null
+});
+
+function handleAiBoundary(boundary) {
+  latestAiEvidence.value.boundary = boundary;
+  console.log('[App] AI 返回边界数据:', boundary ? 'GeoJSON' : 'null');
+}
+
+function handleAiSpatialClusters(clusters) {
+  latestAiEvidence.value.spatialClusters = clusters;
+  console.log('[App] AI 返回聚类数据:', clusters?.hotspots?.length || 0, '个热点');
+}
+
+function handleAiVernacularRegions(regions) {
+  latestAiEvidence.value.vernacularRegions = regions;
+  console.log('[App] AI 返回语义功能区:', regions?.length || 0, '个');
+}
+
+function handleAiFuzzyRegions(fuzzyRegions) {
+  latestAiEvidence.value.fuzzyRegions = fuzzyRegions;
+  console.log('[App] AI 返回模糊区域:', fuzzyRegions?.length || 0, '个');
+}
+
 /**
  * 保存筛选结果为 CSV 文件
  * 优先级逻辑：
@@ -1730,11 +1763,14 @@ const handleGlobalAnalysisChange = (enabled) => {
 
 const handleMapMoveEnd = throttle((bounds) => {
   mapBounds.value = bounds;
-  // console.log('[App] Map bounds updated:', bounds);
+
+  if (mapComponent.value?.map) {
+    const view = mapComponent.value.map.getView();
+    if (view) mapZoom.value = view.getZoom();
+  }
 
   const hasCategoryFilter = getSelectedCategoryLeaves(selectedCategoryPath.value).length > 0;
 
-  // 初始状态不自动拉取全视野 POI；只有“类别筛选 + 无选区”时才跟随视野更新。
   if (!hasManualSpatialSelection() && hasCategoryFilter) {
     void refreshManualSelectionSource({
       updateTagCloud: false,
@@ -1744,7 +1780,7 @@ const handleMapMoveEnd = throttle((bounds) => {
       limit: MAX_MANUAL_FETCH_LIMIT
     });
   }
-}, 500); // throttle map move updates
+}, 500);
 
 /**
  * 处理要素悬停
