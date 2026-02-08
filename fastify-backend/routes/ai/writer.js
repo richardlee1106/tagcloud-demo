@@ -34,6 +34,119 @@ Output style:
 6) Match the user's language and tone.
 `
 
+const DEFAULT_WRITER_CONTEXT_LIMIT = 9000
+const DEFAULT_WRITER_OUTPUT_LIMIT = 2200
+
+// 将环境变量/入参安全转成正整数，防止预算参数异常。
+function toPositiveInt(value, fallback) {
+  const num = Number(value)
+  if (!Number.isFinite(num) || num <= 0) return fallback
+  return Math.round(num)
+}
+
+// 对上下文做硬截断，避免大上下文拖慢 Writer 推理。
+function trimContextText(context, maxChars) {
+  if (!context) return ''
+  if (!maxChars || context.length <= maxChars) return context
+
+  const clipped = context.slice(0, maxChars)
+  const lastBreak = clipped.lastIndexOf('\n\n')
+  const safePrefix = lastBreak > 200 ? clipped.slice(0, lastBreak) : clipped
+  return `${safePrefix}\n\n⚠️ Context truncated to keep latency stable.`
+}
+
+// 按 query_type 选择生成参数，平衡回答质量与延迟。
+function resolveWriterProfile(executorResult, options = {}) {
+  const queryType = executorResult?.results?.query_executed?.query_type || 'poi_search'
+
+  const profileByType = {
+    poi_search: { temperature: 0.3, maxTokens: 1200, poiDisplayLimit: 10 },
+    area_analysis: { temperature: 0.36, maxTokens: 1800, poiDisplayLimit: 8 },
+    region_comparison: { temperature: 0.35, maxTokens: 2100, poiDisplayLimit: 6 },
+    graph_reasoning: { temperature: 0.35, maxTokens: 1900, poiDisplayLimit: 8 },
+    default: { temperature: 0.34, maxTokens: 1600, poiDisplayLimit: 10 }
+  }
+
+  const base = profileByType[queryType] || profileByType.default
+  const qualityMode = String(options.writerQuality || process.env.WRITER_QUALITY || 'balanced').trim().toLowerCase()
+
+  let maxTokens = base.maxTokens
+  if (qualityMode === 'high') maxTokens += 280
+  if (qualityMode === 'fast') maxTokens -= 260
+
+  if (Array.isArray(executorResult?.results?.pois) && executorResult.results.pois.length > 150) {
+    maxTokens -= 180
+  }
+
+  const maxContextChars = toPositiveInt(
+    options.maxContextChars ?? process.env.WRITER_CONTEXT_LIMIT,
+    DEFAULT_WRITER_CONTEXT_LIMIT
+  )
+
+  maxTokens = toPositiveInt(
+    options.maxTokens ?? maxTokens,
+    base.maxTokens
+  )
+
+  maxTokens = Math.max(600, Math.min(maxTokens, toPositiveInt(process.env.WRITER_OUTPUT_LIMIT, DEFAULT_WRITER_OUTPUT_LIMIT)))
+
+  const poiDisplayLimit = toPositiveInt(options.poiDisplayLimit, base.poiDisplayLimit)
+
+  return {
+    queryType,
+    qualityMode,
+    temperature: typeof options.temperature === 'number' ? options.temperature : base.temperature,
+    maxTokens,
+    poiDisplayLimit: Math.max(3, Math.min(poiDisplayLimit, 20)),
+    maxContextChars
+  }
+}
+
+// 只在疑似幻觉占比较高时追加纠偏，避免正常回答被频繁打断。
+function shouldAppendCorrection(report) {
+  if (!report?.hasHallucination) return false
+  const totalMentions = report.totalMentions || 0
+  if (totalMentions === 0) return false
+
+  const ratio = report.hallucinations.length / totalMentions
+  return report.hallucinations.length >= 2 && ratio >= 0.35
+}
+
+// 高风险时输出可核验摘要，确保回答最终可落地。
+function buildConservativeCorrection(executorResult, report) {
+  const results = executorResult?.results || {}
+  const topPois = Array.isArray(results.pois) ? results.pois.slice(0, 5) : []
+  const stats = results.stats || {}
+
+  const lines = [
+    '',
+    '---',
+    '⚠️ **一致性校验提醒**：上文存在疑似未命中证据的地点表述，以下为可核验摘要。'
+  ]
+
+  if (topPois.length > 0) {
+    lines.push('**可核验 POI（Top 5）**：')
+    topPois.forEach((poi, idx) => {
+      const category = poi.category || poi.type || '未知类别'
+      lines.push(`${idx + 1}. ${poi.name || '未命名 POI'}（${category}）`)
+    })
+  } else {
+    lines.push('当前结果中暂无可直接核验的 POI 明细。')
+  }
+
+  if (Number.isFinite(stats.total_candidates)) {
+    lines.push(`- 候选量: ${stats.total_candidates}`)
+  }
+  if (Number.isFinite(stats.execution_time_ms)) {
+    lines.push(`- 计算耗时: ${stats.execution_time_ms}ms`)
+  }
+  if (report?.hallucinations?.length) {
+    lines.push(`- 待核验实体: ${report.hallucinations.join('、')}`)
+  }
+
+  return lines.join('\n')
+}
+
 /**
  * 构建精简的结果上下文（供 LLM 使用）
  * 
@@ -48,7 +161,8 @@ Output style:
 function buildResultContext(executorResult, options = {}) {
   const { results } = executorResult
   if (!results) return '⚠️ 无可用数据'
-  
+
+  const writerProfile = options?.writerProfile || resolveWriterProfile(executorResult, options)
   const sections = []
 
   const sourcePolicy = options?.sourcePolicy
@@ -162,7 +276,8 @@ function buildResultContext(executorResult, options = {}) {
     })
     
     sections.push(comparisonText)
-    return sections.join('\n\n')
+    const comparisonContext = sections.join('\n\n')
+    return trimContextText(comparisonContext, writerProfile.maxContextChars)
   }
 
   // 3. 空间分布 (H3 聚合)
@@ -238,10 +353,10 @@ function buildResultContext(executorResult, options = {}) {
   const skipPoiList = results.stats?.skip_poi_search === true
   
   if (!skipPoiList && results.pois?.length > 0) {
-    // 限制最多显示 15 条
-    const displayPOIs = results.pois.slice(0, 15)
-    
-    let poiText = `📍 **检索结果** (${results.pois.length} 条${results.pois.length > 15 ? '，显示前 15 条' : ''}):\n\n`
+    const poiDisplayLimit = writerProfile.poiDisplayLimit
+    const displayPOIs = results.pois.slice(0, poiDisplayLimit)
+
+    let poiText = `📍 **检索结果** (${results.pois.length} 条${results.pois.length > poiDisplayLimit ? `，显示前 ${poiDisplayLimit} 条` : ''}):\n\n`
     
     // Phase 2 优化：Grounded Generation - 为每个 POI 添加可追溯 ID
     displayPOIs.forEach((poi, i) => {
@@ -372,7 +487,8 @@ function buildResultContext(executorResult, options = {}) {
     }
   }
   
-  return sections.join('\n\n')
+  const rawContext = sections.join('\n\n')
+  return trimContextText(rawContext, writerProfile.maxContextChars)
 }
 
 /**
@@ -388,8 +504,13 @@ export async function* generateAnswer(userQuestion, executorResult, options = {}
   
   console.log('[Writer] 开始生成回答')
   
+  const writerProfile = resolveWriterProfile(executorResult, options)
+
   // 构建精简上下文
-  const resultContext = buildResultContext(executorResult, options)
+  const resultContext = buildResultContext(executorResult, {
+    ...options,
+    writerProfile
+  })
   const systemPrompt = WRITER_SYSTEM_PROMPT.replace('{result_context}', resultContext)
   
   // 检查是否需要澄清
@@ -403,7 +524,7 @@ export async function* generateAnswer(userQuestion, executorResult, options = {}
     // 获取 LLM 配置（自动选择本地或云端）
     const { baseUrl, model, apiKey, isLocal } = await getLLMConfig()
     
-    console.log(`[Writer] 使用 ${isLocal ? '本地' : '云端'} 模型: ${model}`)
+    console.log(`[Writer] 使用 ${isLocal ? '本地' : '云端'} 模型: ${model} | q=${writerProfile.queryType} | quality=${writerProfile.qualityMode}`)
     
     // 构建请求头
     const headers = { 'Content-Type': 'application/json' }
@@ -420,8 +541,8 @@ export async function* generateAnswer(userQuestion, executorResult, options = {}
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userQuestion }
           ],
-          temperature: 0.7,
-          max_tokens: 3000,
+          temperature: writerProfile.temperature,
+          max_tokens: writerProfile.maxTokens,
           stream: true,
         }),
       })
@@ -435,6 +556,7 @@ export async function* generateAnswer(userQuestion, executorResult, options = {}
     const decoder = new TextDecoder()
     let buffer = ''
     let totalTokens = 0
+    let streamedOutput = ''
     
     // 过滤 <think> 标签的状态机
     let inThinkTag = false
@@ -479,6 +601,7 @@ export async function* generateAnswer(userQuestion, executorResult, options = {}
             // 如果不在 think 标签内，输出内容
             if (!inThinkTag && pendingContent) {
               yield pendingContent
+              streamedOutput += pendingContent
               totalTokens += pendingContent.length
               pendingContent = ''
             }
@@ -492,8 +615,29 @@ export async function* generateAnswer(userQuestion, executorResult, options = {}
     // 输出剩余内容
     if (pendingContent && !inThinkTag) {
       yield pendingContent
+      streamedOutput += pendingContent
     }
     
+    const validation = validateWriterOutput(streamedOutput, executorResult, {
+      autoClean: false,
+      addWarning: false
+    })
+
+    if (typeof options.onWriterDiagnostics === 'function') {
+      options.onWriterDiagnostics({
+        query_type: writerProfile.queryType,
+        quality_mode: writerProfile.qualityMode,
+        hallucination: validation.hallucinationReport
+      })
+    }
+
+    if (shouldAppendCorrection(validation.hallucinationReport)) {
+      const correction = buildConservativeCorrection(executorResult, validation.hallucinationReport)
+      yield correction
+      streamedOutput += correction
+      totalTokens += correction.length
+    }
+
     const duration = Date.now() - startTime
     
     // 估算 token 消耗（中文约 1.5 字符/token，英文约 4 字符/token）

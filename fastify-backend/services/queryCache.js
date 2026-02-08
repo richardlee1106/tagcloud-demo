@@ -51,7 +51,7 @@ const CACHE_CONFIG = {
  * @param {Object} spatialContext - 空间上下文
  * @returns {string} 查询指纹 (MD5 hash)
  */
-export function generateQueryFingerprint(queryPlan, spatialContext = {}) {
+export function generateQueryFingerprint(queryPlan, spatialContext = {}, extra = {}) {
   const fingerprintData = {}
   
   // 1. 查询类型
@@ -110,6 +110,30 @@ export function generateQueryFingerprint(queryPlan, spatialContext = {}) {
   // 7. 选区对比模式
   if (queryPlan.target_regions) {
     fingerprintData.regions = queryPlan.target_regions.sort()
+  }
+
+  // 8. Source policy（避免 UI 约束变化时复用错误缓存）
+  const sourcePolicy = extra?.sourcePolicy || {}
+  if (sourcePolicy && typeof sourcePolicy === 'object') {
+    const selectedCategories = Array.isArray(sourcePolicy.selected_categories)
+      ? [...sourcePolicy.selected_categories].sort()
+      : []
+
+    fingerprintData.source_policy = {
+      category_source: sourcePolicy.category_source || null,
+      geometry_source: sourcePolicy.geometry_source || null,
+      has_custom_area: Boolean(sourcePolicy.has_custom_area),
+      has_category_filter: Boolean(sourcePolicy.has_category_filter),
+      selected_categories: selectedCategories
+    }
+  }
+
+  if (extra?.queryType) {
+    fingerprintData.query_type = String(extra.queryType)
+  }
+
+  if (extra?.route) {
+    fingerprintData.route = String(extra.route)
   }
   
   // 生成 MD5 哈希

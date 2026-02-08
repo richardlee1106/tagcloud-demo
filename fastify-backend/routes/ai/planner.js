@@ -362,6 +362,82 @@ function detectIntentConflict(question) {
   }
 }
 
+
+// 对明显简单请求走规则快路，减少 Router LLM 开销。
+function shouldUseRuleFastPath(question, context = {}) {
+  const normalized = String(question || '').trim().toLowerCase()
+  if (!normalized) {
+    return { bypass: true, reason: 'empty_question' }
+  }
+
+  const complexHints = [
+    '选区', '比较', '对比', '差异', '关系', '多步', '连通', '拓扑', '演化',
+    'fuzzy', 'vernacular', 'narrative', 'region_comparison', 'graph'
+  ]
+
+  if (complexHints.some((hint) => normalized.includes(hint))) {
+    return { bypass: false, reason: 'complex_hint_detected' }
+  }
+
+  const localHints = ['附近', '周边', '周围', '最近', '找', '哪里有', '推荐', '有没有']
+  const macroHints = ['分析', '分布', '概况', '评估', '特征', '结构', '画像']
+  const hasIntentHints = localHints.some((hint) => normalized.includes(hint)) ||
+    macroHints.some((hint) => normalized.includes(hint))
+
+  const hasAreaContext = Boolean(context?.hasSelectedArea)
+  const isShortQuery = normalized.length <= 36
+
+  if (isShortQuery && hasIntentHints) {
+    return { bypass: true, reason: 'short_query_with_intent' }
+  }
+
+  if (hasAreaContext && hasIntentHints && normalized.length <= 56) {
+    return { bypass: true, reason: 'selected_area_with_clear_intent' }
+  }
+
+  return { bypass: false, reason: 'router_needed' }
+}
+
+// 统一构建快路径输出，确保规则路径与 Router 快路径结构一致。
+function buildQuickPlannerOutput(userQuestion, { routerResult = null, reason = 'rule_fast_path', startTime = Date.now() } = {}) {
+  const quickPlan = quickIntentClassify(userQuestion)
+
+  if (routerResult?.anchor) {
+    quickPlan.anchor = { type: 'landmark', name: routerResult.anchor, lat: null, lon: null }
+  }
+  if (routerResult?.categories?.length > 0) {
+    quickPlan.categories = routerResult.categories
+  }
+  if (routerResult?.intent) {
+    quickPlan.query_type = routerResult.intent === 'search' ? 'poi_search' : 'area_analysis'
+    quickPlan.intent_mode = routerResult.intent === 'search' ? 'local_search' : 'macro_overview'
+  }
+
+  if (!quickPlan.need_graph_reasoning && detectGraphReasoningNeed(userQuestion)) {
+    quickPlan.need_graph_reasoning = true
+  }
+
+  quickPlan.confidence = {
+    score: routerResult ? 8 : 7,
+    level: 'high',
+    reasons: routerResult
+      ? ['LLM 路由判定简单问题', '规则引擎快速生成']
+      : ['规则引擎快速路径', reason]
+  }
+
+  const duration = Date.now() - startTime
+  return {
+    success: true,
+    queryPlan: quickPlan,
+    tokenUsage: routerResult?.tokenUsage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+    duration,
+    confidence: 'high',
+    fastPath: true,
+    routerUsed: Boolean(routerResult),
+    fastPathReason: reason
+  }
+}
+
 // =====================================================
 // LLM Router: 超快速问题复杂度分类
 // 使用极短 prompt，预期响应时间 < 1秒
@@ -419,7 +495,7 @@ async function classifyQueryComplexity(question) {
     const jsonMatch = content.match(/\{[\s\S]*\}/)
     if (!jsonMatch) {
       console.warn('[Router] 无法解析 JSON，降级到完整分析')
-      return { isSimple: false }
+      return { isSimple: false, error: 'router_parse_failed' }
     }
     
     const parsed = JSON.parse(jsonMatch[0])
@@ -441,7 +517,7 @@ async function classifyQueryComplexity(question) {
     }
   } catch (err) {
     console.warn('[Router] 分类失败，降级到完整分析:', err.message)
-    return { isSimple: false }
+    return { isSimple: false, error: err.message }
   }
 }
 
@@ -863,47 +939,50 @@ export async function parseIntent(userQuestion, context = {}) {
   console.log(`[Planner] 开始解析意图: "${userQuestion.slice(0, 50)}..."`)
   
   // =========================================================
-  // 智能分流：让 LLM 自己判断问题是否简单
+  // 快速规则路径优先：明显简单问题不再等待 LLM Router
   // =========================================================
+  const fastPathDecision = shouldUseRuleFastPath(userQuestion, context)
+  if (fastPathDecision.bypass) {
+    const quickOutput = buildQuickPlannerOutput(userQuestion, {
+      reason: fastPathDecision.reason,
+      startTime
+    })
+
+    console.log(`[Planner] ⚡ 规则快速路径 (${quickOutput.duration}ms): ${quickOutput.queryPlan.query_type}`)
+    console.log(`[Planner] fast-path reason: ${fastPathDecision.reason}`)
+    return quickOutput
+  }
+
   const routerResult = await classifyQueryComplexity(userQuestion)
-  
+
+  // Router 不可用时，直接回退规则引擎，避免额外一次 LLM 重试。
+  if (routerResult?.error) {
+    const fallbackOutput = buildQuickPlannerOutput(userQuestion, {
+      reason: `router_failed:${routerResult.error}`,
+      startTime
+    })
+
+    fallbackOutput.confidence = 'medium'
+    fallbackOutput.queryPlan.confidence = {
+      score: 6,
+      level: 'medium',
+      reasons: ['router 失败回退', routerResult.error]
+    }
+
+    console.log(`[Planner] ⚡ Router 失败回退规则路径 (${fallbackOutput.duration}ms)`)
+    return fallbackOutput
+  }
+
   if (routerResult.isSimple) {
-    // 简单问题：使用规则引擎快速处理
-    const quickPlan = quickIntentClassify(userQuestion)
-    
-    // 使用 LLM 返回的结构化信息增强 quickPlan
-    if (routerResult.anchor) {
-      quickPlan.anchor = { type: 'landmark', name: routerResult.anchor, lat: null, lon: null }
-    }
-    if (routerResult.categories?.length > 0) {
-      quickPlan.categories = routerResult.categories
-    }
-    if (routerResult.intent) {
-      quickPlan.query_type = routerResult.intent === 'search' ? 'poi_search' : 'area_analysis'
-      quickPlan.intent_mode = routerResult.intent === 'search' ? 'local_search' : 'macro_overview'
-    }
-    
-    // 补充置信度
-    quickPlan.confidence = { score: 8, level: 'high', reasons: ['LLM 分类为简单问题', '规则引擎处理'] }
-    
-    // 图推理后备检测
-    if (!quickPlan.need_graph_reasoning && detectGraphReasoningNeed(userQuestion)) {
-      quickPlan.need_graph_reasoning = true
-    }
-    
-    const duration = Date.now() - startTime
-    console.log(`[Planner] ⚡ 智能快速路径 (${duration}ms): ${quickPlan.query_type}`)
-    console.log(`[Planner] categories: ${quickPlan.categories?.join(', ') || '(全域分析)'}`)
-    
-    return {
-      success: true,
-      queryPlan: quickPlan,
-      tokenUsage: routerResult.tokenUsage || { prompt_tokens: 50, completion_tokens: 20, total_tokens: 70 },
-      duration,
-      confidence: 'high',
-      fastPath: true,
-      routerUsed: true
-    }
+    const quickOutput = buildQuickPlannerOutput(userQuestion, {
+      routerResult,
+      reason: 'router_simple',
+      startTime
+    })
+
+    console.log(`[Planner] ⚡ 智能快速路径 (${quickOutput.duration}ms): ${quickOutput.queryPlan.query_type}`)
+    console.log(`[Planner] categories: ${quickOutput.queryPlan.categories?.join(', ') || '(全域分析)'}`)
+    return quickOutput
   }
   
   // 多选区对比模式

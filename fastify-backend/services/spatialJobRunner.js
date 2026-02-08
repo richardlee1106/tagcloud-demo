@@ -10,6 +10,7 @@ import { computeSpatialStream, isGrpcComputeEnabled } from './grpcClient.js'
 import { resolveSpatialMigrationDecision } from './migrationPolicy.js'
 import { resolveSourcePolicy } from './sourcePolicy.js'
 import { executeNodeSqlFallback } from './nodeSqlFallbackExecutor.js'
+import * as queryCache from './queryCache.js'
 
 // MVP 固定分流阈值，后续可根据压测结果调参。
 const ASYNC_RULES = {
@@ -46,6 +47,37 @@ const ADVANCED_QUERY_TYPES = new Set([
 function normalizeQueryType(queryPlan = {}) {
   const rawType = queryPlan?.query_type || queryPlan?.queryType || 'poi_search'
   return String(rawType).trim().toLowerCase() || 'poi_search'
+}
+
+
+// 缓存前深拷贝，避免后续写流程污染缓存对象。
+function cloneForCache(payload) {
+  if (!payload) return payload
+
+  try {
+    return structuredClone(payload)
+  } catch {
+    return JSON.parse(JSON.stringify(payload))
+  }
+}
+
+// 仅在稳定查询类型启用缓存，澄清类请求直接跳过。
+function shouldUseSpatialResultCache(queryPlan = {}, options = {}) {
+  if (options?.skipCache || options?.forceRefresh) return false
+
+  const queryType = normalizeQueryType(queryPlan)
+  if (queryType === 'clarification_needed') return false
+
+  return true
+}
+
+// 缓存指纹包含 source_policy，确保 UI 约束变化不会误命中。
+function buildSpatialCacheFingerprint(queryPlan = {}, spatialContext = {}, options = {}) {
+  return queryCache.generateQueryFingerprint(queryPlan, spatialContext, {
+    sourcePolicy: options?.sourcePolicy || null,
+    queryType: normalizeQueryType(queryPlan),
+    route: 'spatial_job_runner'
+  })
 }
 
 // Migration closeout rule: advanced spatial queries should stay on Python.
@@ -971,29 +1003,67 @@ export async function runNarrativeSpatialJob(payload, reporter = {}) {
     source_policy: enforced.policy
   })
 
-  // Stage 2: spatial execution
-  const migrationDecision = resolveSpatialMigrationDecision({
-    requestId,
-    queryPlan,
-    options: effectiveOptions
-  })
+  const shouldUseCache = shouldUseSpatialResultCache(queryPlan, effectiveOptions)
+  const spatialCacheFingerprint = shouldUseCache
+    ? buildSpatialCacheFingerprint(queryPlan, spatialContext, effectiveOptions)
+    : null
 
-  await report.reportStage('executor', {
-    route: migrationDecision.use_python_primary ? 'python_primary' : 'node_primary',
-    migration: migrationDecision
-  })
+  let normalizedExecutor = null
+  let migrationDecision = null
 
-  const executorEnvelope = await computeSpatialWithFallback({
-    requestId,
-    queryPlan,
-    spatialContext,
-    options: effectiveOptions,
-    poiFeatures,
-    reporter: report,
-    migrationDecision
-  })
+  // 先尝试命中空间结果缓存，命中后跳过重计算阶段。
+  if (shouldUseCache && spatialCacheFingerprint) {
+    const cachedEnvelope = queryCache.getFromCache(spatialCacheFingerprint)
+    if (cachedEnvelope) {
+      normalizedExecutor = normalizeExecutorEnvelope(cloneForCache(cachedEnvelope))
+      normalizedExecutor.results = normalizedExecutor.results || {}
+      normalizedExecutor.results.stats = {
+        ...(normalizedExecutor.results.stats || {}),
+        cache_hit: true,
+        executor_engine: normalizedExecutor.results.stats?.executor_engine || 'cached_spatial_result'
+      }
 
-  const normalizedExecutor = normalizeExecutorEnvelope(executorEnvelope)
+      await report.reportStage('executor_cache_hit', {
+        fingerprint: spatialCacheFingerprint.slice(0, 12),
+        query_type: normalizeQueryType(queryPlan)
+      })
+    }
+  }
+
+  // 缓存未命中时再走 Python 主路径 + Node 回退链路。
+  if (!normalizedExecutor) {
+    // Stage 2: spatial execution
+    migrationDecision = resolveSpatialMigrationDecision({
+      requestId,
+      queryPlan,
+      options: effectiveOptions
+    })
+
+    await report.reportStage('executor', {
+      route: migrationDecision.use_python_primary ? 'python_primary' : 'node_primary',
+      migration: migrationDecision
+    })
+
+    const executorEnvelope = await computeSpatialWithFallback({
+      requestId,
+      queryPlan,
+      spatialContext,
+      options: effectiveOptions,
+      poiFeatures,
+      reporter: report,
+      migrationDecision
+    })
+
+    normalizedExecutor = normalizeExecutorEnvelope(executorEnvelope)
+
+    if (shouldUseCache && spatialCacheFingerprint && normalizedExecutor.success !== false) {
+      queryCache.setToCache(
+        spatialCacheFingerprint,
+        cloneForCache(normalizedExecutor),
+        normalizeQueryType(queryPlan)
+      )
+    }
+  }
 
   await report.reportProgress(0.72, {
     stage: 'executor_done',
@@ -1008,8 +1078,15 @@ export async function runNarrativeSpatialJob(payload, reporter = {}) {
   let answer = ''
   let textBuffer = ''
 
+  const writerRuntimeOptions = {
+    ...effectiveOptions,
+    onWriterDiagnostics: (diagnostics) => {
+      report.reportStage('writer_validation', diagnostics).catch(() => {})
+    }
+  }
+
   try {
-    for await (const chunk of generateAnswer(userQuestion, normalizedExecutor, effectiveOptions)) {
+    for await (const chunk of generateAnswer(userQuestion, normalizedExecutor, writerRuntimeOptions)) {
       answer += chunk
       textBuffer += chunk
 
@@ -1049,10 +1126,13 @@ export async function runNarrativeSpatialJob(payload, reporter = {}) {
         confidence: plannerOutput?.confidence || plannerOutput?.queryPlan?.confidence || null,
         fast_path: plannerOutput?.fastPath || false
       },
-      compute_mode: resolveComputeMode(normalizedExecutor, migrationDecision),
+      compute_mode: normalizedExecutor?.results?.stats?.cache_hit
+        ? 'cache_hit'
+        : resolveComputeMode(normalizedExecutor, migrationDecision),
       fallback_reasons: normalizedExecutor?._fallback_reasons || [],
       source_policy: effectiveOptions.sourcePolicy || null,
-      migration: migrationDecision
+      migration: migrationDecision,
+      cache_hit: Boolean(normalizedExecutor?.results?.stats?.cache_hit)
     }
   }
 }
