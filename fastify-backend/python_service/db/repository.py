@@ -182,9 +182,10 @@ class POIRepository:
         categories: List[str],
         terms: List[str],
         limit: int = 5000,
+        order_by_distance: bool = True,
     ) -> List[Dict[str, Any]]:
-        """按空间约束 + 类别/文本过滤查询 POI。"""
-        # 中文注释：容错处理，防止上游传入 null / 非对象导致字段访问异常。
+        """????? + ??/?????? POI?"""
+        # ???????????????? null / ????????????
         if not isinstance(spatial_context, dict):
             spatial_context = {}
 
@@ -197,31 +198,40 @@ class POIRepository:
 
         where_parts: List[str] = []
         params: List[Any] = []
-        order_sql = "ORDER BY p.id ASC"
+        order_sql = "ORDER BY p.id ASC" if order_by_distance else ""
 
-        # 关键守卫：必须有空间约束，避免误触全表扫描。
+        # ??????????????????????
         if region_clauses:
-            # 中文注释：多选区场景采用 OR 并集，严格贴合“多个区域共同生效”的业务定义。
+            # ???????????? OR ???????????????????????
             where_parts.append("(" + " OR ".join(region_clauses) + ")")
             params.extend(region_params)
-            order_sql = "ORDER BY p.id ASC"
+            if order_by_distance:
+                order_sql = "ORDER BY p.id ASC"
         elif boundary_wkt:
+            # ??????? && ????????? ST_Within ????????????? CPU ???
+            where_parts.append("p.geom && ST_GeomFromText(%s, 4326)")
+            params.append(boundary_wkt)
             where_parts.append("ST_Within(p.geom, ST_GeomFromText(%s, 4326))")
             params.append(boundary_wkt)
-            # 中文注释：边界查询按边界中心做 KNN 排序，避免 LIMIT 截断只落在某个类目。
-            order_sql = "ORDER BY p.geom <-> ST_Centroid(ST_GeomFromText(%s, 4326)) ASC"
+            # ????????????????? KNN?????????????????
+            if order_by_distance:
+                order_sql = "ORDER BY p.geom <-> ST_Centroid(ST_GeomFromText(%s, 4326)) ASC"
         elif viewport_wkt:
+            # ????????????????? + ????????????????
+            where_parts.append("p.geom && ST_GeomFromText(%s, 4326)")
+            params.append(viewport_wkt)
             where_parts.append("ST_Within(p.geom, ST_GeomFromText(%s, 4326))")
             params.append(viewport_wkt)
-            # 中文注释：视口查询同样使用中心点排序，保证“全类目”场景结果更具代表性。
-            order_sql = "ORDER BY p.geom <-> ST_Centroid(ST_GeomFromText(%s, 4326)) ASC"
+            if order_by_distance:
+                order_sql = "ORDER BY p.geom <-> ST_Centroid(ST_GeomFromText(%s, 4326)) ASC"
         elif center and radius > 0:
             where_parts.append(
                 "ST_DWithin(p.geom::geography, ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography, %s)"
             )
             params.extend([center[0], center[1], radius])
-            # 中文注释：圆形搜索按圆心邻近度排序，贴合“附近”语义预期。
-            order_sql = "ORDER BY p.geom <-> ST_SetSRID(ST_MakePoint(%s, %s), 4326) ASC"
+            # ?????????????????????????????
+            if order_by_distance:
+                order_sql = "ORDER BY p.geom <-> ST_SetSRID(ST_MakePoint(%s, %s), 4326) ASC"
         else:
             return []
 
@@ -247,10 +257,10 @@ class POIRepository:
                 params.extend([wildcard, wildcard, wildcard, wildcard])
             where_parts.append("(" + " OR ".join(term_parts) + ")")
 
-        # 中文注释：补齐排序子句参数，复用已校验输入，避免重复解析几何对象。
-        if order_sql.startswith("ORDER BY p.geom <-> ST_Centroid"):
+        # ?????????????????????????????????
+        if order_by_distance and order_sql.startswith("ORDER BY p.geom <-> ST_Centroid"):
             params.append(boundary_wkt or viewport_wkt)
-        elif order_sql.startswith("ORDER BY p.geom <-> ST_SetSRID") and center:
+        elif order_by_distance and order_sql.startswith("ORDER BY p.geom <-> ST_SetSRID") and center:
             params.extend([center[0], center[1]])
 
         sql = """
@@ -285,13 +295,18 @@ class POIRepository:
         boundary_wkt: str,
         categories: List[str] | None = None,
         limit: int = 12000,
+        order_by_distance: bool = True,
     ) -> List[Dict[str, Any]]:
         """Query POIs inside a boundary WKT for region comparison."""
         if not isinstance(boundary_wkt, str) or not boundary_wkt.strip():
             return []
 
-        where_parts: List[str] = ["ST_Within(p.geom, ST_GeomFromText(%s, 4326))"]
-        params: List[Any] = [boundary_wkt.strip()]
+        # ??????? && ?????? within???????????????????
+        where_parts: List[str] = [
+            "p.geom && ST_GeomFromText(%s, 4326)",
+            "ST_Within(p.geom, ST_GeomFromText(%s, 4326))",
+        ]
+        params: List[Any] = [boundary_wkt.strip(), boundary_wkt.strip()]
 
         normalized_categories = [c.strip() for c in (categories or []) if isinstance(c, str) and c.strip()]
         if normalized_categories:
@@ -303,6 +318,8 @@ class POIRepository:
                 wildcard = f"%{cat}%"
                 params.extend([wildcard, wildcard, wildcard, wildcard])
             where_parts.append("(" + " OR ".join(cat_parts) + ")")
+
+        order_sql = "ORDER BY p.geom <-> ST_Centroid(ST_GeomFromText(%s, 4326)) ASC" if order_by_distance else ""
 
         sql = """
             SELECT
@@ -318,10 +335,11 @@ class POIRepository:
                 ST_Y(p.geom) AS lat
             FROM pois p
             WHERE
-        """ + " AND ".join(where_parts) + " ORDER BY p.geom <-> ST_Centroid(ST_GeomFromText(%s, 4326)) ASC LIMIT %s"
+        """ + " AND ".join(where_parts) + f" {order_sql} LIMIT %s"
 
-        # 中文注释：区域对比也按边界中心做空间排序，降低导入顺序对统计结论的干扰。
-        params.append(boundary_wkt.strip())
+        # ????????????????? centroid ????????? SQL ????????
+        if order_by_distance:
+            params.append(boundary_wkt.strip())
         params.append(int(limit))
 
         with self._connect() as conn:

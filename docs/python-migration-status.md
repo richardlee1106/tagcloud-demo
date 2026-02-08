@@ -1,6 +1,6 @@
 # Spatial-RAG Migration Status and Performance Notes
 
-Updated: 2026-02-07
+Updated: 2026-02-08
 
 ## 1) Quick takeaways
 
@@ -11,6 +11,23 @@ Updated: 2026-02-07
 - Major wins today are maintainability, deterministic outputs, and controlled fallback behavior.
 
 ---
+
+
+### 1.1 2026-02-08 performance update
+
+- Graph reasoning now uses Python fast path (skip heavy region modeling chain).
+- Graph algorithm moved from all-pair scan to grid-neighbor pruning + haversine verify.
+- Repository spatial SQL now uses `&&` bbox prefilter before `ST_Within` for polygon/viewport/WKT routes.
+- For graph queries without explicit limit, candidate fetch is clamped by `graphMaxNodes` to cut transfer and compute overhead.
+
+Measured on local stack (`POST /api/ai/execute`, 5 samples):
+
+| Scenario | Avg | P95 |
+|---|---:|---:|
+| Python primary (`graph_reasoning`) | 102.2 ms | 126 ms |
+| Node fallback (`graph_reasoning`) | 2.0 ms | 3 ms |
+
+> Node fallback remains lighter but less complete; Python result carries richer graph payload and deterministic diagnostics.
 
 ## 2) Measured performance snapshots
 

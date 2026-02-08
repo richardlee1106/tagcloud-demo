@@ -9,6 +9,7 @@ from dataclasses import asdict
 from typing import Any, Dict, Iterable, Iterator, List, Tuple
 
 from shapely.geometry import MultiPoint, Point, Polygon, mapping
+from shapely.prepared import prep
 
 from algorithms.alpha_shape import build_alpha_shape
 from algorithms.direction_filter import filter_pois_by_direction, resolve_direction_from_query_plan
@@ -229,7 +230,16 @@ def _build_spatial_checker(spatial_context: Dict[str, Any]):
                 polygon = polygon.buffer(0)
 
             if polygon.is_valid:
-                return lambda lon, lat: polygon.covers(Point(lon, lat))
+                min_lon, min_lat, max_lon, max_lat = polygon.bounds
+                prepared_polygon = prep(polygon)
+
+                # ??????? bbox ?????? prepared geometry ????????? Shapely ???????
+                def _within_polygon(lon: float, lat: float) -> bool:
+                    if lon < min_lon or lon > max_lon or lat < min_lat or lat > max_lat:
+                        return False
+                    return bool(prepared_polygon.covers(Point(lon, lat)))
+
+                return _within_polygon
 
     viewport = spatial_context.get("viewport")
     if isinstance(viewport, list) and len(viewport) >= 4:
@@ -479,14 +489,30 @@ class SpatialPipeline:
             }
             return
 
+        graph_max_nodes = _resolve_limit(
+            hints_options.get("graphMaxNodes"),
+            default_value=280,
+            max_value=1200,
+        )
+        graph_distance_threshold_m = float(hints_options.get("graphDistanceThresholdM") or 280.0)
+
         max_fetch_limit = _resolve_limit(hints_options.get("maxFetchLimit"), default_value=20000, max_value=500000)
         fetch_limit = _resolve_limit(hints_options.get("limit"), default_value=8000, max_value=max_fetch_limit)
+
+        # ?????graph ???????? limit????????????????????????
+        explicit_limit = hints_options.get("limit")
+        if query_type == "graph_reasoning" and explicit_limit is None:
+            fetch_limit = min(fetch_limit, max(600, graph_max_nodes * 3))
+
+        # ???????? Node ????????????????????????
+        db_order_by_distance = True
 
         yield {
             "type": "STAGE",
             "payload": {
                 "stage": "fetch_candidates",
                 "query_type": query_type,
+                "fetch_limit": fetch_limit,
             },
         }
 
@@ -509,6 +535,7 @@ class SpatialPipeline:
                 categories=categories,
                 terms=terms,
                 limit=fetch_limit,
+                order_by_distance=db_order_by_distance,
             )
 
         direction_applied = direction_hint is not None
@@ -520,7 +547,15 @@ class SpatialPipeline:
                 limit=fetch_limit,
             )
 
-        graph_summary = analyze_spatial_graph(pois) if need_graph_reasoning else None
+        graph_summary = (
+            analyze_spatial_graph(
+                pois,
+                max_nodes=graph_max_nodes,
+                distance_threshold_m=graph_distance_threshold_m,
+            )
+            if need_graph_reasoning
+            else None
+        )
 
         yield {
             "type": "PROGRESS",
@@ -535,6 +570,58 @@ class SpatialPipeline:
                 "graph_nodes": graph_summary.get("node_count", 0) if graph_summary else 0,
             },
         }
+
+        # Graph reasoning does not need expensive region modeling chain.
+        # Return early to keep Python graph analysis responsive under large candidate sets.
+        if query_type == "graph_reasoning":
+            final_results = {
+                "mode": "graph_reasoning",
+                "pois": pois[:500],
+                "boundary": None,
+                "spatial_clusters": {"hotspots": []},
+                "vernacular_regions": [],
+                "fuzzy_regions": [],
+                "fuzzy_summary": {"core": 0, "transition": 0, "periphery": 0},
+                "graph_reasoning": graph_summary or _empty_graph_summary(),
+                "stats": {
+                    "total_candidates": len(pois),
+                    "cluster_count": 0,
+                    "cluster_engine": "skipped_graph_only",
+                    "noise_count": 0,
+                    "h3_resolution": _dynamic_h3_resolution(_extract_area_km2(spatial_context)),
+                    "h3_engine": "skipped_graph_only",
+                    "h3_cell_count": 0,
+                    "query_type": query_type,
+                    "candidate_source": candidate_source,
+                    "direction": direction_hint,
+                    "direction_applied": direction_applied,
+                    "boundary_method": "none",
+                    "graph_component_count": graph_summary.get("component_count", 0) if graph_summary else 0,
+                    "graph_edge_count": graph_summary.get("edge_count", 0) if graph_summary else 0,
+                    "graph_max_nodes": graph_max_nodes,
+                    "graph_distance_threshold_m": graph_distance_threshold_m,
+                    "graph_fetch_limit": fetch_limit,
+                },
+            }
+
+            yield {
+                "type": "FINAL",
+                "payload": {
+                    "success": True,
+                    "results": final_results,
+                    "diagnostics": {
+                        "engine": "python-spatial-pipeline",
+                        "query_type": query_type,
+                        "candidate_source": candidate_source,
+                        "source_policy": source_policy if isinstance(source_policy, dict) else {},
+                        "direction": direction_hint,
+                        "direction_applied": direction_applied,
+                        "graph_enabled": need_graph_reasoning,
+                        "graph_fast_path": True,
+                    },
+                },
+            }
+            return
 
         if query_type == "poi_fetch":
             final_results = {
