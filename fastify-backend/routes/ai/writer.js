@@ -24,6 +24,9 @@ Hard rules:
   - Do not mention comparison workflows when the user did not select multiple regions.
 - If source_policy.category_source is all_categories, clearly state that the analysis covers all POI categories in the active spatial boundary.
 - If source_policy.category_source is ui_selector, clearly state that category filtering comes from the UI selector.
+- When spatial evidence includes hotspots, vernacular regions, or fuzzy regions, prioritize describing spatial patterns (clustering, density gradients, functional zoning) over listing individual POIs.
+- When membership scores or confidence levels are provided, communicate certainty levels naturally (e.g. "clearly forms a commercial core" vs "shows weak signs of clustering").
+- When H3 grid aggregation data is present, use it to describe spatial distribution patterns.
 
 Output style:
 1) Start with a 1-2 sentence direct answer.
@@ -311,26 +314,70 @@ function buildResultContext(executorResult, options = {}) {
     let hotspotText = '🔥 **识别的热点区域**:\n'
     results.spatial_clusters.hotspots.forEach((h, i) => {
       hotspotText += `\n**热点 ${i + 1}**: `;
-      if (h.dominantCategories && h.dominantCategories.length > 0) {
-        hotspotText += `${h.dominantCategories[0].category}聚集区 `;
+      // 兼容 Python pipeline 格式 (dominantCategories) 和 Node 格式
+      const domCats = h.dominantCategories || h.dominant_categories
+      if (Array.isArray(domCats) && domCats.length > 0) {
+        hotspotText += `${domCats[0].category}聚集区 `;
       }
-      hotspotText += `(密度: ${Math.round(h.density * 100) / 100}, 包含 ${h.poiCount} 个POI)\n`;
+      hotspotText += `(密度: ${Math.round(h.density * 100) / 100}, 包含 ${h.poiCount || h.poi_count || 0} 个POI)\n`;
       if (h.center) {
         hotspotText += `- 中心位置: ${h.center.lat?.toFixed(4)}, ${h.center.lon?.toFixed(4)}\n`;
       }
     });
     sections.push(hotspotText);
   }
+
+  // 5.1 H3 空间聚合摘要 (Python pipeline 输出 spatial_clusters.h3_summary)
+  const h3Cells = results.spatial_clusters?.h3_summary
+  if (Array.isArray(h3Cells) && h3Cells.length > 0) {
+    let h3Text = '🗺️ **空间网格聚合分析**:\n'
+    h3Text += `共 ${h3Cells.length} 个活跃网格\n\n`
+    h3Text += '**高密度网格 (Top 5)**:\n'
+    h3Cells.slice(0, 5).forEach((cell, i) => {
+      h3Text += `- 网格 ${i + 1}: ${cell.count} 个POI，主导业态: ${cell.dominant_category}\n`
+    })
+    sections.push(h3Text)
+  }
   
-  // 6. 语义模糊区域（Vernacular Regions）
+  // 6. 语义功能区（Vernacular Regions）
   if (results.vernacular_regions?.length > 0) {
     let regionText = '📍 **语义功能区识别**:\n';
-    results.vernacular_regions.forEach(vr => {
+    results.vernacular_regions.forEach((vr, i) => {
       if (vr.regions && vr.regions.length > 0) {
         regionText += `\n**${vr.category}功能区**:\n`;
-        vr.regions.forEach((r, i) => {
-          regionText += `- 子区域 ${i + 1}: 置信度 ${Math.round(r.confidence * 100)}%, 包含 ${r.poiCount} 个POI\n`;
+        vr.regions.forEach((r, ri) => {
+          regionText += `- 子区域 ${ri + 1}: 置信度 ${Math.round(r.confidence * 100)}%, 包含 ${r.poiCount} 个POI\n`;
         });
+      } else {
+        const name = vr.name || `${vr.dominant_category || vr.theme || '综合'}区域`;
+        const poiCount = vr.poi_count || vr.poiCount || 0;
+        const membership = vr.membership;
+        const score = membership?.score ?? vr.score;
+        const level = membership?.level ?? vr.level ?? '';
+
+        regionText += `\n**${name}** (${poiCount} POI)`;
+        if (score !== undefined) {
+          regionText += ` — 置信度 ${Math.round(score * 100)}%`;
+        }
+        if (level) {
+          const levelMap = { core: '核心区', transition: '过渡区', periphery: '边缘区' };
+          regionText += ` [${levelMap[level] || level}]`;
+        }
+        regionText += '\n';
+
+        if (membership) {
+          const factors = [];
+          if (membership.density > 0.5) factors.push(`密度${(membership.density * 100).toFixed(0)}%`);
+          if (membership.purity > 0.5) factors.push(`纯度${(membership.purity * 100).toFixed(0)}%`);
+          if (membership.compactness > 0.5) factors.push(`紧凑度${(membership.compactness * 100).toFixed(0)}%`);
+          if (factors.length > 0) {
+            regionText += `  - 主要特征: ${factors.join(', ')}\n`;
+          }
+        }
+
+        if (vr.center) {
+          regionText += `  - 中心: ${vr.center.lat?.toFixed(4)}, ${vr.center.lon?.toFixed(4)}\n`;
+        }
       }
     });
     sections.push(regionText);
@@ -338,12 +385,31 @@ function buildResultContext(executorResult, options = {}) {
 
   // 7. 模糊区域 (Fuzzy Regions) - Narrative Mode 专用
   if (results.fuzzy_regions?.length > 0) {
-    let fuzzyText = '🌌 **检测到的模糊区域 (用于 Narrative 引导)**:\n';
+    let fuzzyText = '🌌 **模糊区域边界模型**:\n';
+
+    const levelCounts = { core: 0, transition: 0, periphery: 0 };
+    results.fuzzy_regions.forEach(fr => {
+      const level = fr.level || 'transition';
+      if (levelCounts[level] !== undefined) levelCounts[level]++;
+    });
+
+    if (levelCounts.core + levelCounts.transition + levelCounts.periphery > 0) {
+      fuzzyText += `> 核心区 ${levelCounts.core} 个 | 过渡区 ${levelCounts.transition} 个 | 边缘区 ${levelCounts.periphery} 个\n\n`;
+    }
+
     results.fuzzy_regions.forEach((fr, i) => {
-      // fr: { id, theme, pointCount, dominantCategories: [{category, count}] }
-      const domCats = fr.dominantCategories?.map(c => c.category).join('、') || '综合';
-      const centerStr = fr.center ? `(${fr.center.lat.toFixed(4)}, ${fr.center.lon.toFixed(4)})` : '';
-      fuzzyText += `- **[ID: ${fr.id}]** 主题: ${fr.theme} | 主导: ${domCats} | 规模: ${fr.pointCount} POI ${centerStr}\n`;
+      const theme = fr.theme || fr.dominant_category || '综合';
+      const score = fr.score !== undefined ? `${Math.round(fr.score * 100)}%` : '-';
+      const levelMap = { core: '核心', transition: '过渡', periphery: '边缘' };
+      const levelLabel = levelMap[fr.level] || fr.level || '';
+      const centerStr = fr.center ? `(${fr.center.lat?.toFixed(4)}, ${fr.center.lon?.toFixed(4)})` : '';
+
+      fuzzyText += `- **[ID: ${fr.id}]** ${theme} | 置信度 ${score} | ${levelLabel} ${centerStr}\n`;
+
+      if (fr.drivers?.length > 0) {
+        const driverStr = fr.drivers.map(d => `${d.factor}=${(d.value * 100).toFixed(0)}%`).join(', ');
+        fuzzyText += `  主驱动因子: ${driverStr}\n`;
+      }
     });
     fuzzyText += '\n> 提示：请在 narrative_flow 中优先使用上述 [ID] 作为 focus 目标。\n';
     sections.push(fuzzyText);
@@ -473,6 +539,18 @@ function buildResultContext(executorResult, options = {}) {
     
     if (stats.total_candidates) {
       statParts.push(`候选 ${stats.total_candidates} 个`)
+    }
+    if (stats.cluster_count > 0) {
+      statParts.push(`${stats.cluster_count} 个聚类`)
+    }
+    if (stats.h3_cell_count > 0) {
+      statParts.push(`${stats.h3_cell_count} 个H3网格`)
+    }
+    if (stats.candidate_source) {
+      statParts.push(`数据源: ${stats.candidate_source === 'db' ? 'PostGIS' : stats.candidate_source}`)
+    }
+    if (stats.direction_applied && stats.direction) {
+      statParts.push(`方向过滤: ${stats.direction}`)
     }
     if (stats.semantic_rerank_applied) {
       statParts.push('已应用语义排序')

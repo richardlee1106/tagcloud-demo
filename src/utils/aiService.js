@@ -196,6 +196,55 @@ export async function sendChatMessageStream(messages, onChunk, options = {}, poi
              continue
           }
 
+          if (currentEvent === 'boundary') {
+             const boundary = JSON.parse(data)
+             if (onMeta) onMeta('boundary', boundary)
+             currentEvent = null
+             continue
+          }
+
+          if (currentEvent === 'spatial_clusters') {
+             const clusters = JSON.parse(data)
+             if (onMeta) onMeta('spatial_clusters', clusters)
+             currentEvent = null
+             continue
+          }
+
+          if (currentEvent === 'vernacular_regions') {
+             const regions = JSON.parse(data)
+             if (onMeta) onMeta('vernacular_regions', regions)
+             currentEvent = null
+             continue
+          }
+
+          if (currentEvent === 'fuzzy_regions') {
+             const fuzzy = JSON.parse(data)
+             if (onMeta) onMeta('fuzzy_regions', fuzzy)
+             currentEvent = null
+             continue
+          }
+
+          if (currentEvent === 'progress') {
+             const progress = JSON.parse(data)
+             if (onMeta) onMeta('progress', progress)
+             currentEvent = null
+             continue
+          }
+
+          if (currentEvent === 'partial') {
+             const partial = JSON.parse(data)
+             if (onMeta) onMeta('partial', partial)
+             currentEvent = null
+             continue
+          }
+
+          if (currentEvent === 'refined_result') {
+             const refined = JSON.parse(data)
+             if (onMeta) onMeta('refined_result', refined)
+             currentEvent = null
+             continue
+          }
+
           // 默认为 message chunk
           const parsed = JSON.parse(data)
           

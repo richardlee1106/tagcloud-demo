@@ -208,7 +208,15 @@ const props = defineProps({
 });
 
 // 定义事件
-const emit = defineEmits(['close', 'render-to-tagcloud', 'render-pois-to-map']);
+const emit = defineEmits([
+  'close',
+  'render-to-tagcloud',
+  'render-pois-to-map',
+  'ai-boundary',
+  'ai-spatial-clusters',
+  'ai-vernacular-regions',
+  'ai-fuzzy-regions'
+]);
 
 // 响应式状态
 const messages = ref([]);
@@ -484,6 +492,40 @@ async function sendMessage() {
             messages.value[aiMessageIndex].pois = data;
             messages.value[aiMessageIndex].intentMode =
               spatialContext?.mode === 'Polygon' ? 'micro' : 'macro';
+          }
+        }
+
+        if (type === 'boundary' && data) {
+          if (messages.value[aiMessageIndex]) {
+            messages.value[aiMessageIndex].boundary = data;
+          }
+          emit('ai-boundary', data);
+        }
+
+        if (type === 'spatial_clusters' && data) {
+          if (messages.value[aiMessageIndex]) {
+            messages.value[aiMessageIndex].spatialClusters = data;
+          }
+          emit('ai-spatial-clusters', data);
+        }
+
+        if (type === 'vernacular_regions' && Array.isArray(data)) {
+          if (messages.value[aiMessageIndex]) {
+            messages.value[aiMessageIndex].vernacularRegions = data;
+          }
+          emit('ai-vernacular-regions', data);
+        }
+
+        if (type === 'fuzzy_regions' && Array.isArray(data)) {
+          if (messages.value[aiMessageIndex]) {
+            messages.value[aiMessageIndex].fuzzyRegions = data;
+          }
+          emit('ai-fuzzy-regions', data);
+        }
+
+        if (type === 'progress' && data) {
+          if (messages.value[aiMessageIndex]) {
+            messages.value[aiMessageIndex].progress = data.progress;
           }
         }
       }

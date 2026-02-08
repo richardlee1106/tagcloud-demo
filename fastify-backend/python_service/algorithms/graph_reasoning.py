@@ -191,6 +191,13 @@ def analyze_spatial_graph(
         {
             "id": item[1].get("id"),
             "name": item[1].get("name"),
+            "category": (
+                item[1].get("category_small")
+                or item[1].get("category_mid")
+                or item[1].get("category_big")
+                or item[1].get("type")
+                or "mixed"
+            ),
             "degree": item[2],
         }
         for item in degree_pairs[:8]

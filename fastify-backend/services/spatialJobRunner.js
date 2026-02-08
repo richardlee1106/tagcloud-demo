@@ -561,7 +561,7 @@ function buildGraphAnalysisFromReasoning(graphReasoning = null) {
 
   const hubs = topHubs.map((hub, index) => ({
     representativePOI: hub?.name || `Hub-${index + 1}`,
-    mainCategory: hub?.category || 'mixed',
+    mainCategory: hub?.category || hub?.category_small || hub?.type || 'mixed',
     pageRank: Number.isFinite(edgeCount) && edgeCount > 0
       ? Math.min(1, Math.max(0, Number(hub?.degree || 0) / edgeCount))
       : 0,

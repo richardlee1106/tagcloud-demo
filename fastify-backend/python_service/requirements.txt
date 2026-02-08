@@ -13,3 +13,4 @@ scikit-learn>=1.4.0
 hdbscan>=0.8.33
 shapely>=2.0.3
 alphashape>=1.3.1
+h3>=4.0.0
