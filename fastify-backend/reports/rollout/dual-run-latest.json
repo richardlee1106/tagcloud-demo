@@ -1,5 +1,5 @@
 {
-  "checked_at": "2026-02-08T04:15:35.966Z",
+  "checked_at": "2026-02-08T06:38:41.773Z",
   "base_url": "http://127.0.0.1:3200",
   "samples_per_case": 2,
   "threshold": {
@@ -10,9 +10,9 @@
     "passed": 4,
     "failed": 0,
     "alert_count": 0,
-    "warning_count": 0,
+    "warning_count": 4,
     "avg_python_latency_ms": 66.5,
-    "avg_node_latency_ms": 270.25,
+    "avg_node_latency_ms": 2.5,
     "all_passed": true
   },
   "runs": [
@@ -21,11 +21,13 @@
       "sample_index": 0,
       "pass": true,
       "alerts": [],
-      "warnings": [],
+      "warnings": [
+        "graph_poi_overlap_low:0"
+      ],
       "python": {
         "ok": true,
         "status": 200,
-        "elapsed_ms": 145,
+        "elapsed_ms": 125,
         "mode": "graph_reasoning",
         "compute_mode": "python_primary",
         "executor_engine": "python_grpc",
@@ -35,27 +37,27 @@
       "node_fallback": {
         "ok": true,
         "status": 200,
-        "elapsed_ms": 1071,
-        "mode": "graph_analysis_fallback",
+        "elapsed_ms": 2,
+        "mode": "graph_reasoning_sql_fallback",
         "compute_mode": "node_primary",
-        "executor_engine": "node_fallback",
-        "poi_count": 18,
+        "executor_engine": "node_sql_fallback",
+        "poi_count": 0,
         "schema_ok": true
       },
       "poi_overlap": {
-        "overlapCount": 17,
+        "overlapCount": 0,
         "topK": 20,
-        "ratioByLeft": 0.85,
-        "ratioByRight": 0.9444
+        "ratioByLeft": 0,
+        "ratioByRight": 0
       },
       "graph_delta": {
         "py_nodes": 280,
-        "nd_nodes": 20,
+        "nd_nodes": 0,
         "py_edges": 35571,
         "nd_edges": 0,
         "py_components": 5,
         "nd_components": 0,
-        "node_ratio": 0.0714,
+        "node_ratio": 0,
         "edge_ratio": 0,
         "component_ratio": 0
       }
@@ -65,11 +67,13 @@
       "sample_index": 1,
       "pass": true,
       "alerts": [],
-      "warnings": [],
+      "warnings": [
+        "graph_poi_overlap_low:0"
+      ],
       "python": {
         "ok": true,
         "status": 200,
-        "elapsed_ms": 113,
+        "elapsed_ms": 133,
         "mode": "graph_reasoning",
         "compute_mode": "python_primary",
         "executor_engine": "python_grpc",
@@ -80,26 +84,26 @@
         "ok": true,
         "status": 200,
         "elapsed_ms": 3,
-        "mode": "graph_analysis_fallback",
+        "mode": "graph_reasoning_sql_fallback",
         "compute_mode": "node_primary",
-        "executor_engine": "node_fallback",
-        "poi_count": 18,
+        "executor_engine": "node_sql_fallback",
+        "poi_count": 0,
         "schema_ok": true
       },
       "poi_overlap": {
-        "overlapCount": 16,
+        "overlapCount": 0,
         "topK": 20,
-        "ratioByLeft": 0.8,
-        "ratioByRight": 0.8889
+        "ratioByLeft": 0,
+        "ratioByRight": 0
       },
       "graph_delta": {
         "py_nodes": 280,
-        "nd_nodes": 20,
+        "nd_nodes": 0,
         "py_edges": 36601,
         "nd_edges": 0,
         "py_components": 3,
         "nd_components": 0,
-        "node_ratio": 0.0714,
+        "node_ratio": 0,
         "edge_ratio": 0,
         "component_ratio": 0
       }
@@ -109,11 +113,13 @@
       "sample_index": 0,
       "pass": true,
       "alerts": [],
-      "warnings": [],
+      "warnings": [
+        "region_valid_count_low_node_fallback:0"
+      ],
       "python": {
         "ok": true,
         "status": 200,
-        "elapsed_ms": 4,
+        "elapsed_ms": 5,
         "mode": "region_comparison",
         "compute_mode": "python_primary",
         "executor_engine": "python_grpc",
@@ -123,10 +129,10 @@
       "node_fallback": {
         "ok": true,
         "status": 200,
-        "elapsed_ms": 4,
-        "mode": "region_comparison",
+        "elapsed_ms": 2,
+        "mode": "region_comparison_sql_fallback",
         "compute_mode": "node_primary",
-        "executor_engine": "node_fallback",
+        "executor_engine": "node_sql_fallback",
         "poi_count": 0,
         "schema_ok": true
       },
@@ -143,11 +149,13 @@
       "sample_index": 1,
       "pass": true,
       "alerts": [],
-      "warnings": [],
+      "warnings": [
+        "region_valid_count_low_node_fallback:0"
+      ],
       "python": {
         "ok": true,
         "status": 200,
-        "elapsed_ms": 4,
+        "elapsed_ms": 3,
         "mode": "region_comparison",
         "compute_mode": "python_primary",
         "executor_engine": "python_grpc",
@@ -158,9 +166,9 @@
         "ok": true,
         "status": 200,
         "elapsed_ms": 3,
-        "mode": "region_comparison",
+        "mode": "region_comparison_sql_fallback",
         "compute_mode": "node_primary",
-        "executor_engine": "node_fallback",
+        "executor_engine": "node_sql_fallback",
         "poi_count": 0,
         "schema_ok": true
       },

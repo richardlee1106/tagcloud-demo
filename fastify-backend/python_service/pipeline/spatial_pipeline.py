@@ -732,7 +732,30 @@ class SpatialPipeline:
             "payload": {"stage": "cluster"},
         }
 
-        cluster_result = cluster_points(coords)
+        cluster_min_cluster_size = _resolve_limit(
+            hints_options.get("clusterMinClusterSize"),
+            default_value=12,
+            max_value=300,
+        )
+        cluster_min_samples = _resolve_limit(
+            hints_options.get("clusterMinSamples"),
+            default_value=6,
+            max_value=80,
+        )
+        cluster_max_hdbscan_points = _resolve_limit(
+            hints_options.get("clusterMaxHdbscanPoints"),
+            default_value=14000,
+            max_value=120000,
+        )
+        cluster_adaptive = str(hints_options.get("clusterAdaptive", "true")).lower() not in {"false", "0", "off", "no"}
+
+        cluster_result = cluster_points(
+            coords,
+            min_cluster_size=cluster_min_cluster_size,
+            min_samples=cluster_min_samples,
+            adaptive=cluster_adaptive,
+            max_hdbscan_points=cluster_max_hdbscan_points,
+        )
         labels = cluster_result.labels
 
         alpha_max_input_points = _resolve_limit(
@@ -754,6 +777,8 @@ class SpatialPipeline:
                 "cluster_count": cluster_result.cluster_count,
                 "cluster_engine": cluster_result.engine,
                 "noise_count": cluster_result.noise_count,
+                "cluster_effective_min_cluster_size": cluster_result.effective_min_cluster_size,
+                "cluster_effective_min_samples": cluster_result.effective_min_samples,
             },
         }
 
@@ -899,6 +924,9 @@ class SpatialPipeline:
                 "cluster_count": len(vernacular_regions),
                 "cluster_engine": cluster_result.engine,
                 "noise_count": cluster_result.noise_count,
+                "cluster_effective_min_cluster_size": cluster_result.effective_min_cluster_size,
+                "cluster_effective_min_samples": cluster_result.effective_min_samples,
+                "cluster_input_point_count": cluster_result.input_point_count,
                 "h3_resolution": h3_resolution,
                 "h3_engine": h3_summary.get("engine", "none"),
                 "h3_cell_count": len(h3_summary.get("cells", [])),

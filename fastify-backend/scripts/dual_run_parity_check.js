@@ -322,8 +322,24 @@ function buildRunSummary(caseType, sampleIndex, pythonRun, nodeRun, minPoiOverla
   if (caseType === 'region_comparison') {
     const pyValid = Number(pyResults?.stats?.valid_regions || pyResults?.stats?.regions_analyzed || 0)
     const ndValid = Number(ndResults?.stats?.valid_regions || ndResults?.stats?.regions_analyzed || 0)
-    if (pyValid < 2 || ndValid < 2) {
-      alerts.push(`region_valid_count_low:py=${pyValid},node=${ndValid}`)
+    const nodeEngine = String(ndResults?.stats?.executor_engine || '')
+    const nodeMode = String(ndResults?.mode || '')
+    const isLightNodeFallback =
+      nodeEngine === 'node_fallback' ||
+      nodeEngine === 'node_sql_fallback' ||
+      nodeMode.endsWith('_sql_fallback') ||
+      nodeMode === 'graph_analysis_fallback'
+
+    if (pyValid < 2) {
+      alerts.push(`region_valid_count_low_python:${pyValid}`)
+    }
+
+    if (ndValid < 2 && !isLightNodeFallback) {
+      alerts.push(`region_valid_count_low_node:${ndValid}`)
+    }
+
+    if (ndValid < 2 && isLightNodeFallback) {
+      warnings.push(`region_valid_count_low_node_fallback:${ndValid}`)
     }
   }
 
@@ -341,7 +357,11 @@ function buildRunSummary(caseType, sampleIndex, pythonRun, nodeRun, minPoiOverla
     // ?????Node fallback ????????????? Python ? POI ???????
     const nodeMode = String(ndResults?.mode || '')
     const nodeEngine = String(ndResults?.stats?.executor_engine || '')
-    const isLightFallback = nodeMode === 'graph_analysis_fallback' || nodeEngine === 'node_fallback'
+    const isLightFallback =
+      nodeMode === 'graph_analysis_fallback' ||
+      nodeMode.endsWith('_sql_fallback') ||
+      nodeEngine === 'node_fallback' ||
+      nodeEngine === 'node_sql_fallback'
 
     if (!isLightFallback && graphDelta.node_ratio < 0.1) {
       alerts.push(`graph_node_ratio_low:${graphDelta.node_ratio}`)

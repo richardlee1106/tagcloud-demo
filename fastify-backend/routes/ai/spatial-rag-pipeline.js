@@ -24,7 +24,7 @@
  */
 
 import { parseIntent, quickIntentClassify, QUERY_PLAN_DEFAULTS } from './planner.js'
-import { executeQuery } from './executor.js'
+import { executeSpatialPlanWithFallback } from '../../services/spatialJobRunner.js'
 import { generateAnswer, buildQuickReply } from './writer.js'
 // Phase 2 优化：多轮对话上下文
 import conversationContext from '../../services/conversationContext.js'
@@ -76,6 +76,23 @@ class PipelineStats {
       stages: this.stages
     }
   }
+
+}
+
+/**
+ * ?????? pipeline ???? spatialJobRunner?
+ * ???????? legacy executor.js?
+ */
+export async function executeQuery(queryPlan, frontendPOIs = [], options = {}) {
+  const spatialContext = options.spatialContext || options.context || {}
+
+  return executeSpatialPlanWithFallback({
+    queryPlan,
+    poiFeatures: frontendPOIs,
+    spatialContext,
+    options,
+    requestId: options.requestId || options.request_id
+  })
 }
 
 /**
@@ -403,7 +420,6 @@ function extractCategories(pois) {
 
 // 重新导出各阶段函数
 export { parseIntent } from './planner.js'
-export { executeQuery } from './executor.js'
 export { generateAnswer, buildQuickReply } from './writer.js'
 
 export default {

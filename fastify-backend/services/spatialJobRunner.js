@@ -9,6 +9,7 @@ import { generateAnswer, buildQuickReply } from '../routes/ai/writer.js'
 import { computeSpatialStream, isGrpcComputeEnabled } from './grpcClient.js'
 import { resolveSpatialMigrationDecision } from './migrationPolicy.js'
 import { resolveSourcePolicy } from './sourcePolicy.js'
+import { executeNodeSqlFallback } from './nodeSqlFallbackExecutor.js'
 
 // MVP 固定分流阈值，后续可根据压测结果调参。
 const ASYNC_RULES = {
@@ -64,6 +65,16 @@ function shouldUseMinimalNodeFallback(queryPlan = {}, options = {}) {
   }
 
   return ADVANCED_QUERY_TYPES.has(normalizeQueryType(queryPlan))
+}
+
+
+function shouldUseLegacyNodeExecutor(options = {}) {
+  if (options.forceLegacyNodeExecutor === true) {
+    return true
+  }
+
+  const envFlag = String(process.env.SPATIAL_NODE_LEGACY_EXECUTOR || 'false').trim().toLowerCase()
+  return ['1', 'true', 'yes', 'on'].includes(envFlag)
 }
 
 function emptyGraphReasoningSummary() {
@@ -756,6 +767,36 @@ async function computeSpatialWithFallback({
       _fallback_reasons: fallbackReasons
     }
   }
+
+  const useLegacyNodeExecutor = shouldUseLegacyNodeExecutor(options)
+
+  if (!useLegacyNodeExecutor) {
+    await reporter.reportStage('node_executor_sql_fallback', {
+      node_path: nodePath,
+      reason: 'use_lightweight_sql_fallback',
+      fallback_reasons: fallbackReasons
+    })
+
+    const sqlFallbackEnvelope = await executeNodeSqlFallback({
+      queryPlan,
+      spatialContext,
+      options,
+      fallbackReasons
+    })
+
+    const normalizedNode = normalizeExecutorEnvelope(sqlFallbackEnvelope)
+    return {
+      ...normalizedNode,
+      _compute_path: nodePath,
+      _fallback_reasons: fallbackReasons
+    }
+  }
+
+  await reporter.reportStage('node_executor_legacy', {
+    node_path: nodePath,
+    reason: 'legacy_executor_enabled',
+    fallback_reasons: fallbackReasons
+  })
 
   const legacyExecuteQuery = await getLegacyExecuteQuery()
 

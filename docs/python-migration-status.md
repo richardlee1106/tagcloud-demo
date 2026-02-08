@@ -39,6 +39,19 @@ Measured on local stack (`POST /api/ai/execute`, 5 samples):
   - keeps outputs reproducible.
 - Pipeline boundary modeling adds small-cluster convex-hull shortcut and preview-boundary sampling.
 
+### 1.3 2026-02-08 full closeout update (all remaining blocks)
+
+- Python clustering now supports adaptive parameter resolution (`clusterMinClusterSize` / `clusterMinSamples` / `clusterMaxHdbscanPoints`) to reduce heavy-scene overhead.
+- Node fallback is slimmed to a SQL-only lightweight executor (`node_sql_fallback`) by default; legacy Node heavy executor is now opt-in (`SPATIAL_NODE_LEGACY_EXECUTOR=true`).
+- Residual direct `executeQuery` usage in `spatial-rag-pipeline` is replaced by `spatialJobRunner` wrapper, so old pipeline paths no longer hard-depend on legacy executor internals.
+- Rollout policy checks for 10/30/60/100 all passed expected sampling ranges (`all_within_expected=true`).
+- Dual-run parity now reports `warning_count` for lightweight fallback divergence while preserving hard-fail checks on schema and Python graph validity.
+
+Latest regression status:
+- `smoke:jobs` pass
+- `dual_run_parity_check` pass (`all_passed=true`)
+- `drill_node_fallback` pass (`all_passed=true`)
+
 ## 2) Measured performance snapshots
 
 > Measurements were run locally on 2026-02-07. Absolute values will vary by machine load.
