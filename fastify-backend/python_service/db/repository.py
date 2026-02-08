@@ -185,8 +185,16 @@ class POIRepository:
         order_by_distance: bool = True,
     ) -> List[Dict[str, Any]]:
         """????? + ??/?????? POI?"""
-        # ???????????????? null / ????????????
+        # Debug: log entry with spatial_context info
+        import sys
+        print(f"[POSTGIS_DEBUG] fetch_pois called", flush=True, file=sys.stderr)
+        print(f"[POSTGIS_DEBUG] spatial_context keys: {list(spatial_context.keys()) if spatial_context else 'None'}", flush=True, file=sys.stderr)
+        print(f"[POSTGIS_DEBUG] spatial_context: {spatial_context}", flush=True, file=sys.stderr)
+        print(f"[POSTGIS_DEBUG] categories: {categories}", flush=True, file=sys.stderr)
+        print(f"[POSTGIS_DEBUG] terms: {terms}", flush=True, file=sys.stderr)
+        # ???????????????? null / ?????????????
         if not isinstance(spatial_context, dict):
+            print(f"[POSTGIS_DEBUG] Warning: spatial_context is not dict, resetting to {{}}", flush=True, file=sys.stderr)
             spatial_context = {}
 
         boundary_wkt = self._boundary_wkt(spatial_context.get("boundary"))
@@ -233,6 +241,8 @@ class POIRepository:
             if order_by_distance:
                 order_sql = "ORDER BY p.geom <-> ST_SetSRID(ST_MakePoint(%s, %s), 4326) ASC"
         else:
+            print(f"[POSTGIS_DEBUG] No spatial constraint matched - returning empty", flush=True, file=sys.stderr)
+            print(f"[POSTGIS_DEBUG] boundary_wkt: {boundary_wkt is not None}, viewport_wkt: {viewport_wkt is not None}, region_clauses: {len(region_clauses)}, center: {center is not None}, radius: {radius}", flush=True, file=sys.stderr)
             return []
 
         normalized_categories = [c.strip() for c in (categories or []) if isinstance(c, str) and c.strip()]
@@ -280,12 +290,17 @@ class POIRepository:
         """ + " AND ".join(where_parts) + f" {order_sql} LIMIT %s"
 
         params.append(int(limit))
+        
+        # Debug: log SQL execution
+        print(f"[POSTGIS_DEBUG] Executing SQL with {len(where_parts)} WHERE clauses, limit={limit}", flush=True, file=sys.stderr)
+        print(f"[POSTGIS_DEBUG] SQL WHERE: {' AND '.join(where_parts)[:200]}...", flush=True, file=sys.stderr)
 
         with self._connect() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cursor:
                 cursor.execute(sql, params)
                 rows = cursor.fetchall()
-
+        
+        print(f"[POSTGIS_DEBUG] Query returned {len(rows)} rows", flush=True, file=sys.stderr)
         return [dict(row) for row in rows]
 
 

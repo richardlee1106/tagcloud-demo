@@ -536,9 +536,16 @@ class SpatialPipeline:
 
         raw_candidates = _safe_json_loads(request.get("candidates_json"), [])
         payload_candidates = _normalize_payload_candidates(raw_candidates)
+        
+        # Debug logging
+        print(f"[PIPELINE_DEBUG] candidates_json present: {len(raw_candidates) > 0}", flush=True, file=sys.stderr)
+        print(f"[PIPELINE_DEBUG] payload_candidates count: {len(payload_candidates)}", flush=True, file=sys.stderr)
+        print(f"[PIPELINE_DEBUG] py_data_source: {py_data_source}", flush=True, file=sys.stderr)
+        print(f"[PIPELINE_DEBUG] spatial_context: {spatial_context}", flush=True, file=sys.stderr)
 
         candidate_source = "db"
         if payload_candidates and py_data_source in {"hybrid", "node"}:
+            print(f"[PIPELINE_DEBUG] Using payload candidates (frontend POIs)", flush=True, file=sys.stderr)
             pois = _filter_payload_candidates(
                 payload_candidates,
                 spatial_context=spatial_context,
@@ -548,6 +555,7 @@ class SpatialPipeline:
             )
             candidate_source = "payload"
         else:
+            print(f"[PIPELINE_DEBUG] Using repository.fetch_pois (PostGIS)", flush=True, file=sys.stderr)
             pois = self.repository.fetch_pois(
                 spatial_context=spatial_context,
                 categories=categories,
@@ -555,6 +563,7 @@ class SpatialPipeline:
                 limit=fetch_limit,
                 order_by_distance=db_order_by_distance,
             )
+            print(f"[PIPELINE_DEBUG] fetch_pois returned {len(pois)} POIs", flush=True, file=sys.stderr)
 
         direction_applied = direction_hint is not None
         if direction_applied:

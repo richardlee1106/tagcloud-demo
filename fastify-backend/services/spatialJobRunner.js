@@ -520,6 +520,14 @@ function buildGrpcRequest({ requestId, queryPlan, spatialContext, options, migra
   const executionProfile = migrationDecision?.execution_profile || 'core'
   const dryRun = migrationDecision?.dry_run === true
   const candidatesJson = serializeCandidatesForGrpc(options, poiFeatures, migrationDecision)
+  
+  // Debug: log what's being sent to Python
+  console.log('[GRPC_DEBUG] buildGrpcRequest spatialContext keys:', Object.keys(spatialContext || {}))
+  console.log('[GRPC_DEBUG] spatialContext.viewport:', spatialContext?.viewport)
+  console.log('[GRPC_DEBUG] spatialContext.boundary:', spatialContext?.boundary ? 'present' : 'missing')
+  console.log('[GRPC_DEBUG] spatialContext.regions:', spatialContext?.regions?.length || 0)
+  console.log('[GRPC_DEBUG] py_data_source:', migrationDecision?.py_data_source || 'python')
+  console.log('[GRPC_DEBUG] candidates_json length:', candidatesJson.length)
 
   return {
     request_id: requestId,
