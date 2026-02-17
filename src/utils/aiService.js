@@ -180,70 +180,25 @@ export async function sendChatMessageStream(messages, onChunk, options = {}, poi
         if (data === '[DONE]') continue
 
         try {
-          if (currentEvent === 'pois') {
-             const pois = JSON.parse(data)
-             console.log('[AI Frontend] 收到后端下发的 POI 数据:', pois.length)
-             if (onMeta) onMeta('pois', pois)
-             currentEvent = null
-             continue
+          // 统一处理具名 SSE 元事件（查表模式，消除重复分支）
+          const META_EVENT_TYPES = new Set([
+            'pois', 'stage', 'boundary', 'spatial_clusters',
+            'vernacular_regions', 'fuzzy_regions', 'progress',
+            'partial', 'refined_result'
+          ])
+
+          if (currentEvent && META_EVENT_TYPES.has(currentEvent)) {
+            const payload = JSON.parse(data)
+            if (currentEvent === 'pois') {
+              console.log('[AI Frontend] 收到后端下发的 POI 数据:', payload.length)
+            } else if (currentEvent === 'stage') {
+              console.log('[AI Frontend] 收到阶段更新:', payload.name)
+            }
+            if (onMeta) onMeta(currentEvent, currentEvent === 'stage' ? payload.name : payload)
+            currentEvent = null
+            continue
           }
 
-          if (currentEvent === 'stage') {
-             const stageData = JSON.parse(data)
-             console.log('[AI Frontend] 收到阶段更新:', stageData.name)
-             if (onMeta) onMeta('stage', stageData.name)
-             currentEvent = null
-             continue
-          }
-
-          if (currentEvent === 'boundary') {
-             const boundary = JSON.parse(data)
-             if (onMeta) onMeta('boundary', boundary)
-             currentEvent = null
-             continue
-          }
-
-          if (currentEvent === 'spatial_clusters') {
-             const clusters = JSON.parse(data)
-             if (onMeta) onMeta('spatial_clusters', clusters)
-             currentEvent = null
-             continue
-          }
-
-          if (currentEvent === 'vernacular_regions') {
-             const regions = JSON.parse(data)
-             if (onMeta) onMeta('vernacular_regions', regions)
-             currentEvent = null
-             continue
-          }
-
-          if (currentEvent === 'fuzzy_regions') {
-             const fuzzy = JSON.parse(data)
-             if (onMeta) onMeta('fuzzy_regions', fuzzy)
-             currentEvent = null
-             continue
-          }
-
-          if (currentEvent === 'progress') {
-             const progress = JSON.parse(data)
-             if (onMeta) onMeta('progress', progress)
-             currentEvent = null
-             continue
-          }
-
-          if (currentEvent === 'partial') {
-             const partial = JSON.parse(data)
-             if (onMeta) onMeta('partial', partial)
-             currentEvent = null
-             continue
-          }
-
-          if (currentEvent === 'refined_result') {
-             const refined = JSON.parse(data)
-             if (onMeta) onMeta('refined_result', refined)
-             currentEvent = null
-             continue
-          }
 
           // 默认为 message chunk
           const parsed = JSON.parse(data)

@@ -144,8 +144,7 @@ async function jobsRoutes(fastify) {
       migrate_query_types: [...migrationConfig.migrateQueryTypes],
       dual_run_enabled: migrationConfig.dualRunEnabled,
       dual_run_sample: migrationConfig.dualRunSample,
-      py_data_source: migrationConfig.pyDataSource,
-      force_node_fallback: migrationConfig.forceNodeFallback
+      py_data_source: migrationConfig.pyDataSource
     }
 
     const alerts = [...(queueHealth.alerts || [])]
@@ -154,17 +153,12 @@ async function jobsRoutes(fastify) {
       alerts.push({
         code: 'migration_disabled',
         severity: 'warning',
-        message: '空间迁移总开关已关闭，当前只会走 Node 路径。'
+        message: '空间迁移总开关已关闭，服务可能不可用。'
       })
     }
 
-    if (migration.force_node_fallback) {
-      alerts.push({
-        code: 'force_node_fallback_enabled',
-        severity: 'warning',
-        message: '全局 force_node_fallback=true，Python 主路径已被禁用。'
-      })
-    }
+    // force_node_fallback已被废弃，不再显示相关告警
+    // 所有空间计算强制使用Python服务
 
     const status = alerts.some((item) => item.severity === 'error') ? 'degraded' : 'ok'
 

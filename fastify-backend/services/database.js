@@ -3,78 +3,97 @@
  * 用于空间数据存储和查询
  */
 
-import pg from 'pg';
+import pg from "pg";
 const { Pool } = pg;
 
 // 数据库连接池
 let pool = null;
 
 // rating ????????????????? NULL ?? SQL ?????
-const POI_RATING_SELECT_SQL = 'NULL::double precision AS rating';
+const POI_RATING_SELECT_SQL = "NULL::double precision AS rating";
 
 /**
  * 初始化数据库连接
  */
 export async function initDatabase() {
   if (pool) return pool;
-  
+
+  // 连接池大小通过环境变量控制，适配不同部署场景
+  // - 本地/Docker: POSTGRES_POOL_MAX=10~20（默认 10）
+  // - Serverless（Vercel）: POSTGRES_POOL_MAX=3~5，建议搭配 PgBouncer
+  const poolMax = Math.max(
+    1,
+    parseInt(process.env.POSTGRES_POOL_MAX || "10", 10),
+  );
+  const poolMin = Math.max(
+    0,
+    parseInt(process.env.POSTGRES_POOL_MIN || "2", 10),
+  );
+
   const dbConfig = {
-    host: process.env.POSTGRES_HOST || 'localhost',
+    host: process.env.POSTGRES_HOST || "localhost",
     port: parseInt(process.env.POSTGRES_PORT) || 5432,
-    user: process.env.POSTGRES_USER || 'postgres',
-    password: process.env.POSTGRES_PASSWORD || '123456',
-    database: process.env.POSTGRES_DATABASE || 'geoloom',
-    max: 1, // Serverless 环境下不建议使用连接池，限制为1个连接
-    connectionTimeoutMillis: 10000, // 给予更充分的连接时间 (10s)
-    idleTimeoutMillis: 0, // 禁止空闲断开
-    query_timeout: 45000, // 单个查询给足45秒
+    user: process.env.POSTGRES_USER || "postgres",
+    password: process.env.POSTGRES_PASSWORD || "123456",
+    database: process.env.POSTGRES_DATABASE || "geoloom",
+    max: poolMax, // 最大连接数，支持并发查询
+    min: poolMin, // 最小保活连接数，减少冷启动延迟
+    connectionTimeoutMillis: 10000, // 连接超时 10s
+    idleTimeoutMillis: 30000, // 空闲连接 30s 后回收，防止连接泄漏
+    query_timeout: 45000, // 单个查询超时 45s
   };
 
   // Vercel / Remote DB 可能需要 SSL
   if (process.env.SSL_MODE) {
     dbConfig.ssl = {
-      rejectUnauthorized: false
+      rejectUnauthorized: false,
     };
   }
-  
+
   pool = new Pool(dbConfig);
-  
+
   // 错误处理：防止 Pool 层面崩溃导致应用挂掉
-  pool.on('error', (err, client) => {
-    console.error('Unexpected error on idle client', err);
+  pool.on("error", (err, client) => {
+    console.error("Unexpected error on idle client", err);
     // don't throw error here to keep the process alive
   });
-  
+
   // 测试连接
   try {
     const client = await pool.connect();
-    const result = await client.query('SELECT PostGIS_Version()');
-    console.log(`✅ PostgreSQL + PostGIS 连接成功 (PostGIS ${result.rows[0].postgis_version})`);
+    const result = await client.query("SELECT PostGIS_Version()");
+    console.log(
+      `✅ PostgreSQL + PostGIS 连接成功 (PostGIS ${result.rows[0].postgis_version})`,
+    );
     client.release();
   } catch (err) {
     // 提供更友好的错误信息
-    if (err.code === '3D000') {
+    if (err.code === "3D000") {
       console.error(`\n❌ 数据库 "${dbConfig.database}" 不存在！`);
       console.error(`\n📋 请按以下步骤创建数据库：`);
       console.error(`   1. 打开 pgAdmin`);
-      console.error(`   2. 连接到 PostgreSQL 服务器 (${dbConfig.host}:${dbConfig.port})`);
+      console.error(
+        `   2. 连接到 PostgreSQL 服务器 (${dbConfig.host}:${dbConfig.port})`,
+      );
       console.error(`   3. 右键点击 "Databases" -> "Create" -> "Database..."`);
       console.error(`   4. 输入数据库名称: tagcloud`);
       console.error(`   5. 点击 "Save" 创建数据库`);
-      console.error(`   6. 在新建的 tagcloud 数据库上执行: scripts/sql/init_database.sql`);
+      console.error(
+        `   6. 在新建的 tagcloud 数据库上执行: scripts/sql/init_database.sql`,
+      );
       console.error(`\n   或者在 pgAdmin 的 SQL 编辑器中执行:`);
       console.error(`   CREATE DATABASE tagcloud;`);
       console.error(``);
-    } else if (err.code === 'ECONNREFUSED') {
+    } else if (err.code === "ECONNREFUSED") {
       console.error(`\n❌ 无法连接到 PostgreSQL 服务器！`);
       console.error(`   请确保 PostgreSQL 服务正在运行。`);
       console.error(`   连接地址: ${dbConfig.host}:${dbConfig.port}`);
     } else {
-      console.error('❌ 数据库连接失败:', err.message);
+      console.error("❌ 数据库连接失败:", err.message);
     }
     throw err;
   }
-  
+
   return pool;
 }
 
@@ -83,7 +102,7 @@ export async function initDatabase() {
  */
 export function getPool() {
   if (!pool) {
-    throw new Error('数据库未初始化，请先调用 initDatabase()');
+    throw new Error("数据库未初始化，请先调用 initDatabase()");
   }
   return pool;
 }
@@ -95,11 +114,11 @@ export async function query(text, params) {
   const start = Date.now();
   const result = await getPool().query(text, params);
   const duration = Date.now() - start;
-  
+
   if (duration > 100) {
     console.log(`[DB] 慢查询 (${duration}ms):`, text.substring(0, 100));
   }
-  
+
   return result;
 }
 
@@ -110,7 +129,7 @@ export async function closeDatabase() {
   if (pool) {
     await pool.end();
     pool = null;
-    console.log('数据库连接已关闭');
+    console.log("数据库连接已关闭");
   }
 }
 
@@ -126,9 +145,14 @@ export async function closeDatabase() {
  * @param {Object} filters 过滤条件
  * @returns {Promise<Array>} POI 列表
  */
-export async function findPOIsWithinRadius(lon, lat, radiusMeters, filters = {}) {
+export async function findPOIsWithinRadius(
+  lon,
+  lat,
+  radiusMeters,
+  filters = {},
+) {
   const { category, minRating, limit = 100 } = filters;
-  
+
   let sql = `
     SELECT 
       p.id,
@@ -152,10 +176,10 @@ export async function findPOIsWithinRadius(lon, lat, radiusMeters, filters = {})
       $3
     )
   `;
-  
+
   const params = [lon, lat, radiusMeters];
   let paramIndex = 4;
-  
+
   // 类别过滤
   if (category) {
     sql += ` AND (p.type ILIKE $${paramIndex} OR p.category_mid ILIKE $${paramIndex} OR p.category_small ILIKE $${paramIndex})`;
@@ -163,17 +187,17 @@ export async function findPOIsWithinRadius(lon, lat, radiusMeters, filters = {})
     params.push(`%${category}%`);
     paramIndex++;
   }
-  
+
   sql += ` ORDER BY distance_meters LIMIT $${paramIndex}`;
   // 核心修改：用户想要全量数据，我们将默认上限提升到 50万
   // 只要前端敢要，后端就敢给
-  const maxLimit = parseInt(process.env.POI_QUERY_MAX_LIMIT || '20000', 10);
+  const maxLimit = parseInt(process.env.POI_QUERY_MAX_LIMIT || "20000", 10);
   const normalizedLimit = Number(limit);
   const safeLimit = Number.isFinite(normalizedLimit)
     ? Math.max(1, Math.min(normalizedLimit, maxLimit))
     : Math.min(100, maxLimit);
   params.push(safeLimit);
-  
+
   const result = await query(sql, params);
   return result.rows;
 }
@@ -186,18 +210,30 @@ export async function findPOIsWithinRadius(lon, lat, radiusMeters, filters = {})
  * @param {number} radiusMeters 半径
  * @param {number} toleranceDegrees 角度容差（默认 60 度）
  */
-export async function findPOIsByDirection(centerLon, centerLat, direction, radiusMeters, toleranceDegrees = 60) {
+export async function findPOIsByDirection(
+  centerLon,
+  centerLat,
+  direction,
+  radiusMeters,
+  toleranceDegrees = 60,
+) {
   const directionAngles = {
-    '东': 90, '西': 270, '南': 180, '北': 0,
-    '东北': 45, '东南': 135, '西南': 225, '西北': 315
+    东: 90,
+    西: 270,
+    南: 180,
+    北: 0,
+    东北: 45,
+    东南: 135,
+    西南: 225,
+    西北: 315,
   };
-  
+
   const targetAngle = directionAngles[direction];
   if (targetAngle === undefined) {
     // 如果是"对面""附近"等，不做方向过滤
     return findPOIsWithinRadius(centerLon, centerLat, radiusMeters);
   }
-  
+
   const sql = `
     SELECT 
       p.id,
@@ -238,8 +274,14 @@ export async function findPOIsByDirection(centerLon, centerLat, direction, radiu
     ORDER BY distance_meters
     LIMIT 100
   `;
-  
-  const result = await query(sql, [centerLon, centerLat, radiusMeters, targetAngle, toleranceDegrees]);
+
+  const result = await query(sql, [
+    centerLon,
+    centerLat,
+    radiusMeters,
+    targetAngle,
+    toleranceDegrees,
+  ]);
   return result.rows;
 }
 
@@ -252,7 +294,7 @@ export async function findPOIsByDirection(centerLon, centerLat, direction, radiu
 export async function resolveLandmark(placeName, gateName = null) {
   let sql;
   let params;
-  
+
   if (gateName) {
     // 先尝试匹配门
     sql = `
@@ -266,13 +308,13 @@ export async function resolveLandmark(placeName, gateName = null) {
       LIMIT 1
     `;
     params = [`%${placeName}%`, `%${gateName}%`];
-    
+
     const result = await query(sql, params);
     if (result.rows.length > 0) {
       return { lon: result.rows[0].lon, lat: result.rows[0].lat };
     }
   }
-  
+
   // 模糊匹配地名
   sql = `
     SELECT 
@@ -287,12 +329,12 @@ export async function resolveLandmark(placeName, gateName = null) {
     LIMIT 1
   `;
   params = [`%${placeName}%`];
-  
+
   const result = await query(sql, params);
   if (result.rows.length > 0) {
     return { lon: result.rows[0].lon, lat: result.rows[0].lat };
   }
-  
+
   return null;
 }
 
@@ -313,12 +355,12 @@ export async function resolvePOIAsLandmark(placeName) {
       CASE WHEN name = $1 THEN 0 ELSE 1 END
     LIMIT 1
   `;
-  
+
   const result = await query(sql, [`%${placeName}%`]);
   if (result.rows.length > 0) {
     return { lon: result.rows[0].lon, lat: result.rows[0].lat };
   }
-  
+
   return null;
 }
 
@@ -329,14 +371,14 @@ export async function resolveAnchor(placeName, gateName = null) {
   // 1. 尝试从 landmarks 表解析
   let anchor = await resolveLandmark(placeName, gateName);
   if (anchor) return anchor;
-  
+
   // 2. 尝试从 POI 表解析
   const searchTerm = gateName ? `${placeName}${gateName}` : placeName;
   anchor = await resolvePOIAsLandmark(searchTerm);
   if (anchor) return anchor;
-  
+
   // 3. TODO: 可扩展调用外部地理编码 API
-  
+
   return null;
 }
 
@@ -386,35 +428,38 @@ export async function getCategoryStats(anchor, radiusM = 1000) {
     ORDER BY s.cnt DESC
     LIMIT 10;
   `;
-  
+
   try {
     const result = await query(sql, [anchor.lon, anchor.lat, radiusM]);
-    
+
     const total = result.rows.reduce((sum, r) => sum + parseInt(r.cnt), 0);
-    const dominant = result.rows.slice(0, 5).map(r => ({
+    const dominant = result.rows.slice(0, 5).map((r) => ({
       category: r.category,
       count: parseInt(r.cnt),
       percentage: parseFloat(r.percentage) || 0,
       subcategories: r.subcategories || [],
-      examples: r.example_names || []
+      examples: r.example_names || [],
     }));
-    
-    const rare = result.rows.filter(r => parseInt(r.cnt) <= 2).slice(0, 3).map(r => ({
-      category: r.category,
-      count: parseInt(r.cnt)
-    }));
-    
+
+    const rare = result.rows
+      .filter((r) => parseInt(r.cnt) <= 2)
+      .slice(0, 3)
+      .map((r) => ({
+        category: r.category,
+        count: parseInt(r.cnt),
+      }));
+
     return {
       total_count: total,
       dominant_categories: dominant,
-      rare_categories: rare
+      rare_categories: rare,
     };
   } catch (err) {
-    console.error('[DB] 类别统计查询失败:', err.message);
+    console.error("[DB] 类别统计查询失败:", err.message);
     return {
       total_count: 0,
       dominant_categories: [],
-      rare_categories: []
+      rare_categories: [],
     };
   }
 }
@@ -460,36 +505,39 @@ export async function getCategoryStatsByGeometry(wkt) {
     ORDER BY s.cnt DESC
     LIMIT 10;
   `;
-  
+
   try {
     const result = await query(sql, [wkt]);
-    
+
     // 复用相同的格式化逻辑
     const total = result.rows.reduce((sum, r) => sum + parseInt(r.cnt), 0);
-    const dominant = result.rows.slice(0, 5).map(r => ({
+    const dominant = result.rows.slice(0, 5).map((r) => ({
       category: r.category,
       count: parseInt(r.cnt),
       percentage: parseFloat(r.percentage) || 0,
       subcategories: r.subcategories || [],
-      examples: r.example_names || []
+      examples: r.example_names || [],
     }));
-    
-    const rare = result.rows.filter(r => parseInt(r.cnt) <= 2).slice(0, 3).map(r => ({
-      category: r.category,
-      count: parseInt(r.cnt)
-    }));
-    
+
+    const rare = result.rows
+      .filter((r) => parseInt(r.cnt) <= 2)
+      .slice(0, 3)
+      .map((r) => ({
+        category: r.category,
+        count: parseInt(r.cnt),
+      }));
+
     return {
       total_count: total,
       dominant_categories: dominant,
-      rare_categories: rare
+      rare_categories: rare,
     };
   } catch (err) {
-    console.error('[DB] 区域几何类别统计查询失败:', err.message);
+    console.error("[DB] 区域几何类别统计查询失败:", err.message);
     return {
       total_count: 0,
       dominant_categories: [],
-      rare_categories: []
+      rare_categories: [],
     };
   }
 }
@@ -501,7 +549,11 @@ export async function getCategoryStatsByGeometry(wkt) {
  * @param {number} topK - 返回数量
  * @returns {Promise<Array>} 地标列表
  */
-export async function getRepresentativeLandmarks(anchor, radiusM = 1000, topK = 5) {
+export async function getRepresentativeLandmarks(
+  anchor,
+  radiusM = 1000,
+  topK = 5,
+) {
   const sql = `
     WITH area AS (
       SELECT ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography AS g
@@ -560,18 +612,18 @@ export async function getRepresentativeLandmarks(anchor, radiusM = 1000, topK = 
     ORDER BY relevance_score DESC
     LIMIT $4;
   `;
-  
+
   try {
     const result = await query(sql, [anchor.lon, anchor.lat, radiusM, topK]);
-    
-    return result.rows.map(r => ({
+
+    return result.rows.map((r) => ({
       name: r.name,
       type: r.type,
       distance_m: parseInt(r.distance_m),
-      relevance_score: parseFloat(r.relevance_score)
+      relevance_score: parseFloat(r.relevance_score),
     }));
   } catch (err) {
-    console.error('[DB] 地标提取查询失败:', err.message);
+    console.error("[DB] 地标提取查询失败:", err.message);
     return [];
   }
 }
@@ -588,9 +640,9 @@ export async function findPOIsFiltered(options) {
     categories = [],
     rating_range = [null, null],
     geometry = null, // WKT format: POLYGON((...))
-    limit = 100
+    limit = 100,
   } = options;
-  
+
   let sql = `
     SELECT 
       p.id, p.name, p.address, p.type,
@@ -626,7 +678,7 @@ export async function findPOIsFiltered(options) {
     params.push(radius_m);
     paramIndex++;
   }
-  
+
   // 中文注释：类别过滤同时覆盖名称/地址/大小类/type，降低“有数据但检索不到”的漏召回。
   if (categories.length > 0) {
     const categoryConditions = categories.map((_, i) => {
@@ -640,11 +692,11 @@ export async function findPOIsFiltered(options) {
         OR p.type ILIKE $${idx}
       )`;
     });
-    sql += ` AND (${categoryConditions.join(' OR ')})`;
-    categories.forEach(cat => params.push(`%${cat}%`));
+    sql += ` AND (${categoryConditions.join(" OR ")})`;
+    categories.forEach((cat) => params.push(`%${cat}%`));
     paramIndex += categories.length;
   }
-  
+
   // 评分过滤（数据库暂无 rating 字段，暂时忽略）
   /*
   if (rating_range[0] !== null) {
@@ -660,35 +712,38 @@ export async function findPOIsFiltered(options) {
   */
 
   // 中文注释：无锚点时不能按常量 distance_meters 排序，否则 LIMIT 会被导入顺序锁定成单一类目。
-  let orderClause = 'distance_meters';
+  let orderClause = "distance_meters";
   if (!anchor) {
     if (geometryParamIndex !== null) {
       orderClause = `p.geom <-> ST_Centroid(ST_GeomFromText($${geometryParamIndex}, 4326))`;
     } else {
-      orderClause = 'p.id';
+      orderClause = "p.id";
     }
   }
-  
+
   sql += ` ORDER BY ${orderClause} LIMIT $${paramIndex}`;
-  const maxLimit = parseInt(process.env.POI_QUERY_MAX_LIMIT || '20000', 10);
+  const maxLimit = parseInt(process.env.POI_QUERY_MAX_LIMIT || "20000", 10);
   const normalizedLimit = Number(limit);
   const safeLimit = Number.isFinite(normalizedLimit)
     ? Math.max(1, Math.min(normalizedLimit, maxLimit))
     : Math.min(100, maxLimit);
   params.push(safeLimit);
-  
+
   try {
-    console.log('[DB SQL Debug]', sql);
-    console.log('[DB Params Debug]', params); 
+    console.log("[DB SQL Debug]", sql);
+    console.log("[DB Params Debug]", params);
     const result = await query(sql, params);
-    
+
     if (result.rows.length === 0 && categories.length > 0) {
-      console.log(`[DB] 警告: 即使经过扩充检索，条件 ${JSON.stringify(categories)} 仍未返回结果。SQL参数:`, params);
+      console.log(
+        `[DB] 警告: 即使经过扩充检索，条件 ${JSON.stringify(categories)} 仍未返回结果。SQL参数:`,
+        params,
+      );
     }
-    
+
     return result.rows;
   } catch (err) {
-    console.error('[DB] 高级过滤查询失败:', err.message);
+    console.error("[DB] 高级过滤查询失败:", err.message);
     throw err;
   }
 }
@@ -705,11 +760,11 @@ export async function findPOIsFiltered(options) {
  */
 export async function quickSearch(options) {
   const { terms, center, radius = 5000, geometryWKT, limit = 100 } = options;
-  
+
   if (!terms || terms.length === 0) {
     return [];
   }
-  
+
   let sql = `
     SELECT 
       p.id,
@@ -721,10 +776,10 @@ export async function quickSearch(options) {
       ST_X(p.geom) AS lon,
       ST_Y(p.geom) AS lat
   `;
-  
+
   const params = [];
   let paramIndex = 1;
-  
+
   // 如果有中心点，计算距离用于排序
   if (center) {
     sql += `, ST_Distance(p.geom::geography, ST_SetSRID(ST_MakePoint($${paramIndex}, $${paramIndex + 1}), 4326)::geography) AS distance_m`;
@@ -733,9 +788,9 @@ export async function quickSearch(options) {
   } else {
     sql += `, 0 AS distance_m`;
   }
-  
+
   sql += ` FROM pois p WHERE `;
-  
+
   // 构建文本匹配条件（名称、类别多字段匹配）
   const termConditions = terms.map((_, i) => {
     const idx = paramIndex + i;
@@ -747,10 +802,10 @@ export async function quickSearch(options) {
       p.type ILIKE $${idx}
     )`;
   });
-  sql += `(${termConditions.join(' OR ')})`;
-  terms.forEach(t => params.push(`%${t}%`));
+  sql += `(${termConditions.join(" OR ")})`;
+  terms.forEach((t) => params.push(`%${t}%`));
   paramIndex += terms.length;
-  
+
   // 空间过滤
   if (geometryWKT) {
     sql += ` AND ST_Within(p.geom, ST_GeomFromText($${paramIndex}, 4326))`;
@@ -761,40 +816,42 @@ export async function quickSearch(options) {
     params.push(radius);
     paramIndex++;
   }
-  
+
   // 排序：有中心点时按距离，否则按名称
   if (center) {
     sql += ` ORDER BY distance_m ASC`;
   } else {
     sql += ` ORDER BY p.name ASC`;
   }
-  
+
   sql += ` LIMIT $${paramIndex}`;
-  const maxLimit = parseInt(process.env.POI_QUERY_MAX_LIMIT || '20000', 10);
+  const maxLimit = parseInt(process.env.POI_QUERY_MAX_LIMIT || "20000", 10);
   const normalizedLimit = Number(limit);
   const safeLimit = Number.isFinite(normalizedLimit)
     ? Math.max(1, Math.min(normalizedLimit, maxLimit))
     : Math.min(100, maxLimit);
   params.push(safeLimit);
-  
+
   try {
     const startTime = Date.now();
     const result = await query(sql, params);
     const duration = Date.now() - startTime;
-    console.log(`[DB QuickSearch] 耗时 ${duration}ms, 返回 ${result.rows.length} 条`);
+    console.log(
+      `[DB QuickSearch] 耗时 ${duration}ms, 返回 ${result.rows.length} 条`,
+    );
     return result.rows;
   } catch (err) {
-    console.error('[DB QuickSearch] 查询失败:', err.message);
+    console.error("[DB QuickSearch] 查询失败:", err.message);
     return [];
   }
 }
 
 /**
  * 两阶段空间过滤查询（用于 "X附近的Y" 类型查询）
- * 
+ *
  * 阶段1: 在视野范围内按关键词/类别初筛
  * 阶段2: 通过地标缓冲区精筛
- * 
+ *
  * @param {Object} options
  *   @param {string[]} terms - 搜索关键词 (如 ["火锅", "涮锅"])
  *   @param {string} viewportWKT - 视野边界 WKT (阶段1使用)
@@ -804,21 +861,21 @@ export async function quickSearch(options) {
  * @returns {Promise<Object>} { stage1Count, stage2Count, pois }
  */
 export async function findPOIsTwoStageFilter(options) {
-  const { 
-    terms = [], 
-    viewportWKT, 
-    anchor, 
-    bufferRadius = 2000, 
-    limit = 100 
+  const {
+    terms = [],
+    viewportWKT,
+    anchor,
+    bufferRadius = 2000,
+    limit = 100,
   } = options;
-  
+
   if ((!terms || terms.length === 0) && !anchor && !viewportWKT) {
-    console.log('[DB TwoStage] 无搜索词且无空间条件，跳过');
+    console.log("[DB TwoStage] 无搜索词且无空间条件，跳过");
     return { stage1Count: 0, stage2Count: 0, pois: [] };
   }
-  
+
   const startTime = Date.now();
-  
+
   // =============================================
   // 阶段1: 视野范围 + 关键词初筛
   // =============================================
@@ -828,7 +885,7 @@ export async function findPOIsTwoStageFilter(options) {
       p.category_big, p.category_mid, p.category_small,
       ST_X(p.geom) AS lon, ST_Y(p.geom) AS lat
   `;
-  
+
   const params = [];
   let paramIndex = 1;
 
@@ -840,9 +897,9 @@ export async function findPOIsTwoStageFilter(options) {
   } else {
     stage1SQL += `, 0 AS distance_m`;
   }
-  
+
   stage1SQL += ` FROM pois p WHERE `;
-  
+
   // 关键词匹配条件（名称 + 类别）
   if (terms && terms.length > 0) {
     const termConditions = terms.map((_, i) => {
@@ -854,20 +911,20 @@ export async function findPOIsTwoStageFilter(options) {
         p.type ILIKE $${idx}
       )`;
     });
-    stage1SQL += `(${termConditions.join(' OR ')})`;
-    terms.forEach(t => params.push(`%${t}%`));
+    stage1SQL += `(${termConditions.join(" OR ")})`;
+    terms.forEach((t) => params.push(`%${t}%`));
     paramIndex += terms.length;
   } else {
     stage1SQL += `1=1`; // 无关键词时匹配所有
   }
-  
+
   // 视野范围过滤（阶段1）
   if (viewportWKT) {
     stage1SQL += ` AND ST_Within(p.geom, ST_GeomFromText($${paramIndex}, 4326))`;
     params.push(viewportWKT);
     paramIndex++;
   }
-  
+
   // =============================================
   // 阶段2: 地标缓冲区精筛
   // =============================================
@@ -876,7 +933,7 @@ export async function findPOIsTwoStageFilter(options) {
     params.push(bufferRadius);
     paramIndex++;
   }
-  
+
   // 排序和限制
   if (anchor) {
     stage1SQL += ` ORDER BY distance_m ASC`;
@@ -885,25 +942,30 @@ export async function findPOIsTwoStageFilter(options) {
   }
   stage1SQL += ` LIMIT $${paramIndex}`;
   params.push(limit);
-  
+
   try {
-    console.log('[DB TwoStage] 执行两阶段查询...');
-    console.log('[DB TwoStage] 关键词:', terms);
-    console.log('[DB TwoStage] 锚点:', anchor ? `${anchor.lon.toFixed(4)}, ${anchor.lat.toFixed(4)}` : '无');
-    console.log('[DB TwoStage] 缓冲区半径:', bufferRadius, 'm');
-    
+    console.log("[DB TwoStage] 执行两阶段查询...");
+    console.log("[DB TwoStage] 关键词:", terms);
+    console.log(
+      "[DB TwoStage] 锚点:",
+      anchor ? `${anchor.lon.toFixed(4)}, ${anchor.lat.toFixed(4)}` : "无",
+    );
+    console.log("[DB TwoStage] 缓冲区半径:", bufferRadius, "m");
+
     const result = await query(stage1SQL, params);
-    
+
     const duration = Date.now() - startTime;
-    console.log(`[DB TwoStage] 完成: ${result.rows.length} 条结果, 耗时 ${duration}ms`);
-    
+    console.log(
+      `[DB TwoStage] 完成: ${result.rows.length} 条结果, 耗时 ${duration}ms`,
+    );
+
     return {
       stage1Count: result.rows.length, // TODO: 可以分开统计
       stage2Count: result.rows.length,
-      pois: result.rows
+      pois: result.rows,
     };
   } catch (err) {
-    console.error('[DB TwoStage] 查询失败:', err.message);
+    console.error("[DB TwoStage] 查询失败:", err.message);
     return { stage1Count: 0, stage2Count: 0, pois: [] };
   }
 }
@@ -922,7 +984,9 @@ export async function findPOIsBySpatialFilter(options = {}) {
 
   const termList = Array.isArray(terms)
     ? terms.filter(Boolean)
-    : (typeof terms === 'string' && terms ? [terms] : []);
+    : typeof terms === "string" && terms
+      ? [terms]
+      : [];
 
   let sql = `
     SELECT
@@ -954,13 +1018,13 @@ export async function findPOIsBySpatialFilter(options = {}) {
         p.type ILIKE $${idx}
       )`;
     });
-    sql += ` AND (${termConditions.join(' OR ')})`;
-    termList.forEach(t => params.push(`%${t}%`));
+    sql += ` AND (${termConditions.join(" OR ")})`;
+    termList.forEach((t) => params.push(`%${t}%`));
     paramIndex += termList.length;
   }
 
   sql += ` LIMIT $${paramIndex}`;
-  const maxLimit = parseInt(process.env.POI_QUERY_MAX_LIMIT || '20000', 10);
+  const maxLimit = parseInt(process.env.POI_QUERY_MAX_LIMIT || "20000", 10);
   const normalizedLimit = Number(limit);
   const safeLimit = Number.isFinite(normalizedLimit)
     ? Math.max(1, Math.min(normalizedLimit, maxLimit))
@@ -971,7 +1035,7 @@ export async function findPOIsBySpatialFilter(options = {}) {
     const result = await query(sql, params);
     return result.rows;
   } catch (err) {
-    console.error('[DB] Spatial filter query failed:', err.message);
+    console.error("[DB] Spatial filter query failed:", err.message);
     return [];
   }
 }
@@ -991,5 +1055,5 @@ export default {
   findPOIsFiltered,
   findPOIsBySpatialFilter,
   quickSearch,
-  findPOIsTwoStageFilter
+  findPOIsTwoStageFilter,
 };

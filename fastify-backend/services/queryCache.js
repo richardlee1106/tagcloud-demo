@@ -34,6 +34,10 @@ const CACHE_CONFIG = {
   
   // 最大缓存条目数
   maxEntries: 500,
+
+  // 内存硬上限（字节），超过时强制淘汰最旧条目
+  // 默认 128MB，可通过环境变量 QUERY_CACHE_MAX_MEMORY_MB 调整
+  maxMemoryBytes: (parseInt(process.env.QUERY_CACHE_MAX_MEMORY_MB || '128', 10)) * 1024 * 1024,
   
   // 空间指纹的 H3 分辨率（用于归一化空间坐标）
   h3Resolution: 7, // ~1.2km 边长的六边形
@@ -200,10 +204,17 @@ export function getFromCache(fingerprint) {
  * @param {string} queryType - 查询类型（用于确定 TTL）
  */
 export function setToCache(fingerprint, data, queryType = 'default') {
-  // 检查缓存容量
+  // 条目数上限检查
   if (cache.size >= CACHE_CONFIG.maxEntries) {
-    // LRU 驱逐：删除最旧的条目
-    evictOldestEntries(Math.ceil(CACHE_CONFIG.maxEntries * 0.1)) // 驱逐 10%
+    evictOldestEntries(Math.ceil(CACHE_CONFIG.maxEntries * 0.1))
+  }
+
+  // 内存硬上限检查：超过阈值时强制淘汰 20% 最旧条目
+  const memBytes = estimateMemoryBytes()
+  if (memBytes > CACHE_CONFIG.maxMemoryBytes) {
+    const evictCount = Math.max(1, Math.ceil(cache.size * 0.2))
+    console.warn(`[QueryCache] 内存超限 (${(memBytes / 1024 / 1024).toFixed(1)}MB > ${(CACHE_CONFIG.maxMemoryBytes / 1024 / 1024).toFixed(0)}MB)，淘汰 ${evictCount} 条`)
+    evictOldestEntries(evictCount)
   }
   
   // 确定 TTL
@@ -214,7 +225,7 @@ export function setToCache(fingerprint, data, queryType = 'default') {
   cache.set(fingerprint, entry)
   
   stats.sets++
-  console.log(`[QueryCache] 缓存写入: ${fingerprint.slice(0, 8)}... (TTL: ${ttl / 1000}s)`)
+  console.log(`[QueryCache] 缓存写入: ${fingerprint.slice(0, 8)}... (TTL: ${ttl / 1000}s, 内存: ${estimateMemoryUsage()})`)
 }
 
 /**
@@ -304,26 +315,47 @@ export function getCacheStats() {
 }
 
 /**
- * 估算内存使用量
+ * 估算内存使用量（字节数）
  */
-function estimateMemoryUsage() {
+function estimateMemoryBytes() {
   let totalBytes = 0
   
   for (const [key, entry] of cache) {
     // 粗略估计：key + JSON 序列化后的 data 大小
     totalBytes += key.length * 2 // UTF-16
-    totalBytes += JSON.stringify(entry.data).length * 2
+    try {
+      totalBytes += JSON.stringify(entry.data).length * 2
+    } catch {
+      totalBytes += 4096 // 序列化异常时给一个安全估计值
+    }
     totalBytes += 200 // 对象开销
   }
   
+  return totalBytes
+}
+
+/**
+ * 格式化内存使用量为可读字符串
+ */
+function estimateMemoryUsage() {
+  const totalBytes = estimateMemoryBytes()
   if (totalBytes > 1024 * 1024) {
     return `${(totalBytes / 1024 / 1024).toFixed(2)} MB`
   }
   return `${(totalBytes / 1024).toFixed(2)} KB`
 }
 
-// 定期清理过期缓存（每 2 分钟）
-setInterval(cleanupExpiredCache, 2 * 60 * 1000)
+// 定期清理：过期缓存 + 内存超限检查（每 2 分钟）
+setInterval(() => {
+  cleanupExpiredCache()
+  // 即使没有过期条目，也检查内存是否超限
+  const memBytes = estimateMemoryBytes()
+  if (memBytes > CACHE_CONFIG.maxMemoryBytes) {
+    const evictCount = Math.max(1, Math.ceil(cache.size * 0.15))
+    console.warn(`[QueryCache] 定期检查：内存超限，淘汰 ${evictCount} 条`)
+    evictOldestEntries(evictCount)
+  }
+}, 2 * 60 * 1000)
 
 export default {
   generateQueryFingerprint,

@@ -21,7 +21,9 @@ import {
 import { parseIntent } from './planner.js'
 
 // 会话内存缓存：保存本次请求的日志上下文与结果。
+// LRU 硬上限防止高并发场景下内存无限累积。
 const ragSessions = new Map()
+const RAG_SESSION_MAX = parseInt(process.env.RAG_SESSION_MAX || '200', 10)
 
 // 定期回收过期会话，防止内存随运行时间累积。
 setInterval(() => {
@@ -32,6 +34,17 @@ setInterval(() => {
     if (now - session.createdAt > maxAge) {
       ragSessions.delete(id)
     }
+  }
+
+  // 即便无过期会话，也检查总量是否超过硬上限
+  if (ragSessions.size > RAG_SESSION_MAX) {
+    const overflow = ragSessions.size - RAG_SESSION_MAX
+    const iterator = ragSessions.keys()
+    for (let i = 0; i < overflow; i++) {
+      const oldestKey = iterator.next().value
+      if (oldestKey !== undefined) ragSessions.delete(oldestKey)
+    }
+    console.warn(`[AI Routes] ragSessions 超限淘汰 ${overflow} 条，当前 ${ragSessions.size} 条`)
   }
 }, 5 * 60 * 1000)
 
@@ -153,36 +166,13 @@ async function aiRoutes(fastify) {
   /**
    */
   fastify.get('/status', async () => {
-    const localApiBase = process.env.LOCAL_LM_API || process.env.LLM_BASE_URL || 'http://localhost:1234/v1'
-
-    try {
-      const controller = new AbortController()
-      const timeout = setTimeout(() => controller.abort(), 3000)
-      await fetch(`${localApiBase}/models`, { signal: controller.signal })
-      clearTimeout(timeout)
-
-      const isLocalhost = localApiBase.includes('localhost') || localApiBase.includes('127.0.0.1')
-      return {
-        online: true,
-        provider: isLocalhost ? 'local' : 'glm',
-        providerName: isLocalhost ? 'Local LM Studio' : 'GLM',
-        architecture: 'node-gateway-python-compute'
-      }
-    } catch {
-      if (process.env.GLM_API_KEY) {
-        return {
-          online: true,
-          provider: 'glm',
-          providerName: 'GLM',
-          architecture: 'node-gateway-python-compute'
-        }
-      }
-
-      return {
-        online: false,
-        provider: null,
-        providerName: 'No AI Service Available'
-      }
+    // 复用 llm.js 的 30s 可用性缓存，避免每次请求独立发 HTTP 探测
+    const providerInfo = await getActiveProviderInfo()
+    return {
+      online: true,
+      provider: providerInfo.provider,
+      providerName: providerInfo.providerName,
+      architecture: 'node-gateway-python-compute'
     }
   })
 
@@ -232,6 +222,11 @@ async function aiRoutes(fastify) {
     const sessionId = options.sessionId || `session_${Date.now()}`
     let session = ragSessions.get(sessionId)
     if (!session) {
+      // 创建新 session 前检查容量，超限时淘汰最早的
+      if (ragSessions.size >= RAG_SESSION_MAX) {
+        const oldestKey = ragSessions.keys().next().value
+        if (oldestKey !== undefined) ragSessions.delete(oldestKey)
+      }
       session = createRAGSession()
       session.createdAt = Date.now()
       ragSessions.set(sessionId, session)
@@ -494,27 +489,40 @@ async function aiRoutes(fastify) {
       return reply.status(400).send({ error: 'query is required' })
     }
 
-    const keywords = query.toLowerCase().split(/\s+/)
+    const keywords = query.toLowerCase().split(/\s+/).filter(Boolean)
+    if (keywords.length === 0) {
+      return { success: true, query, total: 0, results: [] }
+    }
 
-    const results = poiFeatures.filter((poi) => {
-      const props = poi.properties || {}
-      const searchText = `${props.name || props['鍚嶇О'] || ''} ${props.category_big || props['澶х被'] || ''} ${props.category_mid || props['涓被'] || ''} ${props.category_small || props['灏忕被'] || ''} ${props.address || props['鍦板潃'] || ''}`.toLowerCase()
-      return keywords.some((kw) => searchText.includes(kw))
-    })
+    // 单轮遍历：一次完成过滤+打分，避免 filter+sort 两轮重复拼接字符串
+    const scored = []
+    for (let i = 0; i < poiFeatures.length; i++) {
+      const props = poiFeatures[i].properties || {}
+      const parts = []
+      if (props.name) parts.push(props.name)
+      if (props.category_big) parts.push(props.category_big)
+      if (props.category_mid) parts.push(props.category_mid)
+      if (props.category_small) parts.push(props.category_small)
+      if (props.address) parts.push(props.address)
+      const fullText = parts.join(' ').toLowerCase()
 
-    results.sort((a, b) => {
-      const textA = `${a.properties?.name || a.properties?.['鍚嶇О'] || ''} ${a.properties?.category_small || a.properties?.['灏忕被'] || ''}`.toLowerCase()
-      const textB = `${b.properties?.name || b.properties?.['鍚嶇О'] || ''} ${b.properties?.category_small || b.properties?.['灏忕被'] || ''}`.toLowerCase()
-      const scoreA = keywords.filter((kw) => textA.includes(kw)).length
-      const scoreB = keywords.filter((kw) => textB.includes(kw)).length
-      return scoreB - scoreA
-    })
+      let matchCount = 0
+      for (let k = 0; k < keywords.length; k++) {
+        if (fullText.includes(keywords[k])) matchCount++
+      }
+      if (matchCount > 0) {
+        scored.push({ index: i, score: matchCount })
+      }
+    }
+
+    scored.sort((a, b) => b.score - a.score)
+    const results = scored.slice(0, 50).map((item) => poiFeatures[item.index])
 
     return {
       success: true,
       query,
-      total: results.length,
-      results: results.slice(0, 50)
+      total: scored.length,
+      results
     }
   })
 

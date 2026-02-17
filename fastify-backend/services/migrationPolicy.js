@@ -139,28 +139,27 @@ export function resolveSpatialMigrationDecision({
     config.migrateQueryTypes.size === 0 || config.migrateQueryTypes.has(queryType)
   const hitMigratePercent = sampleHit(seed, config.migratePercent)
 
-  const forceNodeFallback =
-    config.forceNodeFallback ||
-    options.forceNodeFallback === true ||
-    options.forceLocalExecutor === true
+  // 强制使用Python服务，不再支持Node.js回退。
+  // 所有空间计算逻辑必须由Python处理。
+  // 注意：forceNodeFallback配置已被废弃，强制使用Python作为唯一计算引擎。
 
   const pyDataSource = String(options.pyDataSource || config.pyDataSource).trim().toLowerCase()
   const normalizedDataSource = ALLOWED_DATA_SOURCES.has(pyDataSource) ? pyDataSource : 'hybrid'
 
   const allowPythonBySource = normalizedDataSource !== 'node'
 
+  // 始终使用Python作为主计算引擎
   const usePythonPrimary =
     config.migrateEnabled &&
     queryTypeMatched &&
     hitMigratePercent &&
-    allowPythonBySource &&
-    !forceNodeFallback
+    allowPythonBySource
 
-  const dualRunRequested = config.dualRunEnabled && !forceNodeFallback
+  const dualRunRequested = config.dualRunEnabled
   const dualRunHitSample = dualRunRequested && sampleHit(`${seed}:dual`, config.dualRunSample)
 
-  // 双跑定义：当前主路径不走 Python 时，触发 shadow 计算做对比，不影响主结果。
-  const shadowEnabled = dualRunHitSample && !usePythonPrimary && allowPythonBySource
+  // 双跑已禁用，始终使用Python主路径
+  const shadowEnabled = false
   const executionProfile = resolveExecutionProfile(queryType, options, shadowEnabled)
 
   const reasons = []
@@ -168,8 +167,6 @@ export function resolveSpatialMigrationDecision({
   if (!queryTypeMatched) reasons.push('query_type_not_matched')
   if (!hitMigratePercent) reasons.push('out_of_migrate_percent')
   if (!allowPythonBySource) reasons.push('py_data_source_node_only')
-  if (forceNodeFallback) reasons.push('force_node_fallback')
-  if (shadowEnabled) reasons.push('shadow_dual_run_enabled')
 
   return {
     request_id: seed,

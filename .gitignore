@@ -49,3 +49,10 @@ volumes/
 fastify-backend/*.tar
 backend-api.tar
 spatial-db.tar
+
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+# BitFun snapshot data - auto managed
+.bitfun/

@@ -833,32 +833,12 @@ ${context}
             }
           };
         } catch (pythonError) {
-          fastify.log.warn({ err: pythonError }, '[spatial/fetch] Python fetch failed, fallback to Node SQL');
+          // Python服务失败时，直接抛出错误，不再回退到Node.js
+          // 符合"空间计算必须由Python实现"的设计原则
+          fastify.log.error({ err: pythonError }, '[spatial/fetch] Python fetch failed, no fallback to Node');
+          throw new Error(`Python spatial compute failed: ${pythonError.message}`);
         }
       }
-
-      const batches = await Promise.all(
-        queryGeometries.map((wkt) => db.findPOIsFiltered({
-          categories: normalizedCategories,
-          geometry: wkt,
-          limit: safeLimit
-        }))
-      );
-
-      const rawResults = mergeRows(batches.flat());
-      const results = rawResults.slice(0, safeLimit);
-
-      return {
-        success: true,
-        count: results.length,
-        features: results.map(toFeature).filter(Boolean),
-        diagnostics: {
-          engine: 'node_sql_fallback',
-          fallback: true,
-          query_geometries: queryGeometries.length,
-          source_policy: fetchSourcePolicy
-        }
-      };
     } catch (error) {
       fastify.log.error(error);
       return reply.code(500).send({ error: 'Fetch failed', details: error.message });

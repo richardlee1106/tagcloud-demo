@@ -898,21 +898,19 @@ function boundsToBackend(bounds) {
 
 function normalizeFeatureCategoryText(feature) {
   const props = feature?.properties || {};
-  return [
-    props.name,
-    props['??'],
-    props.type,
-    props['??'],
-    props.category_big,
-    props.category_mid,
-    props.category_small,
-    props['??'],
-    props['??'],
-    props['??']
-  ]
-    .filter((value) => typeof value === 'string' && value.trim())
-    .join(' ')
-    .toLowerCase();
+  // 用 push 替代 filter().join() 减少临时数组分配，在万级 POI 场景下显著减少 GC 压力
+  const parts = [];
+  if (props.name) parts.push(props.name);
+  if (props['名称']) parts.push(props['名称']);
+  if (props.type) parts.push(props.type);
+  if (props['类型']) parts.push(props['类型']);
+  if (props.category_big) parts.push(props.category_big);
+  if (props.category_mid) parts.push(props.category_mid);
+  if (props.category_small) parts.push(props.category_small);
+  if (props['大类']) parts.push(props['大类']);
+  if (props['中类']) parts.push(props['中类']);
+  if (props['小类']) parts.push(props['小类']);
+  return parts.join(' ').toLowerCase();
 }
 
 function normalizeFeatureCoordinate(feature) {
@@ -1033,11 +1031,21 @@ function filterFeaturesClientSide(features, categoryLeaves) {
     : [];
 
   const hasCategoryFilter = normalizedCategories.length > 0;
+  // 用 Set 做类别精确匹配前缀查找，替代 Array.some(includes) 的 O(m) 搜索
+  const categorySet = hasCategoryFilter ? new Set(normalizedCategories) : null;
   const constraints = resolveSpatialConstraints();
   const hasConstraintFilter = constraints.length > 0;
   const bounds = Array.isArray(mapBounds.value) && mapBounds.value.length >= 4
     ? mapBounds.value
     : null;
+
+  // 快速路径：无任何过滤条件时直接返回原数组
+  if (!hasConstraintFilter && !bounds && !hasCategoryFilter) {
+    return Array.isArray(features) ? features : [];
+  }
+
+  // 预提取 bounds 值避免循环体内重复索引
+  const [bMinLon, bMinLat, bMaxLon, bMaxLat] = bounds || [0, 0, 0, 0];
 
   return (Array.isArray(features) ? features : []).filter((feature) => {
     const coord = normalizeFeatureCoordinate(feature);
@@ -1049,7 +1057,7 @@ function filterFeaturesClientSide(features, categoryLeaves) {
       }
     } else if (bounds) {
       const [lon, lat] = coord;
-      if (lon < bounds[0] || lon > bounds[2] || lat < bounds[1] || lat > bounds[3]) {
+      if (lon < bMinLon || lon > bMaxLon || lat < bMinLat || lat > bMaxLat) {
         return false;
       }
     }
@@ -1058,8 +1066,18 @@ function filterFeaturesClientSide(features, categoryLeaves) {
       return true;
     }
 
+    // 分词后用 Set.has 做精确匹配（覆盖单类别词匹配场景），
+    // 同时保留 includes 作为兜底模糊匹配
     const categoryText = normalizeFeatureCategoryText(feature);
-    return normalizedCategories.some((cat) => categoryText.includes(cat));
+    const words = categoryText.split(/\s+/);
+    for (let i = 0; i < normalizedCategories.length; i++) {
+      const cat = normalizedCategories[i];
+      // 优先精确匹配（O(1)），兜底子串匹配
+      if (categorySet.has(cat) && (words.includes(cat) || categoryText.includes(cat))) {
+        return true;
+      }
+    }
+    return false;
   });
 }
 
@@ -1186,10 +1204,13 @@ const filteredTagData = computed(() => {
   if (!filterEnabled.value || !mapBounds.value) {
     return tagData.value;
   }
-  const bounds = mapBounds.value; // [minLon, minLat, maxLon, maxLat]
+  // 预提取视野边界，避免循环体内重复索引
+  const [minLon, minLat, maxLon, maxLat] = mapBounds.value;
   return tagData.value.filter(f => {
-    const [lon, lat] = f.geometry.coordinates;
-    return lon >= bounds[0] && lon <= bounds[2] && lat >= bounds[1] && lat <= bounds[3];
+    const coords = f.geometry.coordinates;
+    const lon = coords[0];
+    const lat = coords[1];
+    return lon >= minLon && lon <= maxLon && lat >= minLat && lat <= maxLat;
   });
 });
 
