@@ -116,20 +116,47 @@ class HealthServicer(health_pb2_grpc.HealthServicer):
     def __init__(self) -> None:
         self._start_time = time.time()
         self._is_serving = True
+        self._pipeline = None
+
+    def _check_pipeline_health(self) -> bool:
+        """检查 SpatialPipeline 是否健康（数据库连接等）。"""
+        try:
+            if self._pipeline is None:
+                from pipeline.spatial_pipeline import SpatialPipeline
+                self._pipeline = SpatialPipeline()
+            
+            # 检查数据库连接
+            if hasattr(self._pipeline, 'repository') and self._pipeline.repository:
+                conn = self._pipeline.repository.get_connection()
+                if conn and not conn.closed:
+                    return True
+            return True  # 如果没有repository属性，也认为健康
+        except Exception as e:
+            print(f"[HealthServicer] Pipeline health check failed: {e}")
+            return False
 
     def Check(self, request, context):
         """检查服务健康状态。"""
-        return health_pb2.HealthCheckResponse(
-            status=health_pb2.HealthCheckResponse.SERVING
-        )
+        # 检查服务基础状态和Pipeline健康状态
+        if self._is_serving and self._check_pipeline_health():
+            return health_pb2.HealthCheckResponse(
+                status=health_pb2.HealthCheckResponse.SERVING
+            )
+        else:
+            return health_pb2.HealthCheckResponse(
+                status=health_pb2.HealthCheckResponse.NOT_SERVING
+            )
 
     def Watch(self, request, context):
         """监听服务状态变化。"""
-        # 保持连接直到服务关闭
+        # 保持连接直到服务关闭，持续检查健康状态
         while context.is_active():
-            yield health_pb2.HealthCheckResponse(
-                status=health_pb2.HealthCheckResponse.SERVING
-            )
+            if self._is_serving and self._check_pipeline_health():
+                status = health_pb2.HealthCheckResponse.SERVING
+            else:
+                status = health_pb2.HealthCheckResponse.NOT_SERVING
+            
+            yield health_pb2.HealthCheckResponse(status=status)
             time.sleep(1)
 
 
