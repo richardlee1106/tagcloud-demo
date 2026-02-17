@@ -210,18 +210,28 @@ function normalizeExecutorCategories(rawCategories = []) {
 }
 
 function shouldUsePythonExecutor(queryPlan = {}, options = {}) {
-  if (process.env.EXECUTOR_PY_ENABLED === 'false') return false
+  // 重构目标：executor完全丢弃空间计算这类Python见长的逻辑
+  // 强制使用Python服务，不再有Node.js回退
   if (options?.skipPythonExecutor === true) return false
-  if (options?.fallbackMode === true) return false
-  if (options?.forceLocalExecutor === true || options?.forceNodeFallback === true) return false
+  if (options?.forceLocalExecutor === true) return false
+  // 保留forceNodeFallback用于测试和调试场景
+  if (options?.forceNodeFallback === true) {
+    console.log('[Executor] 调试模式：强制使用Node.js回退')
+    return false
+  }
 
   // spatialJobRunner 已负责灰度和回退，executor 不重复分流。
   if (options?.migrationDecision) return false
 
-  if (!isGrpcComputeEnabled()) return false
+  // 检查gRPC服务是否启用
+  if (!isGrpcComputeEnabled()) {
+    console.warn('[Executor] gRPC计算未启用，请检查SPATIAL_GRPC_ENABLED配置')
+    return false
+  }
 
   const queryType = String(queryPlan?.query_type || 'poi_search').toLowerCase()
-  return PYTHON_EXECUTOR_QUERY_TYPES.has(queryType)
+  // 所有空间计算相关的query_type都强制使用Python
+  return PYTHON_EXECUTOR_QUERY_TYPES.has(queryType) || queryType === 'area_analysis'
 }
 
 function serializeExecutorCandidates(frontendPOIs = [], options = {}) {
@@ -442,23 +452,30 @@ export async function executeQuery(queryPlan, frontendPOIs = [], options = {}) {
   }
   
   try {
-    // 迁移阶段：优先尝试 Python 主路径计算。
-    // 仅在 executor 直连场景生效，JobRunner 保持原有编排。
+    // 重构目标：executor完全丢弃空间计算这类Python见长的逻辑
+    // 强制使用Python服务，不回退到Node.js
     let result = await tryExecuteQueryViaPython(queryPlan, frontendPOIs, options)
 
-    // Python 不可用时，回退到原有 Node 执行路径。
+    // 如果Python服务不可用，返回错误而不是回退到Node.js
     if (!result) {
-      // 按 queryPlan 选择 Node 分支。
-      if (queryPlan.query_type === 'region_comparison') {
-        // 多选区对比模式。
-        result = await execRegionComparison(queryPlan, options)
-      } else if (queryPlan.need_graph_reasoning) {
-        result = await execGraphMode(queryPlan, frontendPOIs, options)
-      } else if (queryPlan.aggregation_strategy?.enable || queryPlan.need_global_context) {
-        // 聚合 / 全局上下文分支。
-        result = await execAggregatedAnalysisMode(queryPlan, frontendPOIs, options)
-      } else {
-        result = await execBasicMode(queryPlan, frontendPOIs, options)
+      const queryType = String(queryPlan?.query_type || 'poi_search').toLowerCase()
+      console.error(`[Executor] Python服务执行失败，无法返回结果。query_type: ${queryType}`)
+      
+      // 返回错误状态，让上层决定如何处理
+      return {
+        success: false,
+        error: 'Python空间计算服务不可用，请检查服务状态',
+        results: {
+          mode: 'error',
+          anchor: null,
+          pois: [],
+          area_profile: null,
+          landmarks: [],
+          stats: {
+            execution_time_ms: Date.now() - startTime,
+            error: 'Python空间计算服务不可用'
+          }
+        }
       }
     }
     

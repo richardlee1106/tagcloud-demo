@@ -3,6 +3,7 @@
 职责：
 - 加载 proto 并暴露 `ComputeSpatial` 服务。
 - 将请求转交给 `SpatialPipeline`，并把阶段事件流式返回给 Node。
+- 提供 gRPC 健康检查服务，确保服务高可用
 """
 
 from __future__ import annotations
@@ -17,6 +18,8 @@ from pathlib import Path
 from typing import Dict
 
 import grpc
+from grpc_health.v1 import health_pb2
+from grpc_health.v1 import health_pb2_grpc
 
 from pipeline.spatial_pipeline import SpatialPipeline
 
@@ -73,6 +76,7 @@ class SpatialComputeService(spatial_compute_pb2_grpc.SpatialComputeServiceServic
 
     def __init__(self) -> None:
         self.pipeline = SpatialPipeline()
+        self._start_time = time.time()
 
     def ComputeSpatial(self, request, context):  # noqa: N802
         """处理一次流式空间计算请求。"""
@@ -106,6 +110,29 @@ class SpatialComputeService(spatial_compute_pb2_grpc.SpatialComputeServiceServic
             )
 
 
+class HealthServicer(health_pb2_grpc.HealthServicer):
+    """健康检查服务实现。"""
+
+    def __init__(self) -> None:
+        self._start_time = time.time()
+        self._is_serving = True
+
+    def Check(self, request, context):
+        """检查服务健康状态。"""
+        return health_pb2.HealthCheckResponse(
+            status=health_pb2.HealthCheckResponse.SERVING
+        )
+
+    def Watch(self, request, context):
+        """监听服务状态变化。"""
+        # 保持连接直到服务关闭
+        while context.is_active():
+            yield health_pb2.HealthCheckResponse(
+                status=health_pb2.HealthCheckResponse.SERVING
+            )
+            time.sleep(1)
+
+
 def serve() -> None:
     """启动 gRPC 服务。"""
     host = os.getenv("SPATIAL_GRPC_HOST", "0.0.0.0")
@@ -113,11 +140,18 @@ def serve() -> None:
     workers = int(os.getenv("SPATIAL_GRPC_WORKERS", "4"))
 
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=workers))
+    
+    # 注册空间计算服务
     spatial_compute_pb2_grpc.add_SpatialComputeServiceServicer_to_server(SpatialComputeService(), server)
+    
+    # 注册健康检查服务
+    health_pb2_grpc.add_HealthServicer_to_server(HealthServicer(), server)
+    
     server.add_insecure_port(f"{host}:{port}")
     server.start()
 
     print(f"[python_service] gRPC server listening on {host}:{port}")
+    print(f"[python_service] Health check available at {host}:{port}")
     server.wait_for_termination()
 
 

@@ -57,11 +57,18 @@ services:
       POSTGRES_DATABASE: geoloom
       SPATIAL_GRPC_HOST: 0.0.0.0
       SPATIAL_GRPC_PORT: 50051
+      SPATIAL_GRPC_WORKERS: "4"
     ports:
       - "50051:50051"
     depends_on:
       spatial-db:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import grpc; channel = grpc.insecure_channel('localhost:50051'); grpc.health_checking.health_check_service.HealthClient(channel).check()\" 2>/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
   # Node 网关（对外 API 入口）
   backend:
@@ -89,7 +96,7 @@ services:
       redis:
         condition: service_started
       python-compute:
-        condition: service_started
+        condition: service_healthy  # 等待Python服务健康后再启动
 
   # Node 任务消费进程
   node-worker:
@@ -111,7 +118,7 @@ services:
       redis:
         condition: service_started
       python-compute:
-        condition: service_started
+        condition: service_healthy  # 等待Python服务健康后再启动
 
 volumes:
   spatial_db_data:
