@@ -761,102 +761,40 @@ async function computeSpatialWithFallback({
 
       throw new Error('Python compute stream ended without FINAL payload')
     } catch (err) {
+      // 重构目标：Python失败时不再回退到Node.js，直接抛出错误
+      // 这样可以确保空间计算始终由Python处理，符合"Python见长"的设计原则
       fallbackReasons.push(`python_error:${err.message}`)
-      await reporter.reportStage('python_fallback', {
+      await reporter.reportStage('python_fallback_error', {
         reason: err.message
       })
-      console.warn(`[SpatialJobRunner] gRPC compute failed, fallback to local executor: ${err.message}`)
+      console.error(`[SpatialJobRunner] Python执行失败，不再回退到Node.js: ${err.message}`)
+      throw new Error(`空间计算服务暂时不可用: ${err.message}`)
     }
   }
 
-  if (grpcEnabled && migrationDecision?.shadow_enabled === true) {
-    runShadowPythonCompute({
-      requestId,
-      queryPlan,
-      spatialContext,
-      options,
-      poiFeatures,
-      migrationDecision
-    })
+  // 重构目标：不再使用Node.js执行器作为回退
+  // 如果Python路径没有被选择（不应该发生），则抛出错误
+  if (!usePythonPrimary) {
+    console.error('[SpatialJobRunner] Python未被选为主路径，但系统配置要求仅使用Python计算')
+    throw new Error('配置错误：空间计算仅支持Python服务')
   }
 
-  const nodePath = usePythonPrimary ? 'node_fallback' : 'node_primary'
-
-  await reporter.reportStage('node_executor', {
-    reason: fallbackReasons.length > 0 ? fallbackReasons : ['python_not_selected'],
-    node_path: nodePath
-  })
-
-  if (shouldUseMinimalNodeFallback(queryPlan, options)) {
-    const queryType = normalizeQueryType(queryPlan)
-    fallbackReasons.push(`minimal_node_fallback:${queryType}`)
-
-    await reporter.reportStage('node_executor_minimal', {
-      query_type: queryType,
-      policy: String(process.env.SPATIAL_NODE_ADVANCED_FALLBACK || 'minimal').trim().toLowerCase(),
-      reason: 'advanced_query_routed_to_python_only'
-    })
-
-    const minimalEnvelope = normalizeExecutorEnvelope(
-      buildMinimalNodeFallbackEnvelope(queryPlan, fallbackReasons)
-    )
-
-    return {
-      ...minimalEnvelope,
-      _compute_path: nodePath,
-      _fallback_reasons: fallbackReasons
-    }
-  }
-
-  const useLegacyNodeExecutor = shouldUseLegacyNodeExecutor(options)
-
-  if (!useLegacyNodeExecutor) {
-    await reporter.reportStage('node_executor_sql_fallback', {
-      node_path: nodePath,
-      reason: 'use_lightweight_sql_fallback',
-      fallback_reasons: fallbackReasons
-    })
-
-    const sqlFallbackEnvelope = await executeNodeSqlFallback({
-      queryPlan,
-      spatialContext,
-      options,
-      fallbackReasons
-    })
-
-    const normalizedNode = normalizeExecutorEnvelope(sqlFallbackEnvelope)
-    return {
-      ...normalizedNode,
-      _compute_path: nodePath,
-      _fallback_reasons: fallbackReasons
-    }
-  }
-
-  await reporter.reportStage('node_executor_legacy', {
-    node_path: nodePath,
-    reason: 'legacy_executor_enabled',
-    fallback_reasons: fallbackReasons
-  })
-
-  const legacyExecuteQuery = await getLegacyExecuteQuery()
-
-  const nodeEnvelope = await legacyExecuteQuery(queryPlan, poiFeatures, {
-    ...options,
-    spatialContext,
-    migrationDecision,
-    fallbackMode: nodePath === 'node_fallback'
-  })
-
-  const normalizedNode = normalizeExecutorEnvelope(nodeEnvelope)
-  return {
-    ...normalizedNode,
-    _compute_path: nodePath,
-    _fallback_reasons: fallbackReasons
-  }
+  // 正常情况下不会执行到这里，因为Python失败会直接抛出错误
+  // 保留此检查以防止意外情况
+  console.error('[SpatialJobRunner] 意外到达代码末尾，应该已返回Python计算结果')
+  throw new Error('空间计算服务异常：未返回有效结果')
 }
 
+// 以下Node.js执行器代码已全部删除（2026-02-17）
+// 所有空间计算现在由Python服务处理
+// 保留函数定义以便其他代码引用，但不执行任何逻辑
 /**
+ * @deprecated 此函数已废弃，空间计算现在完全由Python服务处理
  */
+async function executeLegacyNodeExecutor(queryPlan, poiFeatures, options, reporter) {
+  throw new Error('Node.js执行器已废弃，所有空间计算由Python服务处理')
+}
+
 /**
  * Narrative 任务主执行函数。
  * 可被 sync 路由直接调用，也可被 worker 消费。
