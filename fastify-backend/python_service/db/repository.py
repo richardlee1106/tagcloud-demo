@@ -8,11 +8,17 @@
 from __future__ import annotations
 
 import os
+import threading
 from contextlib import contextmanager
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import psycopg2
+from psycopg2 import pool
 from psycopg2.extras import RealDictCursor
+
+
+# 查询超时配置（秒）
+QUERY_TIMEOUT = int(os.getenv("POSTGRES_QUERY_TIMEOUT", "30"))
 
 
 class POIRepository:
@@ -25,16 +31,32 @@ class POIRepository:
             "user": os.getenv("POSTGRES_USER", "postgres"),
             "password": os.getenv("POSTGRES_PASSWORD", "123456"),
             "dbname": os.getenv("POSTGRES_DATABASE", "geoloom"),
+            "connect_timeout": "10",
+            "options": f"-c statement_timeout={QUERY_TIMEOUT * 1000}",
         }
+        # 单连接池（Serverless环境适合单连接）
+        self._pool = pool.ThreadedConnectionPool(
+            minconn=1,
+            maxconn=1,
+            **self._dsn
+        )
+        self._lock = threading.Lock()
+
+    def __del__(self):
+        """销毁时关闭连接池"""
+        if hasattr(self, '_pool') and self._pool:
+            self._pool.closeall()
 
     @contextmanager
     def _connect(self):
-        """数据库连接上下文。"""
-        conn = psycopg2.connect(**self._dsn)
+        """数据库连接上下文（从连接池获取）"""
+        conn = None
         try:
+            conn = self._pool.getconn()
             yield conn
         finally:
-            conn.close()
+            if conn:
+                self._pool.putconn(conn)
 
     @staticmethod
     def _normalize_point(raw: Any) -> Optional[Tuple[float, float]]:
