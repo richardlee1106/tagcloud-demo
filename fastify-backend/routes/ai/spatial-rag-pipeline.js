@@ -187,6 +187,43 @@ export async function* executePipeline(userQuestion, frontendPOIs = [], options 
   }
   
   console.log(`[Pipeline] 阶段1完成: ${queryPlan.query_type}`)
+  
+  // 如果是无关输入，返回预设的友好响应
+  if (queryPlan.query_type === 'irrelevant_input') {
+    console.log('[Pipeline] 检测到无关输入，返回友好提示');
+    const responses = [
+      `你好！我是 Geoloom，很高兴见到你！😊
+
+看起来你发送了一个问题，但这个问题似乎与地理空间分析不太相关呢。
+
+我可以帮你分析：
+🗺️ 空间分析 - 分析选中区域的 POI 分布
+📊 数据可视化 - 生成标签云、统计图表
+🧠 智能问答 - 基于地理数据回答问题
+🔍 商业洞察 - 提供选址、竞争分析建议
+
+不妨试试：
+- "分析光谷的餐饮分布"
+- "对比光谷和江汉路的商业密度"
+
+期待你的地理相关问题！💪`,
+      `嗨！你的问题我暂时无法理解哦！😅
+
+作为地理空间智能助手，我可以帮你：
+• 分析某个区域的 POI 分布
+• 对比不同区域的商业配套
+• 识别商业热点和冷区
+• 推荐商业选址
+
+试着这样问我：
+- "这个区域有多少餐饮店"
+- "帮我比较光谷和汉口"
+
+有什么地理问题，随时问我！🌍`
+    ];
+    yield { type: 'text', content: responses[Math.floor(Math.random() * responses.length)] };
+    return;
+  }
   console.log(`[Pipeline] QueryPlan: ${JSON.stringify(queryPlan).slice(0, 150)}...`)
   
   // 记录 Planner 结果到 session

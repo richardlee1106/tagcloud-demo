@@ -432,17 +432,6 @@ async function sendMessage() {
   const text = inputText.value.trim();
   if (!text || isTyping.value || !isOnline.value) return;
 
-  // 检测无关输入
-  if (text === "0" || text === "o" || text === "O") {
-    const resp = [
-      `你好！我是 Geoloom，我可以帮你分析地理空间数据。请告诉我你想分析的区域，比如光谷的餐饮分布或武昌区的商业配套`,
-      `嗨！我是一个地理空间智能助手。试着告诉我一个具体区域，比如分析这个地方的餐饮服务或找出商业热点`
-    ];
-    messages.value.push({ role: "user", content: text, timestamp: Date.now() });
-    messages.value.push({ role: "assistant", content: resp[Math.floor(Math.random() * resp.length)], timestamp: Date.now() });
-    inputText.value = "";
-    return;
-  }
 
 
   // ??????
