@@ -87,10 +87,14 @@
                        active: !msg.pipelineCompleted && stageActiveIndex === idx,
                        completed: msg.pipelineCompleted || stageActiveIndex > idx
                      }">
-                  <div class="step-dot-inline">
-                    <svg v-if="msg.pipelineCompleted || stageActiveIndex > idx" viewBox="0 0 16 16" width="10" height="10">
+                  <div class="step-icon-wrapper">
+                    <svg v-if="!msg.pipelineCompleted && stageActiveIndex === idx" class="step-spinner" viewBox="0 0 24 24" width="14" height="14">
+                      <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none" stroke-dasharray="32" stroke-linecap="round"/>
+                    </svg>
+                    <svg v-else-if="msg.pipelineCompleted || stageActiveIndex > idx" class="step-check" viewBox="0 0 16 16" width="12" height="12">
                       <path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z" fill="currentColor"/>
                     </svg>
+                    <span v-else class="step-number">{{ idx + 1 }}</span>
                   </div>
                   <span class="step-label-inline">{{ step.label }}</span>
                 </div>
@@ -239,9 +243,9 @@ const currentStage = ref(''); // 原始 stage 名称（来自 SSE）
 const streamQueue = ref('');
 
 const stageSteps = [
-  { key: 'planner', label: '意图处理', hint: '正在理解问题意图与约束...' },
-  { key: 'executor', label: '空间分析', hint: '正在执行空间检索与约束过滤...' },
-  { key: 'writer', label: '组织回答', hint: '正在整理答案并生成可读输出...' }
+  { key: 'planner', label: '意图处理', hint: '正在理解问题意图与约束...', icon: 'M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z' },
+  { key: 'executor', label: '空间分析', hint: '正在执行空间检索与约束过滤...', icon: 'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7' },
+  { key: 'writer', label: '组织回答', hint: '正在整理答案并生成可读输出...', icon: 'M4 6h16M4 12h16m-7 6h7' }
 ];
 
 function normalizeStageName(stageName) {
@@ -1460,35 +1464,7 @@ defineExpose({
   white-space: nowrap;
 }
 
-.step-dot-inline {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.1);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: transparent;
-  transition: all 0.3s ease;
-  flex-shrink: 0;
-}
-
-.trace-step-inline.active .step-dot-inline {
-  background: rgba(99, 102, 241, 0.3);
-  box-shadow: 0 0 8px rgba(99, 102, 241, 0.5);
-  animation: dot-pulse 1.2s infinite ease-in-out;
-}
-
-.trace-step-inline.completed .step-dot-inline {
-  background: rgba(16, 185, 129, 0.2);
-  color: #34d399;
-}
-
-.step-label-inline {
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.4);
   transition: color 0.3s;
-}
 
 .trace-step-inline.active .step-label-inline {
   color: #a5b4fc;
@@ -1518,9 +1494,140 @@ defineExpose({
   font-style: italic;
 }
 
-@keyframes dot-pulse {
-  0%, 100% { opacity: 0.6; transform: scale(1); }
-  50% { opacity: 1; transform: scale(1.15); }
+/* 现代 Pipeline Tracker 样式 */
+.step-icon-wrapper {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(30, 41, 59, 0.8);
+  border: 2px solid rgba(100, 116, 139, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(148, 163, 184, 0.6);
+  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  flex-shrink: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.step-icon-wrapper.active {
+  background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+  border-color: #818cf8;
+  box-shadow: 0 0 20px rgba(99, 102, 241, 0.4), 0 0 40px rgba(99, 102, 241, 0.2);
+  animation: icon-pulse 2s infinite;
+}
+
+.step-icon-wrapper.completed {
+  background: linear-gradient(135deg, #10b981 0%, #34d399 100%);
+  border-color: #34d399;
+  box-shadow: 0 0 12px rgba(16, 185, 129, 0.3);
+  color: white;
+}
+
+.step-spinner {
+  animation: spin 1s linear infinite;
+}
+
+.step-check {
+  animation: check-pop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.step-number {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(148, 163, 184, 0.8);
+}
+
+.step-label-inline {
+  font-size: 12px;
+  color: rgba(148, 163, 184, 0.5);
+  transition: all 0.3s ease;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.trace-step-inline.active .step-label-inline {
+  color: #a5b4fc;
+  font-weight: 600;
+  text-shadow: 0 0 10px rgba(165, 180, 252, 0.3);
+}
+
+.trace-step-inline.completed .step-label-inline {
+  color: #6ee7b7;
+  font-weight: 500;
+}
+
+.trace-connector {
+  height: 2px;
+  background: rgba(71, 85, 105, 0.4);
+  margin: 0 8px;
+  flex-shrink: 0;
+  position: relative;
+  min-width: 24px;
+  overflow: hidden;
+}
+
+.trace-connector::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 0;
+  background: linear-gradient(90deg, #6366f1, #8b5cf6);
+  transition: width 0.5s ease;
+}
+
+.trace-connector.completed::after {
+  width: 100%;
+}
+
+.pipeline-tracker-inline {
+  padding: 14px 18px;
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.9) 0%, rgba(30, 41, 59, 0.8) 100%);
+  border: 1px solid rgba(99, 102, 241, 0.15);
+  border-radius: 16px;
+  margin-bottom: 10px;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.pipeline-trace-inline {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+}
+
+.pipeline-hint-inline {
+  font-size: 11px;
+  color: rgba(165, 180, 252, 0.7);
+  margin-top: 8px;
+  text-align: center;
+  font-style: italic;
+  animation: hint-fade 2s ease-in-out infinite;
+}
+
+@keyframes icon-pulse {
+  0%, 100% { box-shadow: 0 0 20px rgba(99, 102, 241, 0.4), 0 0 40px rgba(99, 102, 241, 0.2); }
+  50% { box-shadow: 0 0 25px rgba(99, 102, 241, 0.6), 0 0 50px rgba(99, 102, 241, 0.3); }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes check-pop {
+  0% { transform: scale(0); opacity: 0; }
+  50% { transform: scale(1.3); }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes hint-fade {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
 }
 
 /* 输入区域 */

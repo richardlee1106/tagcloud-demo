@@ -37,7 +37,7 @@ class POIRepository:
         # 单连接池（Serverless环境适合单连接）
         self._pool = pool.ThreadedConnectionPool(
             minconn=1,
-            maxconn=1,
+            maxconn=10,
             **self._dsn
         )
         self._lock = threading.Lock()

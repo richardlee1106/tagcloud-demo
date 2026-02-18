@@ -189,7 +189,7 @@ export function resolveSpatialMigrationDecision({
       query_type_matched: queryTypeMatched,
       hit_migrate_percent: hitMigratePercent,
       allow_python_by_source: allowPythonBySource,
-      force_node_fallback: forceNodeFallback
+      force_node_fallback: config.forceNodeFallback
     },
     reasons
   }
