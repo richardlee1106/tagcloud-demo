@@ -4,14 +4,26 @@ import 'element-plus/dist/index.css'
 import App from './App.vue'
 import router from './router'
 // 引入全局图标
-import * as ElementPlusIconsVue from '@element-plus/icons-vue'
+import {
+  ArrowLeft,
+  Close,
+  Hide,
+  Loading,
+  MagicStick,
+  VideoPlay,
+  View
+} from '@element-plus/icons-vue'
 
 const app = createApp(App)
 
 // 注册所有图标
-for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
-  app.component(key, component)
-}
+app.component('ArrowLeft', ArrowLeft)
+app.component('Close', Close)
+app.component('Hide', Hide)
+app.component('Loading', Loading)
+app.component('MagicStick', MagicStick)
+app.component('VideoPlay', VideoPlay)
+app.component('View', View)
 
 app.use(ElementPlus)
 app.use(router)

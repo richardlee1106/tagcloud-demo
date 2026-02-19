@@ -183,7 +183,7 @@ export async function sendChatMessageStream(messages, onChunk, options = {}, poi
           // 统一处理具名 SSE 元事件（查表模式，消除重复分支）
           const META_EVENT_TYPES = new Set([
             'pois', 'stage', 'boundary', 'spatial_clusters',
-            'vernacular_regions', 'fuzzy_regions', 'progress',
+            'vernacular_regions', 'fuzzy_regions', 'stats', 'progress',
             'partial', 'refined_result'
           ])
 

@@ -160,7 +160,7 @@ import { useRouter } from 'vue-router';
 import * as THREE from 'three';
 import { marked } from 'marked';
 import MapContainer from '../components/MapContainer.vue';
-import { fromLonLat } from 'ol/proj';
+import { fromLonLat, toLonLat } from 'ol/proj';
 
 /**
  * ==========================================
@@ -572,7 +572,6 @@ const generateNarrative = async () => {
   
   const view = mapInstance.value.getView();
   const extent = view.calculateExtent(mapInstance.value.getSize());
-  const { toLonLat } = await import('ol/proj');
   const bl = toLonLat([extent[0], extent[1]]);
   const tr = toLonLat([extent[2], extent[3]]);
   const viewport = [bl[0], bl[1], tr[0], tr[1]];
@@ -1392,7 +1391,6 @@ const generateRegionNarrative = async () => {
   
   const view = mapInstance.value.getView();
   const extent = view.calculateExtent(mapInstance.value.getSize());
-  const { toLonLat } = await import('ol/proj');
   const bl = toLonLat([extent[0], extent[1]]);
   const tr = toLonLat([extent[2], extent[3]]);
   const viewport = [bl[0], bl[1], tr[0], tr[1]];
