@@ -56,3 +56,18 @@ __pycache__/
 *.pyd
 # BitFun snapshot data - auto managed
 .bitfun/
+
+# === Local AI/Agent Tooling Artifacts ===
+.agents/
+.kilocode/
+.kiro/
+.zed/
+.claude/
+AGENT.md
+CLAUDE.md
+
+# === Temporary Debug/Backup Files ===
+.tmp_dev_out.txt
+.tmp_dev_err.txt
+src/*.garbled.bak
+nul
