@@ -73,6 +73,32 @@
     </div>
     
     <!-- 权重选择弹窗 -->
+    <div v-if="aiBoundaryLegend.visible" class="ai-boundary-legend">
+      <div class="legend-head">
+        <span class="legend-title">边界可信度</span>
+        <span class="legend-model">模型：{{ aiBoundaryLegend.model || 'composite_v1' }}</span>
+      </div>
+      <div class="legend-stats">
+        <span>均值 {{ formatLegendPercent(aiBoundaryLegend.avg) }}</span>
+        <span>最低 {{ formatLegendPercent(aiBoundaryLegend.min) }}</span>
+        <span>最高 {{ formatLegendPercent(aiBoundaryLegend.max) }}</span>
+      </div>
+      <div class="legend-scale">
+        <div class="legend-item high">
+          <span class="legend-swatch"></span>
+          <span>高可信 ≥ 70%（{{ aiBoundaryLegend.buckets.high }}）</span>
+        </div>
+        <div class="legend-item medium">
+          <span class="legend-swatch"></span>
+          <span>中可信 40%-69%（{{ aiBoundaryLegend.buckets.medium }}）</span>
+        </div>
+        <div class="legend-item low">
+          <span class="legend-swatch"></span>
+          <span>低可信 &lt; 40%（{{ aiBoundaryLegend.buckets.low }}）</span>
+        </div>
+      </div>
+    </div>
+
     <el-dialog
       v-model="weightDialogVisible"
       title="请选择需要渲染的地理权重"
@@ -125,6 +151,7 @@ import Polygon from 'ol/geom/Polygon';
 import Overlay from 'ol/Overlay';
 import { fromLonLat, toLonLat } from 'ol/proj';
 import { Style, Fill, Stroke, Circle as CircleStyle, RegularShape, Text as TextStyle } from 'ol/style';
+import { isEmpty as isEmptyExtent } from 'ol/extent';
 
 // deck.gl 高性能渲染
 import { Deck } from '@deck.gl/core';
@@ -204,11 +231,21 @@ watch(() => props.showWeightValue, (val) => { showWeightValue.value = val; });
 const poiPopup = ref(null); // 气泡 DOM 引用
 const popupVisible = ref(false); // 气泡是否可见
 const popupName = ref(''); // 气泡显示的名称
+let popupHideTimer = null;
 
 // 权重选项
 const weightOptions = ref([
   { value: 'population', label: '人口密度' },
 ]);
+
+const aiBoundaryLegend = ref({
+  visible: false,
+  model: null,
+  avg: null,
+  min: null,
+  max: null,
+  buckets: { high: 0, medium: 0, low: 0 }
+});
 
 // ============ 多选区管理 ============
 const { 
@@ -358,6 +395,13 @@ const locateLayer = new VectorLayer({
     })
   }),
   zIndex: 300
+});
+
+// 5. AI spatial evidence boundary layer (hotspots / fuzzy regions / analysis scope)
+const aiEvidenceLayerSource = new VectorSource();
+const aiEvidenceLayer = new VectorLayer({
+  source: aiEvidenceLayerSource,
+  zIndex: 260
 });
 
 // --- deck.gl 高性能渲染层 ---
@@ -539,7 +583,7 @@ onMounted(() => {
   // 初始化 OpenLayers 地图（仅保留绘制相关图层）
   map.value = new OlMap({
     target: mapContainer.value,
-    layers: [baseLayer, polygonLayer, centerLayer, hoverLayer, locateLayer],
+    layers: [baseLayer, polygonLayer, centerLayer, hoverLayer, aiEvidenceLayer, locateLayer],
     controls: [], // 移除默认控件（包括缩放按钮）
     view: new View({
       center: fromLonLat([114.33, 30.58]),
@@ -654,12 +698,19 @@ const emitHover = debounce((feature) => {
 function onMapClick(evt) {
   const pixel = map.value.getEventPixel(evt.originalEvent);
   let foundRaw = null;
+  let boundaryLabel = '';
   
   // 1. 首先在 OpenLayers 图层中检测（悬停图层等）
   map.value.forEachFeatureAtPixel(pixel, (feature) => {
     const raw = feature.get('__raw');
     if (raw) {
       foundRaw = raw;
+      return true;
+    }
+
+    const label = feature.get('__aiBoundaryLabel');
+    if (typeof label === 'string' && label.trim()) {
+      boundaryLabel = label.trim();
       return true;
     }
   }, { hitTolerance: 10 });
@@ -685,11 +736,50 @@ function onMapClick(evt) {
     emit('click-feature', foundRaw);
     
     // 显示 POI 名称气泡
-    showPoiPopup(foundRaw, evt.originalEvent);
+    showPoiPopup(foundRaw, pixel);
+  } else if (boundaryLabel) {
+    showBoundaryPopup(boundaryLabel, pixel);
   } else {
     // 点击空白处关闭气泡
     hidePoiPopup();
   }
+}
+
+function positionPopup(anchor) {
+  if (!poiPopup.value || !mapContainer.value) return;
+  let x = null;
+  let y = null;
+
+  if (Array.isArray(anchor) && anchor.length >= 2) {
+    x = Number(anchor[0]);
+    y = Number(anchor[1]);
+  } else if (anchor && typeof anchor === 'object') {
+    const mapRect = mapContainer.value.getBoundingClientRect();
+    x = Number(anchor.clientX) - mapRect.left;
+    y = Number(anchor.clientY) - mapRect.top;
+  }
+
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+  poiPopup.value.style.left = `${x}px`;
+  poiPopup.value.style.top = `${y - 10}px`;
+}
+
+function showTextPopup(label, anchor, autoHideMs = 2800) {
+  popupName.value = String(label || '').trim() || '未命名片区';
+  popupVisible.value = true;
+
+  nextTick(() => {
+    positionPopup(anchor);
+  });
+
+  if (popupHideTimer) {
+    clearTimeout(popupHideTimer);
+    popupHideTimer = null;
+  }
+
+  popupHideTimer = setTimeout(() => {
+    hidePoiPopup();
+  }, autoHideMs);
 }
 
 /**
@@ -698,32 +788,21 @@ function onMapClick(evt) {
 function showPoiPopup(feature, event) {
   const props = feature.properties || feature;
   const name = props['名称'] || props.name || '未知名称';
-  
-  popupName.value = name;
-  popupVisible.value = true;
-  
-  // 定位气泡到点击位置
-  nextTick(() => {
-    if (poiPopup.value) {
-      const mapRect = mapContainer.value.getBoundingClientRect();
-      const x = event.clientX - mapRect.left;
-      const y = event.clientY - mapRect.top;
-      
-      poiPopup.value.style.left = `${x}px`;
-      poiPopup.value.style.top = `${y - 10}px`; // 稍微向上偏移
-    }
-  });
-  
-  // 3秒后自动关闭
-  setTimeout(() => {
-    hidePoiPopup();
-  }, 3000);
+  showTextPopup(name, event, 3000);
+}
+
+function showBoundaryPopup(label, event) {
+  showTextPopup(label, event, 2400);
 }
 
 /**
  * 隐藏 POI 名称气泡
  */
 function hidePoiPopup() {
+  if (popupHideTimer) {
+    clearTimeout(popupHideTimer);
+    popupHideTimer = null;
+  }
   popupVisible.value = false;
 }
 
@@ -743,7 +822,10 @@ function onPointerMove(evt) {
       hitRaw = feature.get('__raw');
       return true;
     }
-  }, { hitTolerance: 8 });
+  }, {
+    hitTolerance: 8,
+    layerFilter: (layer) => layer === hoverLayer
+  });
   
   // 2. 如果 OpenLayers 未检测到，使用 deck.gl pickObject
   if (!hitRaw && deckInstance && pixel && Number.isFinite(pixel[0]) && Number.isFinite(pixel[1])) {
@@ -775,6 +857,11 @@ onBeforeUnmount(() => {
   if (syncAnimationId) {
     cancelAnimationFrame(syncAnimationId);
     syncAnimationId = null;
+  }
+
+  if (popupHideTimer) {
+    clearTimeout(popupHideTimer);
+    popupHideTimer = null;
   }
   
   // 销毁 deck.gl 实例
@@ -835,49 +922,86 @@ function rebuildPoiOlFeatures() {
  */
 let hasLocatedOnce = false; // 标记是否已经进行过定位
 
-function flyTo(feature) {
-  if (!map.value || !feature) return;
-  const [lon, lat] = feature.geometry.coordinates;
-  
-  let center;
-  if (rawToOlMap.has(feature)) {
-    center = rawToOlMap.get(feature).getGeometry().getCoordinates();
-  } else {
-     let [lon, lat] = feature.geometry.coordinates;
-     const poiCoordSys = import.meta.env.VITE_POI_COORD_SYS || 'gcj02';
-     if (poiCoordSys.toLowerCase() === 'wgs84') {
-       [lon, lat] = wgs84ToGcj02(lon, lat);
-     }
-     center = fromLonLat([lon, lat]);
+function resolveFlyToLonLat(target) {
+  if (!target) return null;
+
+  if (Array.isArray(target) && target.length >= 2) {
+    const lon = Number(target[0]);
+    const lat = Number(target[1]);
+    if (Number.isFinite(lon) && Number.isFinite(lat)) {
+      return [lon, lat];
+    }
+    return null;
   }
-  
-  // 记录当前定位的 POI，并刷新 deck.gl（隐藏该 POI 的红圆圈）
-  currentLocatedPoi = feature;
+
+  if (target?.geometry?.coordinates && Array.isArray(target.geometry.coordinates)) {
+    const lon = Number(target.geometry.coordinates[0]);
+    const lat = Number(target.geometry.coordinates[1]);
+    if (Number.isFinite(lon) && Number.isFinite(lat)) {
+      return [lon, lat];
+    }
+    return null;
+  }
+
+  const lon = Number(target?.lon ?? target?.lng ?? target?.longitude);
+  const lat = Number(target?.lat ?? target?.latitude);
+  if (Number.isFinite(lon) && Number.isFinite(lat)) {
+    return [lon, lat];
+  }
+
+  return null;
+}
+
+function flyTo(target, options = {}) {
+  if (!map.value || !target) return;
+  const {
+    showMarker = true,
+    firstLocateZoom = true
+  } = options || {};
+  const lonLat = resolveFlyToLonLat(target);
+  if (!lonLat) return;
+
+  const poiCoordSys = import.meta.env.VITE_POI_COORD_SYS || 'gcj02';
+  let [lon, lat] = lonLat;
+  if (poiCoordSys.toLowerCase() === 'wgs84') {
+    [lon, lat] = wgs84ToGcj02(lon, lat);
+  }
+  const center = fromLonLat([lon, lat]);
+
+  const isPoiFeature = !!(target?.geometry?.coordinates && Array.isArray(target.geometry.coordinates));
+  if (showMarker && isPoiFeature) {
+    currentLocatedPoi = target;
+  } else {
+    currentLocatedPoi = null;
+  }
   updateDeckLayers();
-  
-  // 清空悬停图层
+
   hoverLayerSource.clear();
-  
-  // 显示水蓝色五角星
   locateLayerSource.clear();
-  const locateFeature = new Feature({
-    geometry: new Point(center)
-  });
-  locateLayerSource.addFeature(locateFeature);
-  
-  // 动画参数
+  if (showMarker) {
+    locateLayerSource.addFeature(
+      new Feature({
+        geometry: new Point(center)
+      })
+    );
+  }
+
+  const view = map.value.getView();
+  if (view?.cancelAnimations) {
+    view.cancelAnimations();
+  }
+
   const animateOptions = {
-    center: center,
-    duration: 1000,
+    center,
+    duration: 800,
   };
-  
-  // 第一次定位时缩放到17级，之后不再缩放
-  if (!hasLocatedOnce) {
+
+  if (firstLocateZoom && !hasLocatedOnce) {
     animateOptions.zoom = 17;
     hasLocatedOnce = true;
   }
-  
-  map.value.getView().animate(animateOptions);
+
+  view.animate(animateOptions);
 }
 
 /**
@@ -1320,6 +1444,7 @@ function clearAllRegionsFromMap() {
   const count = clearAllRegions();
   polygonLayerSource.clear();
   centerLayerSource.clear();
+  clearAiEvidenceBoundaries();
   clearHighlights();
   currentGeometry = null;
   currentGeometryType = null;
@@ -1365,6 +1490,396 @@ function removeRegionFromMap(regionId) {
 function clearHighlights() {
   highlightData.value = [];
   heatmapData.value = [];
+}
+
+function parseBoundaryPayload(boundary) {
+  if (typeof boundary !== 'string') return boundary;
+  const raw = boundary.trim();
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function toCoordinatePair(coord) {
+  if (Array.isArray(coord) && coord.length >= 2) {
+    const lon = Number(coord[0]);
+    const lat = Number(coord[1]);
+    if (Number.isFinite(lon) && Number.isFinite(lat)) {
+      return [lon, lat];
+    }
+  }
+
+  if (coord && typeof coord === 'object') {
+    const lonRaw = coord.lon ?? coord.lng ?? coord.longitude ?? coord.x;
+    const latRaw = coord.lat ?? coord.latitude ?? coord.y;
+    const lon = Number(lonRaw);
+    const lat = Number(latRaw);
+    if (Number.isFinite(lon) && Number.isFinite(lat)) {
+      return [lon, lat];
+    }
+  }
+
+  return null;
+}
+
+function extractBoundaryRings(boundary) {
+  const payload = parseBoundaryPayload(boundary);
+  if (!payload) return [];
+
+  if (Array.isArray(payload)) {
+    if (payload.length === 0) return [];
+
+    if (toCoordinatePair(payload[0])) {
+      return [payload];
+    }
+
+    const first = payload[0];
+    if (Array.isArray(first) && toCoordinatePair(first[0])) {
+      return [first];
+    }
+
+    return payload.flatMap((item) => extractBoundaryRings(item));
+  }
+
+  if (typeof payload !== 'object') {
+    return [];
+  }
+
+  if (payload.type === 'Feature') {
+    return extractBoundaryRings(payload.geometry);
+  }
+
+  if (payload.type === 'FeatureCollection' && Array.isArray(payload.features)) {
+    return payload.features.flatMap((feature) => extractBoundaryRings(feature));
+  }
+
+  if (payload.type === 'Polygon') {
+    return extractBoundaryRings(payload.coordinates);
+  }
+
+  if (payload.type === 'MultiPolygon' && Array.isArray(payload.coordinates)) {
+    return payload.coordinates.flatMap((polygon) => extractBoundaryRings(polygon));
+  }
+
+  if (Array.isArray(payload.coordinates)) {
+    return extractBoundaryRings(payload.coordinates);
+  }
+
+  if (Array.isArray(payload.boundary)) {
+    return extractBoundaryRings(payload.boundary);
+  }
+
+  if (Array.isArray(payload.boundary_ring)) {
+    return extractBoundaryRings(payload.boundary_ring);
+  }
+
+  if (payload.geometry && typeof payload.geometry === 'object') {
+    return extractBoundaryRings(payload.geometry);
+  }
+
+  return [];
+}
+
+function normalizeClosedRing(ringCandidate) {
+  const ring = (Array.isArray(ringCandidate) ? ringCandidate : [])
+    .map((coord) => toCoordinatePair(coord))
+    .filter(Boolean);
+
+  if (ring.length < 3) return [];
+
+  const [firstLon, firstLat] = ring[0];
+  const [lastLon, lastLat] = ring[ring.length - 1];
+  if (firstLon !== lastLon || firstLat !== lastLat) {
+    ring.push([firstLon, firstLat]);
+  }
+
+  return ring;
+}
+
+function toMapLonLat(lon, lat) {
+  const poiCoordSys = import.meta.env.VITE_POI_COORD_SYS || 'gcj02';
+  if (poiCoordSys.toLowerCase() === 'wgs84') {
+    return wgs84ToGcj02(lon, lat);
+  }
+  return [lon, lat];
+}
+
+function ringToOlCoordinates(ringCandidate) {
+  const ring = normalizeClosedRing(ringCandidate);
+  if (ring.length < 4) return [];
+  return ring.map(([lon, lat]) => {
+    const [mapLon, mapLat] = toMapLonLat(lon, lat);
+    return fromLonLat([mapLon, mapLat]);
+  });
+}
+
+function toFiniteBoundaryConfidence(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  if (parsed < 0) return 0;
+  if (parsed > 1) return 1;
+  return parsed;
+}
+
+function confidenceBucket(score) {
+  const value = toFiniteBoundaryConfidence(score);
+  if (value === null) return 'unknown';
+  if (value >= 0.7) return 'high';
+  if (value >= 0.4) return 'medium';
+  return 'low';
+}
+
+function formatLegendPercent(value) {
+  const score = toFiniteBoundaryConfidence(value);
+  if (score === null) return '--';
+  return `${Math.round(score * 100)}%`;
+}
+
+function resetAiBoundaryLegend() {
+  aiBoundaryLegend.value = {
+    visible: false,
+    model: null,
+    avg: null,
+    min: null,
+    max: null,
+    buckets: { high: 0, medium: 0, low: 0 }
+  };
+}
+
+function updateAiBoundaryLegend({ stats = null, confidenceValues = [], renderedCount = 0 } = {}) {
+  if (renderedCount <= 0) {
+    resetAiBoundaryLegend();
+    return;
+  }
+
+  const cleanValues = confidenceValues
+    .map((value) => toFiniteBoundaryConfidence(value))
+    .filter((value) => value !== null);
+
+  const normalizedStats = stats && typeof stats === 'object' ? stats : {};
+  const statAvg = toFiniteBoundaryConfidence(normalizedStats.avg_boundary_confidence);
+  const statMin = toFiniteBoundaryConfidence(normalizedStats.min_boundary_confidence);
+  const statMax = toFiniteBoundaryConfidence(normalizedStats.max_boundary_confidence);
+
+  const avg = statAvg !== null
+    ? statAvg
+    : (cleanValues.length ? cleanValues.reduce((sum, value) => sum + value, 0) / cleanValues.length : null);
+  const min = statMin !== null ? statMin : (cleanValues.length ? Math.min(...cleanValues) : null);
+  const max = statMax !== null ? statMax : (cleanValues.length ? Math.max(...cleanValues) : null);
+
+  const buckets = { high: 0, medium: 0, low: 0 };
+  cleanValues.forEach((value) => {
+    const bucket = confidenceBucket(value);
+    if (bucket in buckets) {
+      buckets[bucket] += 1;
+    }
+  });
+
+  aiBoundaryLegend.value = {
+    visible: true,
+    model: String(normalizedStats.boundary_confidence_model || 'composite_v1'),
+    avg,
+    min,
+    max,
+    buckets
+  };
+}
+
+function createAiPolygonStyle(kind = 'generic', confidence = null) {
+  const presets = {
+    queryBoundary: { color: [59, 130, 246], fillAlpha: 0.08, strokeAlpha: 0.95, width: 3.0 },
+    hotspot: { color: [249, 115, 22], fillAlpha: 0.12, strokeAlpha: 0.92, width: 2.0 },
+    vernacular: { color: [244, 114, 182], fillAlpha: 0.10, strokeAlpha: 0.82, width: 2.0 },
+    fuzzyOuter: { color: [56, 189, 248], fillAlpha: 0.08, strokeAlpha: 0.58, width: 1.6 },
+    fuzzyTransition: { color: [168, 85, 247], fillAlpha: 0.10, strokeAlpha: 0.75, width: 2.0 },
+    fuzzyCore: { color: [16, 185, 129], fillAlpha: 0.15, strokeAlpha: 0.90, width: 2.4 },
+    generic: { color: [148, 163, 184], fillAlpha: 0.06, strokeAlpha: 0.75, width: 1.8 }
+  };
+
+  const preset = presets[kind] || presets.generic;
+  const score = toFiniteBoundaryConfidence(confidence);
+  const confidenceFactor = score === null ? 1 : (0.45 + score * 0.55);
+  const fillAlpha = Math.max(0.02, Math.min(0.98, preset.fillAlpha * confidenceFactor));
+  const strokeAlpha = Math.max(0.08, Math.min(0.98, preset.strokeAlpha * (score === null ? 1 : (0.35 + score * 0.65))));
+  const strokeWidth = Math.max(1, preset.width * (score === null ? 1 : (0.75 + score * 0.5)));
+  const [r, g, b] = preset.color;
+
+  let lineDash;
+  if (score !== null && score < 0.4) {
+    lineDash = [8, 8];
+  } else if (score !== null && score < 0.7) {
+    lineDash = [6, 5];
+  }
+
+  return new Style({
+    fill: new Fill({ color: `rgba(${r}, ${g}, ${b}, ${fillAlpha.toFixed(3)})` }),
+    stroke: new Stroke({
+      color: `rgba(${r}, ${g}, ${b}, ${strokeAlpha.toFixed(3)})`,
+      width: Number(strokeWidth.toFixed(2)),
+      lineDash
+    })
+  });
+}
+
+function addAiBoundaryFeature(boundary, kind = 'generic', options = {}) {
+  const rings = extractBoundaryRings(boundary);
+  if (!rings.length) return 0;
+
+  const confidence = toFiniteBoundaryConfidence(options.confidence);
+  const onFeatureAdded = typeof options.onFeatureAdded === 'function' ? options.onFeatureAdded : null;
+  const label = typeof options.label === 'string' ? options.label.trim() : '';
+
+  let addedCount = 0;
+  rings.forEach((ringCandidate) => {
+    const olCoords = ringToOlCoordinates(ringCandidate);
+    if (olCoords.length < 4) return;
+
+    const feature = new Feature({
+      geometry: new Polygon([olCoords])
+    });
+
+    if (label) {
+      feature.set('__aiBoundaryLabel', label);
+    }
+    feature.set('__aiBoundaryKind', kind);
+    feature.set('__aiBoundaryConfidence', confidence);
+    feature.setStyle(createAiPolygonStyle(kind, confidence));
+    aiEvidenceLayerSource.addFeature(feature);
+    addedCount += 1;
+
+    if (onFeatureAdded) {
+      onFeatureAdded(confidence);
+    }
+  });
+
+  return addedCount;
+}
+
+function fitToAiEvidenceIfNeeded(shouldFit = false) {
+  if (!shouldFit || !map.value) return;
+  const extent = aiEvidenceLayerSource.getExtent();
+  if (!extent || isEmptyExtent(extent)) return;
+  map.value.getView().fit(extent, {
+    padding: [60, 60, 60, 60],
+    duration: 600,
+    maxZoom: 16
+  });
+}
+
+function clearAiEvidenceBoundaries() {
+  aiEvidenceLayerSource.clear();
+  resetAiBoundaryLegend();
+  hidePoiPopup();
+}
+
+function showAnalysisBoundary(boundary, options = {}) {
+  const { fitView = true, clear = true, clearLocate = true, label = '分析边界' } = options;
+  if (clear) clearAiEvidenceBoundaries();
+  if (clearLocate) locateLayerSource.clear();
+  addAiBoundaryFeature(boundary, 'queryBoundary', { label });
+  aiBoundaryLegend.value.visible = false;
+  fitToAiEvidenceIfNeeded(fitView);
+}
+
+function showAiSpatialEvidence(payload = {}, options = {}) {
+  const { fitView = false, clear = true, clearLocate = true } = options;
+  if (clear) clearAiEvidenceBoundaries();
+  if (clearLocate) locateLayerSource.clear();
+
+  const clusters = payload?.clusters || payload?.spatialClusters;
+  const vernacularRegions = payload?.vernacularRegions || payload?.vernacular_regions;
+  const fuzzyRegions = payload?.fuzzyRegions || payload?.fuzzy_regions;
+  const boundary = payload?.boundary;
+  const stats = payload?.stats && typeof payload.stats === 'object' ? payload.stats : null;
+
+  const confidenceValues = [];
+  const collectConfidence = (value) => {
+    const score = toFiniteBoundaryConfidence(value);
+    if (score !== null) {
+      confidenceValues.push(score);
+    }
+  };
+
+  let renderedCount = 0;
+
+  if (clusters?.hotspots?.length) {
+    clusters.hotspots.slice(0, 8).forEach((hotspot) => {
+      const hotspotBoundary =
+        hotspot?.boundary_geojson ||
+        hotspot?.layers?.transition?.geojson ||
+        hotspot?.boundary ||
+        hotspot?.layers?.transition?.boundary ||
+        hotspot?.layers?.outer?.boundary;
+      const hotspotLabel = String(
+        hotspot?.name ||
+        hotspot?.dominantCategories?.[0]?.category ||
+        hotspot?.dominant_categories?.[0]?.category ||
+        '高活力片区'
+      );
+      renderedCount += addAiBoundaryFeature(hotspotBoundary, 'hotspot', {
+        confidence: hotspot?.boundary_confidence,
+        label: hotspotLabel,
+        onFeatureAdded: collectConfidence
+      });
+    });
+  }
+
+  if (Array.isArray(vernacularRegions) && vernacularRegions.length > 0) {
+    vernacularRegions.slice(0, 8).forEach((region) => {
+      const regionBoundary =
+        region?.boundary ||
+        region?.boundary_geojson ||
+        region?.boundary_ring ||
+        region?.layers?.transition?.geojson ||
+        region?.layers?.transition?.boundary ||
+        region?.layers?.outer?.geojson ||
+        region?.layers?.outer?.boundary;
+      const regionLabel = String(region?.name || region?.dominant_category || region?.theme || '主导业态片区');
+      renderedCount += addAiBoundaryFeature(regionBoundary, 'vernacular', {
+        confidence: region?.boundary_confidence,
+        label: regionLabel,
+        onFeatureAdded: collectConfidence
+      });
+    });
+  }
+
+  if (Array.isArray(fuzzyRegions) && fuzzyRegions.length > 0) {
+    fuzzyRegions.slice(0, 8).forEach((region) => {
+      const baseLabel = String(region?.name || region?.theme || '渐变片区');
+      renderedCount += addAiBoundaryFeature(region?.layers?.outer?.boundary, 'fuzzyOuter', {
+        confidence: region?.layers?.outer?.confidence ?? region?.boundary_confidence,
+        label: `${baseLabel}（外层）`,
+        onFeatureAdded: collectConfidence
+      });
+      renderedCount += addAiBoundaryFeature(region?.layers?.transition?.boundary, 'fuzzyTransition', {
+        confidence: region?.layers?.transition?.confidence ?? region?.boundary_confidence,
+        label: `${baseLabel}（过渡层）`,
+        onFeatureAdded: collectConfidence
+      });
+      renderedCount += addAiBoundaryFeature(region?.layers?.core?.boundary, 'fuzzyCore', {
+        confidence: region?.layers?.core?.confidence ?? region?.boundary_confidence,
+        label: `${baseLabel}（核心层）`,
+        onFeatureAdded: collectConfidence
+      });
+    });
+  }
+
+  if (renderedCount === 0 && boundary) {
+    renderedCount += addAiBoundaryFeature(boundary, 'queryBoundary', {
+      label: payload?.boundary_label || '分析边界'
+    });
+  }
+
+  updateAiBoundaryLegend({
+    stats,
+    confidenceValues,
+    renderedCount
+  });
+
+  fitToAiEvidenceIfNeeded(fitView);
 }
 
 /**
@@ -1545,6 +2060,7 @@ function clearPolygon() {
   polygonLayerSource.clear();
   centerLayerSource.clear();
   locateLayerSource.clear();
+  clearAiEvidenceBoundaries();
   clearHighlights();
   currentGeometry = null;
   currentGeometryType = null;
@@ -1623,6 +2139,9 @@ defineExpose({
   openPolygonDraw,
   closePolygonDraw,
   showHighlights,
+  showAnalysisBoundary,
+  showAiSpatialEvidence,
+  clearAiEvidenceBoundaries,
   clearHighlights,
   clearPolygon,
   clearAllRegionsFromMap,
@@ -1753,6 +2272,87 @@ function transformLon(x, y) {
   gap: 4px;
 }
 
+.ai-boundary-legend {
+  position: absolute;
+  left: 10px;
+  bottom: 12px;
+  z-index: 1100;
+  min-width: 220px;
+  max-width: 320px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: rgba(15, 23, 42, 0.78);
+  backdrop-filter: blur(10px);
+  color: #e2e8f0;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.38);
+  pointer-events: none;
+}
+
+.legend-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.legend-title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+.legend-model {
+  font-size: 10px;
+  color: #93c5fd;
+}
+
+.legend-stats {
+  display: flex;
+  gap: 10px;
+  font-size: 11px;
+  color: rgba(226, 232, 240, 0.9);
+  margin-bottom: 8px;
+}
+
+.legend-scale {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 4px;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: rgba(226, 232, 240, 0.92);
+}
+
+.legend-swatch {
+  width: 18px;
+  height: 0;
+  border-top-width: 2px;
+  border-top-style: solid;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.legend-item.high .legend-swatch {
+  border-top-color: rgba(16, 185, 129, 0.95);
+}
+
+.legend-item.medium .legend-swatch {
+  border-top-color: rgba(251, 191, 36, 0.88);
+  border-top-style: dashed;
+}
+
+.legend-item.low .legend-swatch {
+  border-top-color: rgba(239, 68, 68, 0.86);
+  border-top-style: dashed;
+}
+
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(-5px); }
   to { opacity: 1; transform: translateY(0); }
@@ -1814,6 +2414,20 @@ function transformLon(x, y) {
 @media (max-width: 768px) {
   .map-filter-control {
     display: none !important;
+  }
+
+  .ai-boundary-legend {
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    min-width: 0;
+    max-width: none;
+    padding: 9px 10px;
+  }
+
+  .legend-stats {
+    flex-wrap: wrap;
+    gap: 6px 10px;
   }
 }
 

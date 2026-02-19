@@ -213,7 +213,8 @@
                   @ai-boundary="handleAiBoundary"
                   @ai-spatial-clusters="handleAiSpatialClusters"
                   @ai-vernacular-regions="handleAiVernacularRegions"
-                  @ai-fuzzy-regions="handleAiFuzzyRegions" />
+                  @ai-fuzzy-regions="handleAiFuzzyRegions"
+                  @ai-analysis-stats="handleAiAnalysisStats" />
         </div>
       </section>
     </main>
@@ -1639,27 +1640,170 @@ const latestAiEvidence = ref({
   boundary: null,
   spatialClusters: null,
   vernacularRegions: null,
-  fuzzyRegions: null
+  fuzzyRegions: null,
+  stats: null
 });
 
+function renderAiEvidenceToMap({ clear = false } = {}) {
+  const mapApi = mapComponent.value;
+  if (!mapApi?.showAiSpatialEvidence) return;
+
+  const payload = {
+    boundary: latestAiEvidence.value.boundary,
+    spatial_clusters: latestAiEvidence.value.spatialClusters,
+    vernacular_regions: latestAiEvidence.value.vernacularRegions,
+    fuzzy_regions: latestAiEvidence.value.fuzzyRegions,
+    stats: latestAiEvidence.value.stats
+  };
+
+  const hotspotCount = Array.isArray(payload.spatial_clusters?.hotspots)
+    ? payload.spatial_clusters.hotspots.length
+    : 0;
+  const vernacularCount = Array.isArray(payload.vernacular_regions)
+    ? payload.vernacular_regions.length
+    : 0;
+  const fuzzyCount = Array.isArray(payload.fuzzy_regions)
+    ? payload.fuzzy_regions.length
+    : 0;
+
+  const hasEvidence =
+    !!payload.boundary ||
+    hotspotCount > 0 ||
+    vernacularCount > 0 ||
+    fuzzyCount > 0;
+
+  if (!hasEvidence) {
+    if (clear && mapApi.clearAiEvidenceBoundaries) {
+      mapApi.clearAiEvidenceBoundaries();
+    }
+    return;
+  }
+
+  mapApi.showAiSpatialEvidence(payload, { clear });
+}
+
+function collectBoundaryPoints(boundary, points = [], depth = 0) {
+  if (!boundary || depth > 10) return points;
+
+  if (Array.isArray(boundary)) {
+    if (boundary.length >= 2 && Number.isFinite(Number(boundary[0])) && Number.isFinite(Number(boundary[1]))) {
+      points.push([Number(boundary[0]), Number(boundary[1])]);
+      return points;
+    }
+    boundary.forEach((item) => collectBoundaryPoints(item, points, depth + 1));
+    return points;
+  }
+
+  if (typeof boundary !== 'object') return points;
+
+  const lon = Number(boundary.lon ?? boundary.lng ?? boundary.longitude);
+  const lat = Number(boundary.lat ?? boundary.latitude);
+  if (Number.isFinite(lon) && Number.isFinite(lat)) {
+    points.push([lon, lat]);
+    return points;
+  }
+
+  if (boundary.geometry) {
+    collectBoundaryPoints(boundary.geometry, points, depth + 1);
+  }
+  if (boundary.coordinates) {
+    collectBoundaryPoints(boundary.coordinates, points, depth + 1);
+  }
+  if (boundary.boundary) {
+    collectBoundaryPoints(boundary.boundary, points, depth + 1);
+  }
+  if (boundary.boundary_geojson) {
+    collectBoundaryPoints(boundary.boundary_geojson, points, depth + 1);
+  }
+  if (boundary.boundary_ring) {
+    collectBoundaryPoints(boundary.boundary_ring, points, depth + 1);
+  }
+  if (boundary.rings) {
+    collectBoundaryPoints(boundary.rings, points, depth + 1);
+  }
+  if (Array.isArray(boundary.features)) {
+    boundary.features.forEach((feature) => collectBoundaryPoints(feature, points, depth + 1));
+  }
+  if (boundary.layers && typeof boundary.layers === 'object') {
+    Object.values(boundary.layers).forEach((layer) => collectBoundaryPoints(layer, points, depth + 1));
+  }
+
+  return points;
+}
+
+function deriveBoundaryCenter(boundary) {
+  const points = collectBoundaryPoints(boundary, []);
+  if (!points.length) return null;
+
+  let minLon = Infinity;
+  let minLat = Infinity;
+  let maxLon = -Infinity;
+  let maxLat = -Infinity;
+
+  points.forEach(([lon, lat]) => {
+    if (!Number.isFinite(lon) || !Number.isFinite(lat)) return;
+    if (lon < minLon) minLon = lon;
+    if (lon > maxLon) maxLon = lon;
+    if (lat < minLat) minLat = lat;
+    if (lat > maxLat) maxLat = lat;
+  });
+
+  if (![minLon, minLat, maxLon, maxLat].every(Number.isFinite)) return null;
+  return {
+    lon: (minLon + maxLon) / 2,
+    lat: (minLat + maxLat) / 2
+  };
+}
+
 function handleAiBoundary(boundary) {
-  latestAiEvidence.value.boundary = boundary;
-  console.log('[App] AI 返回边界数据:', boundary ? 'GeoJSON' : 'null');
+  const payload =
+    boundary && typeof boundary === 'object' && !Array.isArray(boundary)
+      ? boundary
+      : { boundary };
+
+  const normalizedBoundary = Object.prototype.hasOwnProperty.call(payload, 'boundary')
+    ? payload.boundary
+    : boundary;
+
+  const source = String(payload?.source || '').toLowerCase();
+
+  if (source === 'ui') {
+    const targetCenter = payload?.center || deriveBoundaryCenter(normalizedBoundary);
+    if (targetCenter && mapComponent.value?.flyTo) {
+      mapComponent.value.flyTo(targetCenter, {
+        showMarker: false,
+        firstLocateZoom: false
+      });
+    }
+  } else {
+    latestAiEvidence.value.boundary = normalizedBoundary;
+    renderAiEvidenceToMap({ clear: true });
+  }
+
+  console.log('[App] AI boundary updated:', normalizedBoundary ? 'yes' : 'no');
 }
 
 function handleAiSpatialClusters(clusters) {
   latestAiEvidence.value.spatialClusters = clusters;
-  console.log('[App] AI 返回聚类数据:', clusters?.hotspots?.length || 0, '个热点');
+  renderAiEvidenceToMap({ clear: true });
+  console.log('[App] AI spatial clusters updated:', clusters?.hotspots?.length || 0);
 }
 
 function handleAiVernacularRegions(regions) {
   latestAiEvidence.value.vernacularRegions = regions;
-  console.log('[App] AI 返回语义功能区:', regions?.length || 0, '个');
+  renderAiEvidenceToMap({ clear: true });
+  console.log('[App] AI vernacular regions updated:', regions?.length || 0);
 }
 
 function handleAiFuzzyRegions(fuzzyRegions) {
   latestAiEvidence.value.fuzzyRegions = fuzzyRegions;
-  console.log('[App] AI 返回模糊区域:', fuzzyRegions?.length || 0, '个');
+  renderAiEvidenceToMap({ clear: true });
+  console.log('[App] AI fuzzy regions updated:', fuzzyRegions?.length || 0);
+}
+
+function handleAiAnalysisStats(stats) {
+  latestAiEvidence.value.stats = stats || null;
+  renderAiEvidenceToMap({ clear: false });
 }
 
 /**
@@ -2752,3 +2896,4 @@ body .el-overlay .el-dialog.mirspatial-dialog .el-button--primary {
   display: none !important;
 }
 </style>
+

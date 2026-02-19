@@ -122,9 +122,11 @@
             v-if="msg.role === 'assistant' && hasSpatialEvidence(msg)"
             :clusters="msg.spatialClusters"
             :vernacular-regions="msg.vernacularRegions"
+            :fuzzy-regions="msg.fuzzyRegions"
             :boundary="msg.boundary"
             @locate="handleEvidenceLocate"
             @show-boundary="handleShowBoundary"
+            @ask-followup="handleEvidenceFollowup"
           />
 
           <div v-if="msg.content && msg.content.trim()" class="message-time">{{ formatTime(msg.timestamp) }}</div>
@@ -232,7 +234,8 @@ const emit = defineEmits([
   'ai-boundary',
   'ai-spatial-clusters',
   'ai-vernacular-regions',
-  'ai-fuzzy-regions'
+  'ai-fuzzy-regions',
+  'ai-analysis-stats'
 ]);
 
 // 响应式状态
@@ -286,14 +289,30 @@ const poiCount = computed(() => props.poiFeatures?.length || 0);
 
 // 快捷操作按钮
 const quickActions = [
-  { text: '📊 分析 POI 分布', prompt: '请分析当前选中区域的 POI 分布特征和规律' },
-  { text: '🏪 商业建议', prompt: '基于当前 POI 数据，给出商业选址建议' },
-  { text: '📈 热点分析', prompt: '识别当前区域的商业热点和冷区' },
-  { text: '🔍 数据概览', prompt: '请简要概述当前选中的 POI 数据' },
-  { text: '🏘️ 周边配套', prompt: '分析当前区域的生活配套设施完善程度' },
-  { text: '📍 类别对比', prompt: '对比分析当前区域各类别POI的数量差异' },
-  { text: '🚗 交通便利度', prompt: '评估当前区域的交通便利程度' },
-  { text: '💡 发展建议', prompt: '基于POI数据给出区域发展建议' }
+  {
+    text: '\uD83D\uDD0E 30\u79D2\u770B\u61C2\u8FD9\u7247\u533A',
+    prompt: '\u8BF7\u5728 30 \u79D2\u5185\u7ED9\u6211\u8FD9\u7247\u533A\u7684\u5173\u952E\u7ED3\u8BBA\uFF1A\u4E3B\u5BFC\u4E1A\u6001\u3001\u6D3B\u529B\u70ED\u70B9\u3001\u6700\u503C\u5F97\u5173\u6CE8\u7684\u673A\u4F1A\u70B9\u3002'
+  },
+  {
+    text: '\uD83D\uDCCD \u627E\u5F00\u5E97\u673A\u4F1A\u70B9',
+    prompt: '\u8BF7\u57FA\u4E8E\u5F53\u524D\u7A7A\u95F4\u5206\u5E03\uFF0C\u8BC6\u522B 3 \u4E2A\u4F4E\u4F9B\u7ED9\u9AD8\u9700\u6C42\u7684\u5019\u9009\u70B9\uFF0C\u5E76\u8BF4\u660E\u9002\u5408\u4E1A\u6001\u3002'
+  },
+  {
+    text: '\u2696\uFE0F \u76F8\u90BB\u7247\u533A\u5BF9\u6BD4',
+    prompt: '\u8BF7\u5BF9\u6BD4\u5F53\u524D\u9AD8\u6D3B\u529B\u7247\u533A\u548C\u4E3B\u5BFC\u4E1A\u6001\u7247\u533A\u7684\u5DEE\u5F02\uFF0C\u7ED9\u51FA\u4E24\u6761\u53EF\u6267\u884C\u7B56\u7565\u3002'
+  },
+  {
+    text: '\uD83D\uDE87 15\u5206\u949F\u53EF\u8FBE\u6027',
+    prompt: '\u8BF7\u8BC4\u4F30\u5F53\u524D\u533A\u57DF 15 \u5206\u949F\u5185\u7684\u4EA4\u901A\u4FBF\u5229\u5EA6\u4E0E\u751F\u6D3B\u670D\u52A1\u53EF\u8FBE\u6027\u3002'
+  },
+  {
+    text: '\uD83D\uDCCA \u5546\u4E1A\u5185\u5377\u98CE\u9669',
+    prompt: '\u8BF7\u6307\u51FA\u5F53\u524D\u533A\u57DF\u5B58\u5728\u8FC7\u5EA6\u7ADE\u4E89\u98CE\u9669\u7684\u4E1A\u6001\uFF0C\u5E76\u7ED9\u51FA\u5DEE\u5F02\u5316\u5EFA\u8BAE\u3002'
+  },
+  {
+    text: '\uD83E\uDDE0 AI \u63D0\u95EE\u793A\u4F8B',
+    prompt: '\u8BF7\u7ED9\u6211 6 \u4E2A\u9AD8\u8D28\u91CF\u5730\u7406\u7A7A\u95F4\u95EE\u9898\u793A\u4F8B\uFF0C\u6BCF\u4E2A\u95EE\u9898\u90FD\u8981\u80FD\u5F97\u5230\u53EF\u6267\u884C\u7ED3\u8BBA\u3002'
+  }
 ];
 
 const providerName = ref('');
@@ -561,6 +580,23 @@ async function sendMessage() {
           emit('ai-fuzzy-regions', data);
         }
 
+        if (type === 'stats' && data && typeof data === 'object') {
+          if (messages.value[aiMessageIndex]) {
+            messages.value[aiMessageIndex].analysisStats = data;
+          }
+          emit('ai-analysis-stats', data);
+        }
+
+        if (type === 'refined_result' && data && typeof data === 'object') {
+          const resultStats = data?.results?.stats;
+          if (resultStats && typeof resultStats === 'object') {
+            if (messages.value[aiMessageIndex]) {
+              messages.value[aiMessageIndex].analysisStats = resultStats;
+            }
+            emit('ai-analysis-stats', resultStats);
+          }
+        }
+
         if (type === 'progress' && data) {
           if (messages.value[aiMessageIndex]) {
             messages.value[aiMessageIndex].progress = data.progress;
@@ -612,6 +648,7 @@ function handleTagClick(tag) {
 function hasSpatialEvidence(msg) {
   return msg.spatialClusters?.hotspots?.length > 0 ||
          msg.vernacularRegions?.length > 0 ||
+         msg.fuzzyRegions?.length > 0 ||
          !!msg.boundary;
 }
 
@@ -621,8 +658,17 @@ function handleEvidenceLocate(center) {
   emit('render-pois-to-map', [{ type: 'Feature', geometry: { type: 'Point', coordinates: [poi.lon, poi.lat] }, properties: { _source: 'evidence_locate' } }]);
 }
 
-function handleShowBoundary(boundary) {
-  emit('ai-boundary', boundary);
+function handleShowBoundary(boundaryPayload) {
+  const payload =
+    boundaryPayload && typeof boundaryPayload === 'object' && !Array.isArray(boundaryPayload)
+      ? boundaryPayload
+      : { boundary: boundaryPayload };
+  emit('ai-boundary', { ...payload, source: 'ui' });
+}
+
+function handleEvidenceFollowup(prompt) {
+  if (!prompt) return;
+  sendQuickAction(prompt);
 }
 
 // 清空对话
@@ -1242,6 +1288,11 @@ defineExpose({
   margin-left: auto;
 }
 
+.message.assistant {
+  width: 100%;
+  max-width: 100%;
+}
+
 .message-avatar {
   width: 34px;
   height: 34px;
@@ -1273,6 +1324,12 @@ defineExpose({
 
 .user .message-content {
   align-items: flex-end;
+}
+
+.assistant .message-content {
+  flex: 1;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .message-text {
@@ -1469,7 +1526,9 @@ defineExpose({
   white-space: nowrap;
 }
 
+.step-label-inline {
   transition: color 0.3s;
+}
 
 .trace-step-inline.active .step-label-inline {
   color: #a5b4fc;
@@ -1594,6 +1653,8 @@ defineExpose({
   border: 1px solid rgba(99, 102, 241, 0.15);
   border-radius: 16px;
   margin-bottom: 10px;
+  width: 100%;
+  box-sizing: border-box;
   backdrop-filter: blur(10px);
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
