@@ -9,6 +9,7 @@
 
 import { getLLMConfig } from '../../services/llm.js'
 import { extractCategoriesFromQuestion, expandCategory, CATEGORY_ONTOLOGY } from '../../services/categoryOntology.js'
+import { shouldHardBlockInput } from '../../services/relevanceGate.js'
 
 /**
  * QueryPlan 默认值
@@ -365,35 +366,15 @@ function detectIntentConflict(question) {
 
 // 对明显简单请求走规则快路，减少 Router LLM 开销。
 
-// 检测用户输入是否与地理空间分析主题相关
-function isRelevantToGeoAnalysis(text) {
-  const t = text.toLowerCase();
-  const geoKeywords = [
-    '区域', '地方', '位置', '地点', '地址', '在哪', '附近', '周边',
-    '分析', '分布', '密度', '数量', '统计', '对比', '比较', '差异',
-    '商业', '餐饮', '服务', '设施', '配套', '交通', '地铁', '公交',
-    '小区', '学校', '医院', '公园', '广场', '写字楼', '商场', '超市',
-    '酒店', '银行', '药店', '美容', '理发', '维修', '快递',
-    '光谷', '武昌', '汉口', '洪山', '江岸', '江汉', '硚口', '青山', '汉阳',
-    '东湖', '西湖', '江', '湖', '路', '街', '大道', '巷',
-    'poi', 'geo', 'spatial', 'map', '地图', '坐标', '经纬度',
-    '分析', '找', '看看', '有没有', '有多少', '怎么样', '如何',
-    '建议', '推荐', '选址', '适合', '优势', '劣势', '热点', '冷区'
-  ];
-  for (const kw of geoKeywords) {
-    if (t.includes(kw)) return true;
-  }
-  return false;
-}
-
 function shouldUseRuleFastPath(question, context = {}) {
   const normalized = String(question || '').trim().toLowerCase()
   if (!normalized) {
     return { bypass: true, reason: 'empty_question' }
-  // 检测无关输入
-  if (!isRelevantToGeoAnalysis(question)) {
-    return { bypass: true, reason: 'irrelevant_input' };
   }
+
+  // 先执行硬规则兜底，拦截明显噪声/无关输入
+  if (shouldHardBlockInput(question)) {
+    return { bypass: true, reason: 'irrelevant_input' }
   }
 
   const complexHints = [
@@ -429,17 +410,33 @@ function shouldUseRuleFastPath(question, context = {}) {
 
 // 统一构建快路径输出，确保规则路径与 Router 快路径结构一致。
 function buildQuickPlannerOutput(userQuestion, { routerResult = null, reason = 'rule_fast_path', startTime = Date.now() } = {}) {
-    // 如果是无关输入
+  // 如果是无关输入
   if (reason === "irrelevant_input") {
+    const duration = Date.now() - startTime
     return {
       success: true,
-      queryPlan: { query_type: "irrelevant_input" },
+      queryPlan: {
+        ...QUERY_PLAN_DEFAULTS,
+        query_type: 'irrelevant_input',
+        intent_mode: 'out_of_scope',
+        categories: [],
+        semantic_query: '',
+        confidence: {
+          score: 9,
+          level: 'high',
+          reasons: ['hard_rule_block', 'query_not_geo_related']
+        }
+      },
       tokenUsage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-      duration: 0
-    };
+      duration,
+      confidence: 'high',
+      fastPath: true,
+      routerUsed: false,
+      fastPathReason: reason
+    }
   }
 
-const quickPlan = quickIntentClassify(userQuestion)
+  const quickPlan = quickIntentClassify(userQuestion)
 
   if (routerResult?.anchor) {
     quickPlan.anchor = { type: 'landmark', name: routerResult.anchor, lat: null, lon: null }

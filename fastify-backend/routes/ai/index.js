@@ -125,6 +125,10 @@ function emitLegacyEvents(reply, legacyPayload) {
   if (legacyPayload.fuzzy_regions?.length) {
     writeSSEEvent(reply, 'fuzzy_regions', legacyPayload.fuzzy_regions)
   }
+
+  if (legacyPayload.stats && typeof legacyPayload.stats === 'object') {
+    writeSSEEvent(reply, 'stats', legacyPayload.stats)
+  }
 }
 
 /**

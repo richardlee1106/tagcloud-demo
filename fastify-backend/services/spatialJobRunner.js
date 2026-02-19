@@ -9,8 +9,11 @@ import { generateAnswer, buildQuickReply } from '../routes/ai/writer.js'
 import { computeSpatialStream, isGrpcComputeEnabled } from './grpcClient.js'
 import { resolveSpatialMigrationDecision } from './migrationPolicy.js'
 import { resolveSourcePolicy } from './sourcePolicy.js'
-import { executeNodeSqlFallback } from './nodeSqlFallbackExecutor.js'
 import * as queryCache from './queryCache.js'
+import {
+  classifyGeoRelevance,
+  IRRELEVANT_FRIENDLY_REPLY
+} from './relevanceGate.js'
 
 // MVP 固定分流阈值，后续可根据压测结果调参。
 const ASYNC_RULES = {
@@ -64,6 +67,12 @@ function cloneForCache(payload) {
 // 仅在稳定查询类型启用缓存，澄清类请求直接跳过。
 function shouldUseSpatialResultCache(queryPlan = {}, options = {}) {
   if (options?.skipCache || options?.forceRefresh) return false
+
+  const cacheInDev = String(process.env.SPATIAL_CACHE_IN_DEV || 'false').trim().toLowerCase()
+  const allowCacheInDev = ['1', 'true', 'yes', 'on'].includes(cacheInDev)
+  if (process.env.NODE_ENV !== 'production' && !allowCacheInDev) {
+    return false
+  }
 
   const queryType = normalizeQueryType(queryPlan)
   if (queryType === 'clarification_needed') return false
@@ -404,6 +413,10 @@ function isSmallTalkQuestion(question = '') {
   ])
 
   return smallTalkSet.has(compact)
+}
+
+function isIrrelevantQueryPlan(queryPlan = {}) {
+  return String(queryPlan?.query_type || '').trim().toLowerCase() === 'irrelevant_input'
 }
 
 /**
@@ -905,6 +918,63 @@ export async function runNarrativeSpatialJob(payload, reporter = {}) {
     }
   }
 
+  const relevance = await classifyGeoRelevance(userQuestion, {
+    hasSelectedArea: hasSpatialContext(spatialContext),
+    poiCount: poiFeatures.length
+  })
+
+  if (!relevance.isGeoRelated) {
+    const answer = IRRELEVANT_FRIENDLY_REPLY
+    const irrelevantQueryPlan = {
+      query_type: 'irrelevant_input',
+      intent_mode: 'out_of_scope',
+      categories: [],
+      confidence: {
+        score: relevance.confidence === 'high' ? 9 : relevance.confidence === 'low' ? 5 : 7,
+        level: relevance.confidence || 'medium',
+        reasons: [
+          'query_not_geo_related',
+          relevance.source ? `source:${relevance.source}` : null,
+          relevance.reason || null
+        ].filter(Boolean)
+      }
+    }
+
+    await report.reportStage('irrelevant_input', {
+      reason: relevance.reason || 'query_not_geo_related',
+      source: relevance.source || 'rule'
+    })
+    await report.reportText(answer)
+    await report.reportProgress(1, { stage: 'completed', mode: 'irrelevant_input' })
+
+    return {
+      success: true,
+      request_id: requestId,
+      query: userQuestion,
+      query_plan: irrelevantQueryPlan,
+      answer,
+      results: {
+        mode: 'irrelevant_input',
+        pois: [],
+        boundary: null,
+        spatial_clusters: { hotspots: [] },
+        vernacular_regions: [],
+        fuzzy_regions: [],
+        stats: {
+          total_candidates: 0,
+          cluster_count: 0,
+          query_type: 'irrelevant_input'
+        }
+      },
+      diagnostics: {
+        engine: 'relevance-gate',
+        request_id: requestId,
+        gate_reason: relevance.reason || 'query_not_geo_related',
+        gate_source: relevance.source || 'rule'
+      }
+    }
+  }
+
   // Stage 1: planner intent parsing
   await report.reportStage('planner', { request_id: requestId })
 
@@ -928,6 +998,41 @@ export async function runNarrativeSpatialJob(payload, reporter = {}) {
     query_type: 'poi_search',
     categories: [],
     radius_m: 1200
+  }
+
+  if (isIrrelevantQueryPlan(queryPlan)) {
+    const answer = IRRELEVANT_FRIENDLY_REPLY
+
+    await report.reportStage('irrelevant_input', {
+      reason: queryPlan?.confidence?.reasons?.[0] || 'query_not_geo_related'
+    })
+    await report.reportText(answer)
+    await report.reportProgress(1, { stage: 'completed', mode: 'irrelevant_input' })
+
+    return {
+      success: true,
+      request_id: requestId,
+      query: userQuestion,
+      query_plan: queryPlan,
+      answer,
+      results: {
+        mode: 'irrelevant_input',
+        pois: [],
+        boundary: null,
+        spatial_clusters: { hotspots: [] },
+        vernacular_regions: [],
+        fuzzy_regions: [],
+        stats: {
+          total_candidates: 0,
+          cluster_count: 0,
+          query_type: 'irrelevant_input'
+        }
+      },
+      diagnostics: {
+        engine: 'relevance-gate',
+        request_id: requestId
+      }
+    }
   }
 
   const enforced = resolveSourcePolicy(queryPlan, spatialContext, options)
@@ -1097,7 +1202,8 @@ export function toLegacySSEPayload(jobResult) {
     boundary: result.boundary || null,
     spatial_clusters: result.spatial_clusters || { hotspots: [] },
     vernacular_regions: Array.isArray(result.vernacular_regions) ? result.vernacular_regions : [],
-    fuzzy_regions: Array.isArray(result.fuzzy_regions) ? result.fuzzy_regions : []
+    fuzzy_regions: Array.isArray(result.fuzzy_regions) ? result.fuzzy_regions : [],
+    stats: result.stats && typeof result.stats === 'object' ? result.stats : null
   }
 }
 
