@@ -531,21 +531,21 @@ function askRegionStrategy() {
 
 <style scoped>
 .spatial-evidence-card {
-  margin: 10px 0;
+  margin: 12px 0;
   border-radius: 16px;
-  border: 1px solid rgba(14, 116, 144, 0.24);
-  background:
-    radial-gradient(120% 140% at -5% -10%, rgba(14, 165, 233, 0.22), rgba(14, 165, 233, 0) 55%),
-    radial-gradient(120% 160% at 100% 0%, rgba(6, 182, 212, 0.2), rgba(6, 182, 212, 0) 62%),
-    linear-gradient(155deg, rgba(15, 23, 42, 0.94), rgba(17, 24, 39, 0.94));
-  box-shadow: 0 12px 36px rgba(2, 6, 23, 0.35);
-  color: rgba(241, 245, 249, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(15, 23, 42, 0.65);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  color: rgba(248, 250, 252, 0.95);
   overflow: hidden;
-  font-family: "Noto Sans SC", "Source Han Sans SC", "PingFang SC", sans-serif;
+  font-family: "Inter", "Outfit", "PingFang SC", "Microsoft YaHei", sans-serif;
+  letter-spacing: 0.01em;
 }
 
 .evidence-section + .evidence-section {
-  border-top: 1px solid rgba(148, 163, 184, 0.2);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .section-header {
@@ -555,15 +555,15 @@ function askRegionStrategy() {
   color: inherit;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 11px 12px;
+  gap: 12px;
+  padding: 14px 16px;
   cursor: pointer;
   text-align: left;
-  transition: background 0.24s ease;
+  transition: background 0.2s ease;
 }
 
 .section-header:hover {
-  background: rgba(15, 118, 110, 0.12);
+  background: rgba(255, 255, 255, 0.04);
 }
 
 .section-header.static {
@@ -578,44 +578,44 @@ function askRegionStrategy() {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  column-gap: 8px;
+  column-gap: 12px;
 }
 
 .section-icon {
-  font-size: 15px;
+  font-size: 16px;
   line-height: 1;
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.2));
 }
 
 .section-title-group {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
   min-width: 0;
 }
 
 .section-title {
-  font-size: 13px;
-  font-weight: 700;
-  color: rgba(248, 250, 252, 0.98);
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
 }
 
 .section-subtitle {
-  color: rgba(186, 230, 253, 0.85);
-  font-size: 11px;
-  line-height: 1.34;
-  overflow-wrap: anywhere;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .section-subtitle.boundary-model {
-  color: rgba(125, 211, 252, 0.95);
-  font-size: 10px;
+  color: rgba(56, 189, 248, 0.85);
+  font-size: 11px;
 }
 
 .toggle-arrow {
-  color: rgba(186, 230, 253, 0.72);
-  font-size: 11px;
-  transition: transform 0.2s ease;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 12px;
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .toggle-arrow.expanded {
@@ -623,27 +623,34 @@ function askRegionStrategy() {
 }
 
 .section-body {
-  padding: 8px 10px 12px;
+  padding: 0 16px 16px;
   display: grid;
-  gap: 8px;
+  gap: 10px;
 }
 
 .section-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
+  margin-bottom: 4px;
 }
 
 .mini-action-btn {
-  border-radius: 999px;
-  border: 1px solid rgba(45, 212, 191, 0.42);
-  background: rgba(13, 148, 136, 0.16);
-  color: rgba(204, 251, 241, 0.96);
-  font-size: 11px;
-  line-height: 1.2;
-  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 6px 12px;
   cursor: pointer;
-  transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.mini-action-btn:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
 }
 
 .mini-action-btn:hover {
@@ -656,81 +663,75 @@ function askRegionStrategy() {
 .region-chip {
   position: relative;
   width: 100%;
-  border: 1px solid rgba(56, 189, 248, 0.24);
-  background: linear-gradient(145deg, rgba(30, 41, 59, 0.72), rgba(15, 23, 42, 0.8));
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.03);
   color: inherit;
   text-align: left;
   border-radius: 12px;
-  padding: 9px 10px 10px;
+  padding: 12px 14px;
   cursor: pointer;
-  display: grid;
-  gap: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   overflow: hidden;
-  transition: border-color 0.22s ease, transform 0.22s ease, box-shadow 0.22s ease;
-  animation: chipFadeIn 0.34s ease both;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  animation: chipFadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
   animation-delay: calc(var(--stagger, 0) * 45ms);
-}
-
-.hotspot-chip::before,
-.region-chip::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(120deg, rgba(45, 212, 191, 0.14), rgba(14, 165, 233, 0.04) 45%, rgba(14, 116, 144, 0));
-  opacity: 0;
-  transition: opacity 0.2s ease;
 }
 
 .hotspot-chip:hover,
 .region-chip:hover {
   transform: translateY(-2px);
-  border-color: rgba(45, 212, 191, 0.58);
-  box-shadow: 0 10px 24px rgba(8, 47, 73, 0.42);
+  border-color: rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
 }
 
-.hotspot-chip:hover::before,
-.region-chip:hover::before {
-  opacity: 1;
+.chip-top-line {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
-.chip-top-line,
 .chip-bottom-line {
   position: relative;
   z-index: 1;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
 }
 
 .chip-rank {
-  font-size: 10px;
-  font-weight: 800;
-  color: rgba(103, 232, 249, 0.95);
-  background: rgba(6, 182, 212, 0.2);
-  border: 1px solid rgba(34, 211, 238, 0.35);
-  border-radius: 999px;
-  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  padding: 3px 6px;
 }
 
 .chip-label {
-  font-size: 12px;
-  font-weight: 700;
-  color: rgba(240, 249, 255, 0.98);
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
 }
 
 .chip-meta {
-  font-size: 11px;
-  color: rgba(148, 230, 255, 0.9);
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
 }
 
 .chip-semantic {
-  font-size: 10px;
-  color: rgba(204, 251, 241, 0.96);
-  background: rgba(13, 148, 136, 0.22);
-  border: 1px solid rgba(45, 212, 191, 0.4);
-  border-radius: 8px;
-  padding: 2px 7px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  padding: 3px 8px;
   max-width: 100%;
   white-space: nowrap;
   overflow: hidden;
@@ -739,10 +740,10 @@ function askRegionStrategy() {
 
 .chip-confidence,
 .chip-boundary-confidence {
-  font-size: 10px;
-  font-weight: 700;
-  border-radius: 8px;
-  padding: 2px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 6px;
+  padding: 3px 8px;
 }
 
 .chip-confidence.high,

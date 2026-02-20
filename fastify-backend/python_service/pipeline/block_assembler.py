@@ -279,11 +279,40 @@ def assemble_block_boundaries(
     unique_labels = sorted(set(lab for lab in cluster_labels if lab >= 0))
     districts: List[ClusterDistrict] = []
 
-    for cluster_id in unique_labels:
-        cluster_pois = [
-            pois[i] for i, lab in enumerate(cluster_labels)
-            if lab == cluster_id and i < len(pois)
-        ]
+    # 预处理：语义聚合（同一 AOI name 下的多聚类应当合并，解决跨地块大型机构如大学被拆分的问题）
+    cluster_pois_map = {
+        cid: [pois[i] for i, lab in enumerate(cluster_labels) if lab == cid and i < len(pois)]
+        for cid in unique_labels
+    }
+
+    aoi_merges = {}
+    for cid, c_pois in cluster_pois_map.items():
+        if len(c_pois) < 3:
+            continue
+        aoi_names = [p.get("aoi_name") for p in c_pois if p.get("aoi_name")]
+        if not aoi_names:
+            continue
+        most_common_aoi, count = Counter(aoi_names).most_common(1)[0]
+        # 如果该 AOI 占比 >= 40% 且不是泛称，则标记该聚类为此 AOI
+        if count / len(c_pois) >= 0.40 and not _is_low_confidence_name(most_common_aoi):
+            aoi_merges.setdefault(most_common_aoi, []).append(cid)
+
+    # 生成最终的聚合聚类库 (保存 cid 以便后续使用)
+    merged_cluster_data: List[Tuple[int, List[Dict[str, Any]]]] = []
+    processed_cids = set()
+    for aoi_name, cids in aoi_merges.items():
+        if len(cids) > 1:
+            merged_pois = []
+            for cid in cids:
+                merged_pois.extend(cluster_pois_map[cid])
+                processed_cids.add(cid)
+            merged_cluster_data.append((cids[0], merged_pois))  # 使用第一个cid作为代表
+
+    for cid, c_pois in cluster_pois_map.items():
+        if cid not in processed_cids:
+            merged_cluster_data.append((cid, c_pois))
+
+    for cluster_id, cluster_pois in merged_cluster_data:
         if len(cluster_pois) < 3:
             continue
 

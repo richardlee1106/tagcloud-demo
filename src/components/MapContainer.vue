@@ -2294,7 +2294,22 @@ defineExpose({
   clearPolygon,
   clearAllRegionsFromMap,
   flyTo,
-  addUploadedPolygon
+  addUploadedPolygon,
+  clearPOIs: () => {
+    centerLayerSource.clear();
+    showHighlights([]);
+  },
+  highlightPOIs: (features, opts) => showHighlights(features, opts),
+  setRegions: (newRegions) => {
+    regions.value = newRegions;
+    if (newRegions.length > 0) {
+      if (globalAnalysisEnabled.value) {
+        globalAnalysisEnabled.value = false;
+        emit('global-analysis-change', false);
+      }
+    }
+  },
+  captureMapScreenshot
 });
 
 // 注释说明
@@ -2332,8 +2347,32 @@ function transformLon(x, y) {
   ret += (20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0 / 3.0;
   ret += (20.0 * Math.sin(x * Math.PI) + 40.0 * Math.sin(x / 3.0 * Math.PI)) * 2.0 / 3.0;
   ret += (150.0 * Math.sin(x / 12.0 * Math.PI) + 300.0 * Math.sin(x / 30.0 * Math.PI)) * 2.0 / 3.0;
+  ret += (150.0 * Math.sin(x / 12.0 * Math.PI) + 300.0 * Math.sin(x / 30.0 * Math.PI)) * 2.0 / 3.0;
   return ret;
 }
+
+import html2canvas from 'html2canvas';
+
+/**
+ * 捕获当前地图和叠加层的截图
+ * 用于发给 VLM 进行视觉审查和地图文字/形态解析
+ */
+async function captureMapScreenshot() {
+  if (!mapContainer.value) return null;
+  try {
+    const canvas = await html2canvas(mapContainer.value, {
+      useCORS: true,
+      allowTaint: true,
+      backgroundColor: '#000000',
+    });
+    return canvas.toDataURL('image/jpeg', 0.85);
+  } catch (err) {
+    console.warn('[MapContainer] Screenshot capture failed:', err);
+    return null;
+  }
+}
+
+
 </script>
 
 <style scoped>

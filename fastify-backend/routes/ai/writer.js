@@ -507,6 +507,13 @@ function buildResultContext(executorResult, options = {}) {
     sections.push(graphText)
   }
   
+  // 5.5 VLM 地图 OCR 提取的地名
+  if (results.stats?.vlm_extracted_texts?.length > 0) {
+    let ocrText = '👁️ **地图视觉分析 (OCR提取)**:\n'
+    ocrText += `- 画面中识别到的地名/标志物: ${results.stats.vlm_extracted_texts.join('、')}\n`
+    sections.push(ocrText)
+  }
+
   // 6. 执行统计（简化）
   if (results.stats) {
     const stats = results.stats

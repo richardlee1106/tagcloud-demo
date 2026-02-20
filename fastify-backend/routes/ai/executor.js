@@ -243,7 +243,8 @@ export async function tryExecuteQueryViaPython(queryPlan, frontendPOIs, options 
             selectedCategories: options?.selectedCategories || [],
             regions,
             limit: safeLimit,
-            maxFetchLimit
+            maxFetchLimit,
+            screenshot_base64: options?.screenshotBase64 || null
           },
           migration: {
             py_data_source: pyDataSource,

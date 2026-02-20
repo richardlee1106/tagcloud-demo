@@ -52,6 +52,8 @@ function selectBestLocalChatModel(modelList = []) {
   ]
 
   const preferredTokens = [
+    'vl',
+    'vision',
     'instruct',
     'chat',
     'qwen',
@@ -86,13 +88,21 @@ function selectBestLocalChatModel(modelList = []) {
     if (partial) return partial.id
   }
 
-  // 2) 退化到关键词打分（chat/instruct/qwen 等）
+  // 2) 退化到关键词打分（优先识别多模态/视觉大模型）
   const scored = candidates
     .map((m) => {
       const id = m.id.toLowerCase()
-      const score = preferredTokens.reduce((acc, token) => {
+      let score = 0
+      
+      // 视觉模型加高分
+      if (id.includes('vl') || id.includes('vision') || id.includes('llava')) {
+        score += 10
+      }
+      
+      score += preferredTokens.reduce((acc, token) => {
         return acc + (id.includes(token) ? 1 : 0)
       }, 0)
+      
       return { id: m.id, score }
     })
     .sort((a, b) => b.score - a.score)

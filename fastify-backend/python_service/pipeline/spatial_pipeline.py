@@ -2177,6 +2177,9 @@ class SpatialPipeline:
                         "drivers": _top_membership_drivers(membership),
                         "cluster_pois": d_pois,
                     })
+                    
+                    # Store district for later use where cluster_id is accessed
+                    grouped_indices[district.cluster_id] = [pois.index(p) for p in d_pois if p in pois]
 
         # ──────────────────────────────────────────────────────────────────
         # 传统 (V1-V4) 边界构建链路
@@ -2559,6 +2562,15 @@ class SpatialPipeline:
         skg_summary = (skg_result.get("summary") or {}).copy()
         skg_graph = (skg_result.get("graph") or {}).copy()
 
+        vlm_extracted_texts = []
+        screenshot_base64 = hints_options.get("screenshot_base64")
+        if screenshot_base64:
+            vlm_extracted_texts = vlm_reviewer.extract_map_text(
+                image_data_url=screenshot_base64,
+                model_name=visual_model_name,
+                endpoint=visual_endpoint,
+            )
+
         final_results = {
             "mode": "python-spatial",
             "pois": representative_pois,
@@ -2634,6 +2646,7 @@ class SpatialPipeline:
                 "fuzzy_core_count": fuzzy_summary["core"],
                 "fuzzy_transition_count": fuzzy_summary["transition"],
                 "fuzzy_periphery_count": fuzzy_summary["periphery"],
+                "vlm_extracted_texts": vlm_extracted_texts,
             },
         }
 

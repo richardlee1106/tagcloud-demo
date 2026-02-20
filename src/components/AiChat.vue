@@ -178,6 +178,7 @@ import { normalizeRefinedResultEvidence } from '../utils/refinedResultEvidence.j
 import EmbeddedTagCloud from './EmbeddedTagCloud.vue';
 import SpatialEvidenceCard from './SpatialEvidenceCard.vue';
 import { marked } from 'marked';
+import html2canvas from 'html2canvas';
 
 const props = defineProps({
   // 当前选中的 POI 数据
@@ -488,6 +489,24 @@ async function sendMessage() {
       timestamp: Date.now()
     });
 
+    // 尝试捕获地图截图，传递给 VLM 进行视口 OCR
+    let screenshotBase64 = null;
+    try {
+      const mapContainerObj = document.querySelector('.map-container');
+      if (mapContainerObj) {
+        const canvas = await html2canvas(mapContainerObj, {
+          useCORS: true,
+          allowTaint: true,
+          backgroundColor: '#000000',
+          scale: 1 // 使用较低缩放比以节省 Base64 长度
+        });
+        screenshotBase64 = canvas.toDataURL('image/jpeg', 0.75); // 适度压缩
+        console.log('[AiChat] UI screenshot captured for VLM OCR, length:', screenshotBase64.length);
+      }
+    } catch (e) {
+      console.warn('[AiChat] UI screenshot failed:', e);
+    }
+
     const spatialContext = {
       boundary: props.boundaryPolygon,
       mode: props.drawMode,
@@ -532,6 +551,7 @@ async function sendMessage() {
       selfValidationEnabled: true,
       skgEnabled: true,
       visualModel: 'qwen3-vl-4b',
+      screenshotBase64, // 新增：将前端截图传给后端
       spatialContext,
       regions: normalizedRegions
     };
@@ -1043,17 +1063,21 @@ defineExpose({
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: linear-gradient(180deg, #0a0f1a 0%, #111827 100%);
+  background: rgba(15, 23, 42, 0.7);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
   color: #e5e7eb;
   font-family: 'Inter', 'Segoe UI', sans-serif;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: -4px 0 32px rgba(0, 0, 0, 0.3);
 }
 
 /* 头部 */
 .chat-header {
-  padding: 12px 16px;
-  background: rgba(15, 23, 42, 0.95);
+  padding: 16px 20px;
+  background: rgba(15, 23, 42, 0.4);
   backdrop-filter: blur(20px);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   flex-shrink: 0;
   z-index: 10;
 }
@@ -1081,15 +1105,16 @@ defineExpose({
 }
 
 .ai-avatar {
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
-  background: linear-gradient(135deg, #6366f1, #a855f7);
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.15);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: white;
-  box-shadow: 0 4px 15px rgba(99, 102, 241, 0.4);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
 
 .header-info {
@@ -1329,14 +1354,15 @@ defineExpose({
 }
 
 .user .message-avatar {
-  background: #4f46e5;
+  background: rgba(99, 102, 241, 0.8);
   color: white;
 }
 
 .assistant .message-avatar {
-  background: linear-gradient(135deg, #6366f1, #a855f7);
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.15);
   color: white;
-  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.2);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
 .message-content {
@@ -1358,24 +1384,25 @@ defineExpose({
 
 .message-text {
   padding: 12px 16px;
-  border-radius: 16px;
+  border-radius: 12px;
   font-size: 14.5px;
   line-height: 1.6;
   word-break: break-word;
 }
 
 .user .message-text {
-  background: #6366f1;
-  color: white;
+  background: rgba(99, 102, 241, 0.2);
+  border: 1px solid rgba(99, 102, 241, 0.4);
+  color: #f8fafc;
   border-bottom-right-radius: 4px;
 }
 
 .assistant .message-text {
-  background: rgba(30, 41, 59, 0.8);
-  backdrop-filter: blur(10px);
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(12px);
   border: 1px solid rgba(255, 255, 255, 0.08);
   color: #f1f5f9;
-  border-bottom-left-radius: 4px;
+  border-top-left-radius: 4px;
 }
 
 .message-text :deep(code) {
