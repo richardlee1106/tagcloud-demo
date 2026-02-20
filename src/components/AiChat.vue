@@ -174,6 +174,7 @@ import {
   checkAIService, 
   getCurrentProviderInfo
 } from '../utils/aiService.js';
+import { normalizeRefinedResultEvidence } from '../utils/refinedResultEvidence.js';
 import EmbeddedTagCloud from './EmbeddedTagCloud.vue';
 import SpatialEvidenceCard from './SpatialEvidenceCard.vue';
 import { marked } from 'marked';
@@ -404,7 +405,7 @@ function enqueueStreamChunk(chunk, messageIndex) {
     streamQueue.value = streamQueue.value.slice(streamRenderStep);
     currentMessage.content += delta;
 
-    // ??????????????????????
+    // 每次追加流式片段后，保持消息视图贴底
     scrollToBottom(true, 'auto');
 
     if (!streamQueue.value) {
@@ -453,7 +454,7 @@ async function sendMessage() {
 
 
 
-  // ??????
+  // 先入列用户消息
   messages.value.push({
     role: 'user',
     content: text,
@@ -464,7 +465,7 @@ async function sendMessage() {
   await nextTick();
   scrollToBottom(true, 'auto');
 
-  // ?? AI ??
+  // 进入 AI 回复状态
   isTyping.value = true;
   resetStreamState();
 
@@ -479,7 +480,7 @@ async function sendMessage() {
       content: m.content
     }));
 
-    // ?? AI ????
+    // 预插入 AI 回复占位消息
     aiMessageIndex = messages.value.length;
     messages.value.push({
       role: 'assistant',
@@ -525,6 +526,12 @@ async function sendMessage() {
         hasCustomArea: hasCustomSelection(spatialContext, props.regions),
         hasCategoryFilter: normalizedSelectedCategories.length > 0
       },
+      confidenceModel: 'composite_v5',
+      visualReviewEnabled: true,
+      visualRemoteEnabled: false,
+      selfValidationEnabled: true,
+      skgEnabled: true,
+      visualModel: 'qwen3-vl-4b',
       spatialContext,
       regions: normalizedRegions
     };
@@ -588,12 +595,29 @@ async function sendMessage() {
         }
 
         if (type === 'refined_result' && data && typeof data === 'object') {
-          const resultStats = data?.results?.stats;
-          if (resultStats && typeof resultStats === 'object') {
-            if (messages.value[aiMessageIndex]) {
-              messages.value[aiMessageIndex].analysisStats = resultStats;
-            }
-            emit('ai-analysis-stats', resultStats);
+          const normalized = normalizeRefinedResultEvidence(data);
+          const currentMsg = messages.value[aiMessageIndex];
+
+          if (currentMsg) {
+            if (normalized.boundary) currentMsg.boundary = normalized.boundary;
+            if (normalized.spatialClusters) currentMsg.spatialClusters = normalized.spatialClusters;
+            if (normalized.vernacularRegions.length > 0) currentMsg.vernacularRegions = normalized.vernacularRegions;
+            if (normalized.fuzzyRegions.length > 0) currentMsg.fuzzyRegions = normalized.fuzzyRegions;
+            if (normalized.stats) currentMsg.analysisStats = normalized.stats;
+          }
+
+          if (normalized.boundary) emit('ai-boundary', normalized.boundary);
+          if (normalized.spatialClusters?.hotspots?.length) {
+            emit('ai-spatial-clusters', normalized.spatialClusters);
+          }
+          if (normalized.vernacularRegions.length > 0) {
+            emit('ai-vernacular-regions', normalized.vernacularRegions);
+          }
+          if (normalized.fuzzyRegions.length > 0) {
+            emit('ai-fuzzy-regions', normalized.fuzzyRegions);
+          }
+          if (normalized.stats) {
+            emit('ai-analysis-stats', normalized.stats);
           }
         }
 
@@ -725,7 +749,7 @@ function handleScroll() {
 function scrollToBottom(force = false, behavior = 'smooth') {
   if (userScrolledUp.value && !force) return
 
-  // ?? nextTick ?? DOM ?????
+  // 等待 nextTick，确保 DOM 已完成更新
   nextTick(() => {
     if (messagesContainer.value) {
       messagesContainer.value.scrollTo({

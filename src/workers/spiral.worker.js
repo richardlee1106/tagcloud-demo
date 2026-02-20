@@ -93,6 +93,7 @@ function runSpiralLayout(tags, width, height, configOverrides) {
 
     const placedTags = [];
     let failedCount = 0;
+    const failedSamples = [];
 
     for (const tag of processedTags) {
         const position = findBestPosition(tag, placedTags, centerX, centerY, width, height, config);
@@ -104,10 +105,18 @@ function runSpiralLayout(tags, width, height, configOverrides) {
             placedTags.push(tag);
         } else {
             failedCount++;
-            if (failedCount <= 10) {
-                console.warn('[Worker] Could not place tag:', tag.name);
+            if (failedSamples.length < 3) {
+                failedSamples.push(tag.name);
             }
         }
+    }
+
+    if (failedCount > 0) {
+        console.warn('[Worker] Spiral: 有标签未能放置', {
+            failedCount,
+            total: processedTags.length,
+            samples: failedSamples
+        });
     }
 
     console.log('[Worker] Spiral Layout complete. Placed:', placedTags.length, 'Failed:', failedCount, 'Total:', processedTags.length);

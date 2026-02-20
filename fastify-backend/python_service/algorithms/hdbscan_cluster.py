@@ -56,8 +56,9 @@ def _resolve_cluster_params(
     area = max(lon_span * lat_span, 1e-8)
     density = point_count / area
 
-    # 基于样本规模自适应放大 min_cluster_size，避免碎片化聚类
-    adaptive_cluster = int(max(min_cluster_size, min(220, math.sqrt(point_count) * 1.15)))
+    # 基于样本规模自适应放大 min_cluster_size，但要非常克制，避免滤掉大型低密度实体
+    # 改为使用 math.log1p 而非 sqrt，这样 1000 点也就加 7 个，10000 点加 9 个。
+    adaptive_cluster = int(max(min_cluster_size, min(80, min_cluster_size + math.log1p(point_count) * 1.5)))
 
     # 基于点密度自适应 min_samples，并保证不低于传入下限
     if density > 800_000:
@@ -65,7 +66,7 @@ def _resolve_cluster_params(
     elif density > 250_000:
         adaptive_samples = max(min_samples, 6)
     else:
-        adaptive_samples = max(min_samples, 4)
+        adaptive_samples = max(min_samples, 3)
 
     return max(2, adaptive_cluster), max(1, adaptive_samples)
 

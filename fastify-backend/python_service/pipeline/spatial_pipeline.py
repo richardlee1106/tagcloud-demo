@@ -1447,7 +1447,8 @@ class SpatialPipeline:
             hints_options.get("confidenceModel") or hints_options.get("confidence_model") or ""
         ).strip().lower()
         force_composite_v4 = requested_confidence_model == "composite_v4"
-        force_composite_v5 = requested_confidence_model == "composite_v5"
+        # V5 地块边界为强制默认路径——无条件启用
+        force_composite_v5 = True
 
         visual_review_enabled = force_composite_v4 or force_composite_v5 or _option_enabled(
             hints_options.get("visualReviewEnabled"), default_value=False
@@ -2116,6 +2117,8 @@ class SpatialPipeline:
                         semantic_anchor_confidence=district.name_confidence if district.name_source != "fallback" else None,
                         niche_consistency_score=None,
                     )
+                    # 强制标记 V5 模型名称，确保前端显示正确
+                    boundary_conf["explain"]["model"] = "composite_v5"
 
                     vitality_score = _calc_vitality_score(
                         density=density, membership_score=float(membership.score),

@@ -194,7 +194,13 @@ export async function sendChatMessageStream(messages, onChunk, options = {}, poi
             } else if (currentEvent === 'stage') {
               console.log('[AI Frontend] 收到阶段更新:', payload.name)
             }
-            if (onMeta) onMeta(currentEvent, currentEvent === 'stage' ? payload.name : payload)
+            if (onMeta) {
+              try {
+                onMeta(currentEvent, currentEvent === 'stage' ? payload.name : payload)
+              } catch (metaErr) {
+                console.error('[AI Meta Handler Error]', metaErr)
+              }
+            }
             currentEvent = null
             continue
           }
@@ -489,7 +495,7 @@ export function getCurrentProviderInfo() {
     id: currentProvider.provider,
     name: currentProvider.providerName,
     apiBase: API_BASE,
-    modelId: currentProvider.provider === 'local' ? 'qwen3-4b-instruct-2507' : 'mimo-v2-flash'
+    modelId: currentProvider.provider === 'local' ? 'qwen3-vl-4b' : 'mimo-v2-flash'
   }
 }
 

@@ -35,22 +35,36 @@ def compute_membership(
     centrality: float,
     compactness: float,
     scale: float,
+    niche_type: str = "mixed",
 ) -> MembershipBreakdown:
-    """按固定权重计算 membership 分数与层级。"""
+    """按生态位动态调整权重计算 membership 分数与层级。"""
     density = clamp(density)
     purity = clamp(purity)
     centrality = clamp(centrality)
     compactness = clamp(compactness)
     scale = clamp(scale)
 
-    # 首版固定权重（对应 MVP 方案）。
-    base_score = (
-        0.30 * density
-        + 0.25 * purity
-        + 0.20 * centrality
-        + 0.15 * compactness
-        + 0.10 * scale
-    )
+    if niche_type in ("ecology", "education", "industrial"):
+        # 大型稀疏功能区 (生态公园/大学城/工业园):
+        # 宽容点密度降低（0.30 -> 0.15），对规模、纯度更为看重
+        base_score = (
+            0.15 * density
+            + 0.35 * purity
+            + 0.15 * centrality
+            + 0.15 * compactness
+            + 0.20 * scale
+        )
+    else:
+        # 常规聚落 (商圈/住宅):
+        # 对点密度（0.30）和中心性敏感
+        base_score = (
+            0.30 * density
+            + 0.25 * purity
+            + 0.20 * centrality
+            + 0.15 * compactness
+            + 0.10 * scale
+        )
+
     purity_compactness_synergy = 0.08 * math.sqrt(max(0.0, purity * compactness))
     small_cluster_compensation = 0.06 * purity * (1.0 - density) * (1.0 - scale)
     instability_penalty = 0.05 * max(0.0, 0.35 - compactness)

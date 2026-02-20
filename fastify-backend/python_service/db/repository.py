@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import threading
 from contextlib import contextmanager
 from typing import Any, Dict, Iterable, List, Optional, Tuple

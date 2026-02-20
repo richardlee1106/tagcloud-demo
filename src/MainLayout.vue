@@ -239,6 +239,7 @@ import TagCloud from './components/TagCloud.vue';
 import MapContainer from './components/MapContainer.vue';
 import AiChat from './components/AiChat.vue';
 import { semanticSearch } from './utils/aiService';
+import { normalizeAiEvidencePayload } from './utils/aiEvidencePayload';
 import { API_BASE_URL } from './config';
 import { useRegions } from './composables/useRegions';
 
@@ -754,7 +755,7 @@ async function fetchManualFilteredFeatures(categories = [], options = {}) {
 
   const constraints = resolveSpatialConstraints();
   if (constraints.length > 0) {
-    // ??????? payload ??????????? OR ?????????
+    // 约束统一写入 payload，后端按 OR 关系解析各片区条件
     const regionPayloads = constraints
       .map((constraint, index) => {
         const boundaryWKT = constraintToGeometryWKT(constraint, true);
@@ -1648,12 +1649,20 @@ function renderAiEvidenceToMap({ clear = false } = {}) {
   const mapApi = mapComponent.value;
   if (!mapApi?.showAiSpatialEvidence) return;
 
-  const payload = {
+  const rawPayload = {
     boundary: latestAiEvidence.value.boundary,
     spatial_clusters: latestAiEvidence.value.spatialClusters,
     vernacular_regions: latestAiEvidence.value.vernacularRegions,
     fuzzy_regions: latestAiEvidence.value.fuzzyRegions,
     stats: latestAiEvidence.value.stats
+  };
+  const normalized = normalizeAiEvidencePayload(rawPayload);
+  const payload = {
+    boundary: normalized.boundary,
+    spatial_clusters: normalized.clusters,
+    vernacular_regions: normalized.vernacularRegions,
+    fuzzy_regions: normalized.fuzzyRegions,
+    stats: normalized.stats
   };
 
   const hotspotCount = Array.isArray(payload.spatial_clusters?.hotspots)
@@ -1679,7 +1688,11 @@ function renderAiEvidenceToMap({ clear = false } = {}) {
     return;
   }
 
-  mapApi.showAiSpatialEvidence(payload, { clear });
+  try {
+    mapApi.showAiSpatialEvidence(payload, { clear });
+  } catch (error) {
+    console.error('[MainLayout] 渲染空间证据失败:', error);
+  }
 }
 
 function collectBoundaryPoints(boundary, points = [], depth = 0) {
@@ -1768,6 +1781,14 @@ function handleAiBoundary(boundary) {
   const source = String(payload?.source || '').toLowerCase();
 
   if (source === 'ui') {
+    if (normalizedBoundary && mapComponent.value?.showAnalysisBoundary) {
+      mapComponent.value.showAnalysisBoundary(normalizedBoundary, {
+        fitView: false,
+        clear: false,
+        clearLocate: false,
+        label: payload?.label || '片区边界'
+      });
+    }
     const targetCenter = payload?.center || deriveBoundaryCenter(normalizedBoundary);
     if (targetCenter && mapComponent.value?.flyTo) {
       mapComponent.value.flyTo(targetCenter, {

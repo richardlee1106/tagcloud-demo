@@ -98,6 +98,9 @@ function runDynamicGravityLayout(tags, width, height, configOverrides) {
     let currentCentroid = { x: width / 2, y: height / 2 };
 
     // 3. 核心循环：逐个放置标签
+    let failedCount = 0;
+    const failedSamples = [];
+
     for (let i = 0; i < processedTags.length; i++) {
         const tag = processedTags[i];
 
@@ -139,8 +142,19 @@ function runDynamicGravityLayout(tags, width, height, configOverrides) {
                 currentCentroid.y = (currentCentroid.y * n + tag.y) / (n + 1);
             }
         } else {
-            console.warn('[Worker] Basic: Could not place tag:', tag.name);
+            failedCount++;
+            if (failedSamples.length < 3) {
+                failedSamples.push(tag.name);
+            }
         }
+    }
+
+    if (failedCount > 0) {
+        console.warn('[Worker] Basic: 有标签未能放置', {
+            failedCount,
+            total: processedTags.length,
+            samples: failedSamples
+        });
     }
 
     console.log('[Worker] Basic Layout complete. Placed:', placedTags.length, 'Total:', processedTags.length);

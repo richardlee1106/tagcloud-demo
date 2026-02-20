@@ -1,0 +1,620 @@
+D:\Users\Richard\AppData\Local\Programs\Python\Python313\Lib\site-packages\numpy\matrixlib\defmatrix.py:1116: PendingDeprecationWarning: the matrix subclass is not the recommended way to represent matrices or deal with linear algebra (see https://docs.scipy.org/doc/numpy/user/numpy-for-matlab-users.html). Please adjust your code to use regular ndarray.
+  return matrix(concatenate(arr_rows, axis=0))
+....[PIPELINE_DEBUG] candidates_json present: False
+[PIPELINE_DEBUG] payload_candidates count: 0
+[PIPELINE_DEBUG] py_data_source: python
+[PIPELINE_DEBUG] spatial_context: {'mode': 'Viewport', 'viewport': [113.95, 30.4, 114.45, 30.88]}
+[PIPELINE_DEBUG] Using repository.fetch_pois (PostGIS)
+[PIPELINE_DEBUG] fetch_pois returned 120 POIs
+D:\Users\Richard\AppData\Local\Programs\Python\Python313\Lib\site-packages\numpy\matrixlib\defmatrix.py:1116: PendingDeprecationWarning: the matrix subclass is not the recommended way to represent matrices or deal with linear algebra (see https://docs.scipy.org/doc/numpy/user/numpy-for-matlab-users.html). Please adjust your code to use regular ndarray.
+  return matrix(concatenate(arr_rows, axis=0))
+D:\Users\Richard\AppData\Local\Programs\Python\Python313\Lib\site-packages\alphashape\alphashape.py:79: DeprecationWarning: The 'warn' function is deprecated, use 'warning' instead
+  logging.warn('Singular matrix. Likely caused by all points '
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+.[PIPELINE_DEBUG] candidates_json present: False
+[PIPELINE_DEBUG] payload_candidates count: 0
+[PIPELINE_DEBUG] py_data_source: python
+[PIPELINE_DEBUG] spatial_context: {'mode': 'Viewport', 'viewport': [113.95, 30.4, 114.45, 30.88]}
+[PIPELINE_DEBUG] Using repository.fetch_pois (PostGIS)
+[PIPELINE_DEBUG] fetch_pois returned 180 POIs
+D:\Users\Richard\AppData\Local\Programs\Python\Python313\Lib\site-packages\numpy\matrixlib\defmatrix.py:1116: PendingDeprecationWarning: the matrix subclass is not the recommended way to represent matrices or deal with linear algebra (see https://docs.scipy.org/doc/numpy/user/numpy-for-matlab-users.html). Please adjust your code to use regular ndarray.
+  return matrix(concatenate(arr_rows, axis=0))
+D:\Users\Richard\AppData\Local\Programs\Python\Python313\Lib\site-packages\alphashape\alphashape.py:79: DeprecationWarning: The 'warn' function is deprecated, use 'warning' instead
+  logging.warn('Singular matrix. Likely caused by all points '
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+.[PIPELINE_DEBUG] candidates_json present: False
+[PIPELINE_DEBUG] payload_candidates count: 0
+[PIPELINE_DEBUG] py_data_source: python
+[PIPELINE_DEBUG] spatial_context: {'mode': 'Viewport', 'viewport': [113.95, 30.4, 114.45, 30.88]}
+[PIPELINE_DEBUG] Using repository.fetch_pois (PostGIS)
+[PIPELINE_DEBUG] fetch_pois returned 180 POIs
+D:\Users\Richard\AppData\Local\Programs\Python\Python313\Lib\site-packages\numpy\matrixlib\defmatrix.py:1116: PendingDeprecationWarning: the matrix subclass is not the recommended way to represent matrices or deal with linear algebra (see https://docs.scipy.org/doc/numpy/user/numpy-for-matlab-users.html). Please adjust your code to use regular ndarray.
+  return matrix(concatenate(arr_rows, axis=0))
+D:\Users\Richard\AppData\Local\Programs\Python\Python313\Lib\site-packages\alphashape\alphashape.py:79: DeprecationWarning: The 'warn' function is deprecated, use 'warning' instead
+  logging.warn('Singular matrix. Likely caused by all points '
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+.[PIPELINE_DEBUG] candidates_json present: False
+[PIPELINE_DEBUG] payload_candidates count: 0
+[PIPELINE_DEBUG] py_data_source: python
+[PIPELINE_DEBUG] spatial_context: {'mode': 'Viewport', 'viewport': [113.95, 30.4, 114.45, 30.88]}
+[PIPELINE_DEBUG] Using repository.fetch_pois (PostGIS)
+[PIPELINE_DEBUG] fetch_pois returned 120 POIs
+D:\Users\Richard\AppData\Local\Programs\Python\Python313\Lib\site-packages\numpy\matrixlib\defmatrix.py:1116: PendingDeprecationWarning: the matrix subclass is not the recommended way to represent matrices or deal with linear algebra (see https://docs.scipy.org/doc/numpy/user/numpy-for-matlab-users.html). Please adjust your code to use regular ndarray.
+  return matrix(concatenate(arr_rows, axis=0))
+D:\Users\Richard\AppData\Local\Programs\Python\Python313\Lib\site-packages\alphashape\alphashape.py:79: DeprecationWarning: The 'warn' function is deprecated, use 'warning' instead
+  logging.warn('Singular matrix. Likely caused by all points '
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+.[PIPELINE_DEBUG] candidates_json present: False
+[PIPELINE_DEBUG] payload_candidates count: 0
+[PIPELINE_DEBUG] py_data_source: python
+[PIPELINE_DEBUG] spatial_context: {'mode': 'Viewport', 'viewport': [113.95, 30.4, 114.45, 30.88]}
+[PIPELINE_DEBUG] Using repository.fetch_pois (PostGIS)
+[PIPELINE_DEBUG] fetch_pois returned 180 POIs
+D:\Users\Richard\AppData\Local\Programs\Python\Python313\Lib\site-packages\numpy\matrixlib\defmatrix.py:1116: PendingDeprecationWarning: the matrix subclass is not the recommended way to represent matrices or deal with linear algebra (see https://docs.scipy.org/doc/numpy/user/numpy-for-matlab-users.html). Please adjust your code to use regular ndarray.
+  return matrix(concatenate(arr_rows, axis=0))
+D:\Users\Richard\AppData\Local\Programs\Python\Python313\Lib\site-packages\alphashape\alphashape.py:79: DeprecationWarning: The 'warn' function is deprecated, use 'warning' instead
+  logging.warn('Singular matrix. Likely caused by all points '
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+.[PIPELINE_DEBUG] candidates_json present: False
+[PIPELINE_DEBUG] payload_candidates count: 0
+[PIPELINE_DEBUG] py_data_source: python
+[PIPELINE_DEBUG] spatial_context: {'mode': 'Viewport', 'viewport': [113.95, 30.4, 114.45, 30.88]}
+[PIPELINE_DEBUG] Using repository.fetch_pois (PostGIS)
+[PIPELINE_DEBUG] fetch_pois returned 180 POIs
+D:\Users\Richard\AppData\Local\Programs\Python\Python313\Lib\site-packages\numpy\matrixlib\defmatrix.py:1116: PendingDeprecationWarning: the matrix subclass is not the recommended way to represent matrices or deal with linear algebra (see https://docs.scipy.org/doc/numpy/user/numpy-for-matlab-users.html). Please adjust your code to use regular ndarray.
+  return matrix(concatenate(arr_rows, axis=0))
+D:\Users\Richard\AppData\Local\Programs\Python\Python313\Lib\site-packages\alphashape\alphashape.py:79: DeprecationWarning: The 'warn' function is deprecated, use 'warning' instead
+  logging.warn('Singular matrix. Likely caused by all points '
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+.[PIPELINE_DEBUG] candidates_json present: False
+[PIPELINE_DEBUG] payload_candidates count: 0
+[PIPELINE_DEBUG] py_data_source: python
+[PIPELINE_DEBUG] spatial_context: {'mode': 'Viewport', 'viewport': [113.95, 30.4, 114.45, 30.88]}
+[PIPELINE_DEBUG] Using repository.fetch_pois (PostGIS)
+[PIPELINE_DEBUG] fetch_pois returned 180 POIs
+D:\Users\Richard\AppData\Local\Programs\Python\Python313\Lib\site-packages\numpy\matrixlib\defmatrix.py:1116: PendingDeprecationWarning: the matrix subclass is not the recommended way to represent matrices or deal with linear algebra (see https://docs.scipy.org/doc/numpy/user/numpy-for-matlab-users.html). Please adjust your code to use regular ndarray.
+  return matrix(concatenate(arr_rows, axis=0))
+D:\Users\Richard\AppData\Local\Programs\Python\Python313\Lib\site-packages\alphashape\alphashape.py:79: DeprecationWarning: The 'warn' function is deprecated, use 'warning' instead
+  logging.warn('Singular matrix. Likely caused by all points '
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+.....[PIPELINE_DEBUG] candidates_json present: False
+[PIPELINE_DEBUG] payload_candidates count: 0
+[PIPELINE_DEBUG] py_data_source: python
+[PIPELINE_DEBUG] spatial_context: {'mode': 'Viewport', 'viewport': [113.95, 30.4, 114.45, 30.88]}
+[PIPELINE_DEBUG] Using repository.fetch_pois (PostGIS)
+[PIPELINE_DEBUG] fetch_pois returned 90 POIs
+.[PIPELINE_DEBUG] candidates_json present: False
+[PIPELINE_DEBUG] payload_candidates count: 0
+[PIPELINE_DEBUG] py_data_source: python
+[PIPELINE_DEBUG] spatial_context: {'mode': 'Viewport', 'viewport': [113.95, 30.4, 114.45, 30.88]}
+[PIPELINE_DEBUG] Using repository.fetch_pois (PostGIS)
+[PIPELINE_DEBUG] fetch_pois returned 0 POIs
+[PIPELINE_DEBUG] PostGIS strict terms returned 0, retry without semantic terms
+[PIPELINE_DEBUG] fetch_pois (relaxed terms) returned 180 POIs
+D:\Users\Richard\AppData\Local\Programs\Python\Python313\Lib\site-packages\numpy\matrixlib\defmatrix.py:1116: PendingDeprecationWarning: the matrix subclass is not the recommended way to represent matrices or deal with linear algebra (see https://docs.scipy.org/doc/numpy/user/numpy-for-matlab-users.html). Please adjust your code to use regular ndarray.
+  return matrix(concatenate(arr_rows, axis=0))
+D:\Users\Richard\AppData\Local\Programs\Python\Python313\Lib\site-packages\alphashape\alphashape.py:79: DeprecationWarning: The 'warn' function is deprecated, use 'warning' instead
+  logging.warn('Singular matrix. Likely caused by all points '
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+.[PIPELINE_DEBUG] candidates_json present: False
+[PIPELINE_DEBUG] payload_candidates count: 0
+[PIPELINE_DEBUG] py_data_source: python
+[PIPELINE_DEBUG] spatial_context: {'mode': 'Viewport', 'viewport': [113.95, 30.4, 114.45, 30.88]}
+[PIPELINE_DEBUG] Using repository.fetch_pois (PostGIS)
+[PIPELINE_DEBUG] fetch_pois returned 180 POIs
+D:\Users\Richard\AppData\Local\Programs\Python\Python313\Lib\site-packages\numpy\matrixlib\defmatrix.py:1116: PendingDeprecationWarning: the matrix subclass is not the recommended way to represent matrices or deal with linear algebra (see https://docs.scipy.org/doc/numpy/user/numpy-for-matlab-users.html). Please adjust your code to use regular ndarray.
+  return matrix(concatenate(arr_rows, axis=0))
+D:\Users\Richard\AppData\Local\Programs\Python\Python313\Lib\site-packages\alphashape\alphashape.py:79: DeprecationWarning: The 'warn' function is deprecated, use 'warning' instead
+  logging.warn('Singular matrix. Likely caused by all points '
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+...[PIPELINE_DEBUG] candidates_json present: False
+[PIPELINE_DEBUG] payload_candidates count: 0
+[PIPELINE_DEBUG] py_data_source: python
+[PIPELINE_DEBUG] spatial_context: {'mode': 'Viewport', 'viewport': [113.95, 30.4, 114.45, 30.88]}
+[PIPELINE_DEBUG] Using repository.fetch_pois (PostGIS)
+[PIPELINE_DEBUG] fetch_pois returned 180 POIs
+D:\Users\Richard\AppData\Local\Programs\Python\Python313\Lib\site-packages\numpy\matrixlib\defmatrix.py:1116: PendingDeprecationWarning: the matrix subclass is not the recommended way to represent matrices or deal with linear algebra (see https://docs.scipy.org/doc/numpy/user/numpy-for-matlab-users.html). Please adjust your code to use regular ndarray.
+  return matrix(concatenate(arr_rows, axis=0))
+D:\Users\Richard\AppData\Local\Programs\Python\Python313\Lib\site-packages\alphashape\alphashape.py:79: DeprecationWarning: The 'warn' function is deprecated, use 'warning' instead
+  logging.warn('Singular matrix. Likely caused by all points '
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+.[PIPELINE_DEBUG] candidates_json present: False
+[PIPELINE_DEBUG] payload_candidates count: 0
+[PIPELINE_DEBUG] py_data_source: python
+[PIPELINE_DEBUG] spatial_context: {'mode': 'Polygon', 'regions': [{'id': 1, 'kind': 'polygon', 'wkt': 'POLYGON((121.47 31.23,121.48 31.23,121.48 31.24,121.47 31.24,121.47 31.23))'}]}
+[PIPELINE_DEBUG] Using repository.fetch_pois (PostGIS)
+[PIPELINE_DEBUG] fetch_pois returned 0 POIs
+....[PIPELINE_DEBUG] candidates_json present: False
+[PIPELINE_DEBUG] payload_candidates count: 0
+[PIPELINE_DEBUG] py_data_source: python
+[PIPELINE_DEBUG] spatial_context: {'mode': 'Viewport', 'viewport': [113.95, 30.4, 114.45, 30.88]}
+[PIPELINE_DEBUG] Using repository.fetch_pois (PostGIS)
+[PIPELINE_DEBUG] fetch_pois returned 180 POIs
+D:\Users\Richard\AppData\Local\Programs\Python\Python313\Lib\site-packages\numpy\matrixlib\defmatrix.py:1116: PendingDeprecationWarning: the matrix subclass is not the recommended way to represent matrices or deal with linear algebra (see https://docs.scipy.org/doc/numpy/user/numpy-for-matlab-users.html). Please adjust your code to use regular ndarray.
+  return matrix(concatenate(arr_rows, axis=0))
+D:\Users\Richard\AppData\Local\Programs\Python\Python313\Lib\site-packages\alphashape\alphashape.py:79: DeprecationWarning: The 'warn' function is deprecated, use 'warning' instead
+  logging.warn('Singular matrix. Likely caused by all points '
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+...[PIPELINE_DEBUG] candidates_json present: False
+[PIPELINE_DEBUG] payload_candidates count: 0
+[PIPELINE_DEBUG] py_data_source: python
+[PIPELINE_DEBUG] spatial_context: {'mode': 'Viewport', 'viewport': [113.95, 30.4, 114.45, 30.88]}
+[PIPELINE_DEBUG] Using repository.fetch_pois (PostGIS)
+[PIPELINE_DEBUG] fetch_pois returned 180 POIs
+D:\Users\Richard\AppData\Local\Programs\Python\Python313\Lib\site-packages\numpy\matrixlib\defmatrix.py:1116: PendingDeprecationWarning: the matrix subclass is not the recommended way to represent matrices or deal with linear algebra (see https://docs.scipy.org/doc/numpy/user/numpy-for-matlab-users.html). Please adjust your code to use regular ndarray.
+  return matrix(concatenate(arr_rows, axis=0))
+D:\Users\Richard\AppData\Local\Programs\Python\Python313\Lib\site-packages\alphashape\alphashape.py:79: DeprecationWarning: The 'warn' function is deprecated, use 'warning' instead
+  logging.warn('Singular matrix. Likely caused by all points '
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+..[PIPELINE_DEBUG] candidates_json present: False
+[PIPELINE_DEBUG] payload_candidates count: 0
+[PIPELINE_DEBUG] py_data_source: python
+[PIPELINE_DEBUG] spatial_context: {'mode': 'Viewport', 'viewport': [113.95, 30.4, 114.45, 30.88]}
+[PIPELINE_DEBUG] Using repository.fetch_pois (PostGIS)
+[PIPELINE_DEBUG] fetch_pois returned 80 POIs
+F[PIPELINE_DEBUG] candidates_json present: False
+[PIPELINE_DEBUG] payload_candidates count: 0
+[PIPELINE_DEBUG] py_data_source: python
+[PIPELINE_DEBUG] spatial_context: {'mode': 'Viewport', 'viewport': [113.95, 30.4, 114.45, 30.88]}
+[PIPELINE_DEBUG] Using repository.fetch_pois (PostGIS)
+[PIPELINE_DEBUG] fetch_pois returned 120 POIs
+D:\Users\Richard\AppData\Local\Programs\Python\Python313\Lib\site-packages\numpy\matrixlib\defmatrix.py:1116: PendingDeprecationWarning: the matrix subclass is not the recommended way to represent matrices or deal with linear algebra (see https://docs.scipy.org/doc/numpy/user/numpy-for-matlab-users.html). Please adjust your code to use regular ndarray.
+  return matrix(concatenate(arr_rows, axis=0))
+D:\Users\Richard\AppData\Local\Programs\Python\Python313\Lib\site-packages\alphashape\alphashape.py:79: DeprecationWarning: The 'warn' function is deprecated, use 'warning' instead
+  logging.warn('Singular matrix. Likely caused by all points '
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+.[PIPELINE_DEBUG] candidates_json present: False
+[PIPELINE_DEBUG] payload_candidates count: 0
+[PIPELINE_DEBUG] py_data_source: python
+[PIPELINE_DEBUG] spatial_context: {'mode': 'Viewport', 'viewport': [113.95, 30.4, 114.45, 30.88]}
+[PIPELINE_DEBUG] Using repository.fetch_pois (PostGIS)
+[PIPELINE_DEBUG] fetch_pois returned 120 POIs
+D:\Users\Richard\AppData\Local\Programs\Python\Python313\Lib\site-packages\numpy\matrixlib\defmatrix.py:1116: PendingDeprecationWarning: the matrix subclass is not the recommended way to represent matrices or deal with linear algebra (see https://docs.scipy.org/doc/numpy/user/numpy-for-matlab-users.html). Please adjust your code to use regular ndarray.
+  return matrix(concatenate(arr_rows, axis=0))
+...[PIPELINE_DEBUG] candidates_json present: False
+[PIPELINE_DEBUG] payload_candidates count: 0
+[PIPELINE_DEBUG] py_data_source: python
+[PIPELINE_DEBUG] spatial_context: {'mode': 'Viewport', 'viewport': [114.4, 30.5, 114.45, 30.55]}
+[PIPELINE_DEBUG] Using repository.fetch_pois (PostGIS)
+[PIPELINE_DEBUG] fetch_pois returned 70 POIs
+.[PIPELINE_DEBUG] candidates_json present: False
+[PIPELINE_DEBUG] payload_candidates count: 0
+[PIPELINE_DEBUG] py_data_source: python
+[PIPELINE_DEBUG] spatial_context: {'mode': 'Viewport', 'viewport': [113.95, 30.4, 114.45, 30.88]}
+[PIPELINE_DEBUG] Using repository.fetch_pois (PostGIS)
+[PIPELINE_DEBUG] fetch_pois returned 120 POIs
+D:\Users\Richard\AppData\Local\Programs\Python\Python313\Lib\site-packages\numpy\matrixlib\defmatrix.py:1116: PendingDeprecationWarning: the matrix subclass is not the recommended way to represent matrices or deal with linear algebra (see https://docs.scipy.org/doc/numpy/user/numpy-for-matlab-users.html). Please adjust your code to use regular ndarray.
+  return matrix(concatenate(arr_rows, axis=0))
+D:\Users\Richard\AppData\Local\Programs\Python\Python313\Lib\site-packages\alphashape\alphashape.py:79: DeprecationWarning: The 'warn' function is deprecated, use 'warning' instead
+  logging.warn('Singular matrix. Likely caused by all points '
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+WARNING:root:Singular matrix. Likely caused by all points lying in an N-1 space.
+.
+======================================================================
+FAIL: test_semantic_anchor_does_not_use_city_level_name (test_spatial_pipeline.SpatialPipelineTest.test_semantic_anchor_does_not_use_city_level_name)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "D:\AAA_Edu\TagCloud\vite-project\fastify-backend\python_service\tests\test_spatial_pipeline.py", line 836, in test_semantic_anchor_does_not_use_city_level_name
+    self.assertGreater(len(hotspots), 0)
+    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+AssertionError: 0 not greater than 0
+
+----------------------------------------------------------------------
+Ran 37 tests in 1.446s
+
+FAILED (failures=1)

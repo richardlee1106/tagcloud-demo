@@ -7,7 +7,7 @@
           <span class="section-title">{{ copy.hotspots.title }} ({{ topHotspots.length }})</span>
           <span class="section-subtitle">{{ copy.hotspots.subtitle }}</span>
         </div>
-        <span class="toggle-arrow" :class="{ expanded: expandedSections.clusters }">&gt;</span>
+        <span class="toggle-arrow" :class="{ expanded: expandedSections.clusters }">></span>
       </button>
 
       <div v-if="expandedSections.clusters" class="section-body">
@@ -28,16 +28,28 @@
           :style="{ '--stagger': i }"
           @click="handleHotspotClick(h)"
         >
-          <span class="chip-rank">#{{ i + 1 }}</span>
-          <span class="chip-label">{{ formatHotspotLabel(h) }}</span>
-          <span class="chip-meta">{{ formatHotspotMeta(h) }}</span>
-          <span
-            v-if="hasBoundaryConfidence(h)"
-            class="chip-confidence"
-            :class="confidenceClass(resolveBoundaryConfidence(h))"
-          >
-            边界 {{ formatConfidencePercent(resolveBoundaryConfidence(h)) }}
-          </span>
+          <div class="chip-top-line">
+            <span class="chip-rank">#{{ i + 1 }}</span>
+            <span class="chip-label">{{ formatHotspotLabel(h) }}</span>
+            <span
+              v-if="hasBoundaryConfidence(h)"
+              class="chip-confidence"
+              :class="confidenceClass(resolveBoundaryConfidence(h))"
+            >
+              边界 {{ formatConfidencePercent(resolveBoundaryConfidence(h)) }}
+            </span>
+          </div>
+
+          <div class="chip-bottom-line">
+            <span class="chip-meta">{{ formatHotspotMeta(h) }}</span>
+            <span v-if="formatSemanticSummary(h)" class="chip-semantic">
+              {{ formatSemanticSummary(h) }}
+            </span>
+          </div>
+
+          <div v-if="buildHoverDetail(h)" class="chip-hover-panel">
+            {{ buildHoverDetail(h) }}
+          </div>
         </button>
       </div>
     </section>
@@ -49,7 +61,7 @@
           <span class="section-title">{{ copy.regions.title }} ({{ topRegions.length }})</span>
           <span class="section-subtitle">{{ copy.regions.subtitle }}</span>
         </div>
-        <span class="toggle-arrow" :class="{ expanded: expandedSections.regions }">&gt;</span>
+        <span class="toggle-arrow" :class="{ expanded: expandedSections.regions }">></span>
       </button>
 
       <div v-if="expandedSections.regions" class="section-body">
@@ -70,19 +82,31 @@
           :style="{ '--stagger': i }"
           @click="handleRegionClick(vr)"
         >
-          <span class="chip-rank">#{{ i + 1 }}</span>
-          <span class="chip-label">{{ formatRegionLabel(vr) }}</span>
-          <span v-if="vr.membership?.score" class="chip-confidence" :class="confidenceClass(vr.membership.score)">
-            {{ Math.round(vr.membership.score * 100) }}%
-          </span>
-          <span
-            v-if="hasBoundaryConfidence(vr)"
-            class="chip-boundary-confidence"
-            :class="confidenceClass(resolveBoundaryConfidence(vr))"
-          >
-            边界 {{ formatConfidencePercent(resolveBoundaryConfidence(vr)) }}
-          </span>
-          <span v-if="vr.membership?.level" class="chip-level">{{ levelLabel(vr.membership.level) }}</span>
+          <div class="chip-top-line">
+            <span class="chip-rank">#{{ i + 1 }}</span>
+            <span class="chip-label">{{ formatRegionLabel(vr) }}</span>
+            <span v-if="vr.membership?.score" class="chip-confidence" :class="confidenceClass(vr.membership.score)">
+              {{ Math.round(vr.membership.score * 100) }}%
+            </span>
+            <span
+              v-if="hasBoundaryConfidence(vr)"
+              class="chip-boundary-confidence"
+              :class="confidenceClass(resolveBoundaryConfidence(vr))"
+            >
+              边界 {{ formatConfidencePercent(resolveBoundaryConfidence(vr)) }}
+            </span>
+            <span v-if="vr.membership?.level" class="chip-level">{{ levelLabel(vr.membership.level) }}</span>
+          </div>
+
+          <div class="chip-bottom-line">
+            <span v-if="formatSemanticSummary(vr)" class="chip-semantic">
+              {{ formatSemanticSummary(vr) }}
+            </span>
+          </div>
+
+          <div v-if="buildHoverDetail(vr)" class="chip-hover-panel">
+            {{ buildHoverDetail(vr) }}
+          </div>
         </button>
       </div>
     </section>
@@ -94,8 +118,9 @@
           <span class="section-title">{{ copy.fuzzy.title }} ({{ fuzzyRegions.length }})</span>
           <span class="section-subtitle">{{ copy.fuzzy.subtitle }}</span>
         </div>
-        <span class="toggle-arrow" :class="{ expanded: expandedSections.fuzzy }">&gt;</span>
+        <span class="toggle-arrow" :class="{ expanded: expandedSections.fuzzy }">></span>
       </button>
+
       <div v-if="expandedSections.fuzzy" class="section-body">
         <div class="fuzzy-summary">
           <span v-for="level in fuzzyLevelSummary" :key="level.key" class="fuzzy-level-badge" :class="level.key">
@@ -104,11 +129,9 @@
         </div>
         <div v-if="fuzzyBoundaryConfidence.avg !== null" class="confidence-row">
           <span class="fuzzy-confidence-badge" :class="confidenceClass(fuzzyBoundaryConfidence.avg)">
-            边界可信度 {{ formatConfidencePercent(fuzzyBoundaryConfidence.avg) }}
+            边界可信 {{ formatConfidencePercent(fuzzyBoundaryConfidence.avg) }}
           </span>
-          <span class="confidence-model-note">
-            模型 {{ confidenceModel || 'composite_v1' }}
-          </span>
+          <span class="confidence-model-note">模型 {{ confidenceModel || 'composite_v1' }}</span>
         </div>
       </div>
     </section>
@@ -145,33 +168,33 @@ const emit = defineEmits(['locate', 'show-boundary', 'ask-followup'])
 
 const copy = {
   hotspots: {
-    icon: '\uD83D\uDD25',
-    title: '\u9AD8\u6D3B\u529B\u7247\u533A',
-    subtitle: '\u6309 POI \u5BC6\u5EA6\u805A\u7C7B\uFF0C\u7528\u4E8E\u8BC6\u522B\u4EBA\u6D41/\u4E1A\u6001\u805A\u96C6\u70B9',
+    icon: '🔥',
+    title: '高活力片区',
+    subtitle: '按 POI 密度聚类，识别人流/业态聚集核心',
     actions: {
-      cause: '\u8FFD\u95EE\u6210\u56E0',
-      opportunity: '\u627E\u673A\u4F1A\u70B9'
+      cause: '追问成因',
+      opportunity: '找机会点'
     }
   },
   regions: {
-    icon: '\uD83E\uDDED',
-    title: '\u4E3B\u5BFC\u4E1A\u6001\u7247\u533A',
-    subtitle: '\u6309\u4E3B\u5BFC\u7C7B\u522B\u4E0E\u7A7A\u95F4\u8FDE\u7EED\u6027\u8BC6\u522B\u7684\u53EF\u89E3\u91CA\u5206\u533A',
+    icon: '🧭',
+    title: '主导业态片区',
+    subtitle: '按主导类别与空间连续性构建可解释分区',
     actions: {
-      compare: '\u505A\u76F8\u90BB\u5BF9\u6BD4',
-      strategy: '\u7ED9\u7ECF\u8425\u5EFA\u8BAE'
+      compare: '做相邻对比',
+      strategy: '给经营建议'
     }
   },
   fuzzy: {
-    icon: '\uD83C\uDF2B\uFE0F',
-    title: '\u6E10\u53D8\u8FB9\u754C',
-    subtitle: '\u5C55\u793A\u6838\u5FC3-\u8FC7\u6E21-\u8FB9\u7F18\u5C42\u7EA7'
+    icon: '🌫️',
+    title: '渐变边界',
+    subtitle: '展示核心-过渡-边缘层级'
   },
   boundary: {
-    icon: '\uD83D\uDDFA\uFE0F',
-    title: '\u5206\u6790\u8FB9\u754C',
-    subtitle: '\u67E5\u770B\u672C\u8F6E\u5BF9\u8BDD\u7684\u7A7A\u95F4\u7EA6\u675F\u8303\u56F4',
-    action: '\u663E\u793A'
+    icon: '🗺️',
+    title: '分析边界',
+    subtitle: '查看本轮对话的空间约束范围',
+    action: '显示'
   }
 }
 
@@ -193,7 +216,7 @@ const hasEvidence = computed(() => {
 const topHotspots = computed(() => {
   if (!Array.isArray(props.clusters?.hotspots)) return []
   return [...props.clusters.hotspots]
-    .sort((a, b) => (Number(b?.poiCount || b?.poi_count || 0) - Number(a?.poiCount || a?.poi_count || 0)))
+    .sort((a, b) => Number(b?.poiCount || b?.poi_count || 0) - Number(a?.poiCount || a?.poi_count || 0))
     .slice(0, 5)
 })
 
@@ -208,13 +231,13 @@ const fuzzyLevelSummary = computed(() => {
   if (!props.fuzzyRegions?.length) return []
   const counts = { core: 0, transition: 0, periphery: 0 }
   props.fuzzyRegions.forEach((fr) => {
-    const level = fr.level || 'transition'
+    const level = fr.level || fr.membership?.level || 'transition'
     if (counts[level] !== undefined) counts[level] += 1
   })
   return [
-    { key: 'core', label: '\u6838\u5FC3', count: counts.core },
-    { key: 'transition', label: '\u8FC7\u6E21', count: counts.transition },
-    { key: 'periphery', label: '\u8FB9\u7F18', count: counts.periphery }
+    { key: 'core', label: '核心', count: counts.core },
+    { key: 'transition', label: '过渡', count: counts.transition },
+    { key: 'periphery', label: '边缘', count: counts.periphery }
   ].filter((item) => item.count > 0)
 })
 
@@ -255,24 +278,127 @@ function toggleSection(key) {
 
 function formatHotspotLabel(hotspot) {
   const categories = hotspot?.dominantCategories || hotspot?.dominant_categories
-  const category = Array.isArray(categories) && categories[0]?.category
-    ? categories[0].category
-    : '\u7EFC\u5408'
-  return `${category}\u6D3B\u529B\u5E26`
+  const category = Array.isArray(categories) && categories[0]?.category ? categories[0].category : '综合'
+  return `${category}活力带`
 }
 
 function formatHotspotMeta(hotspot) {
   const poiCount = Number(hotspot?.poiCount || hotspot?.poi_count || 0)
   const density = Number(hotspot?.density || 0)
   if (density > 0) {
-    return `${poiCount} POI · \u5BC6\u5EA6 ${density.toFixed(2)}`
+    return `${poiCount} POI / 密度 ${density.toFixed(2)}`
   }
   return `${poiCount} POI`
 }
 
 function formatRegionLabel(region) {
-  const raw = region?.name || region?.dominant_category || region?.theme || '\u533A\u57DF'
-  return String(raw).replace(/\u533A\u57DF$/u, '') + '\u7247\u533A'
+  const raw = region?.name || region?.dominant_category || region?.theme || '区域'
+  return String(raw).replace(/区域$/u, '') + '片区'
+}
+
+function resolveSemanticAnchorName(entity) {
+  const raw = entity?.semantic_anchor?.name || entity?.semanticAnchor?.name || ''
+  return String(raw || '').trim()
+}
+
+function resolveNicheType(entity) {
+  const raw = entity?.niche_profile?.niche_type || entity?.nicheProfile?.nicheType || ''
+  return String(raw || '').trim().toLowerCase()
+}
+
+function resolveNicheConfidence(entity) {
+  const candidates = [entity?.niche_profile?.confidence, entity?.nicheProfile?.confidence]
+  for (const candidate of candidates) {
+    const value = Number(candidate)
+    if (Number.isFinite(value)) {
+      if (value < 0) return 0
+      if (value > 1) return 1
+      return value
+    }
+  }
+  return null
+}
+
+function nicheTypeLabel(nicheType) {
+  const map = {
+    ecology: '生态',
+    commerce: '商业',
+    education: '科教',
+    mixed: '复合'
+  }
+  return map[nicheType] || nicheType || '复合'
+}
+
+function resolveSemanticReasonText(entity) {
+  const reasoning = entity?.semantic_reasoning || entity?.semanticReasoning
+  const evidence = Array.isArray(reasoning?.evidence) ? reasoning.evidence : []
+  if (!evidence.length) return ''
+
+  const typeSet = new Set(
+    evidence
+      .map((item) => String(item?.type || '').trim())
+      .filter(Boolean)
+  )
+
+  const parts = []
+  if (typeSet.has('anchor')) parts.push('关键词')
+  if (typeSet.has('landuse')) parts.push('用地')
+  if (typeSet.has('water_context')) parts.push('水域')
+
+  return parts.length ? `约束 ${parts.join('/')}` : ''
+}
+
+function formatSemanticSummary(entity) {
+  const parts = []
+  const anchorName = resolveSemanticAnchorName(entity)
+  if (anchorName) {
+    parts.push(`锚点 ${anchorName}`)
+  }
+
+  const nicheType = resolveNicheType(entity)
+  if (nicheType) {
+    const nicheConfidence = resolveNicheConfidence(entity)
+    if (nicheConfidence === null) {
+      parts.push(`生态位 ${nicheTypeLabel(nicheType)}`)
+    } else {
+      parts.push(`生态位 ${nicheTypeLabel(nicheType)} ${formatConfidencePercent(nicheConfidence)}`)
+    }
+  }
+
+  const reasonText = resolveSemanticReasonText(entity)
+  if (reasonText) {
+    parts.push(reasonText)
+  }
+
+  return parts.join(' / ')
+}
+
+function buildHoverDetail(entity) {
+  if (!entity || typeof entity !== 'object') return ''
+  const quality = entity.boundary_quality || entity.boundaryQuality || {}
+  const generation = entity.boundary_generation || entity.boundaryGeneration || {}
+  const parts = []
+
+  const qualityScore = Number(quality.quality_score)
+  if (Number.isFinite(qualityScore)) {
+    parts.push(`质量 ${formatConfidencePercent(qualityScore)}`)
+  }
+  const roadAlignment = Number(quality.road_alignment_score)
+  if (Number.isFinite(roadAlignment)) {
+    parts.push(`路网贴合 ${formatConfidencePercent(roadAlignment)}`)
+  }
+  const landuseAlignment = Number(quality.landuse_alignment_score)
+  if (Number.isFinite(landuseAlignment)) {
+    parts.push(`用地贴合 ${formatConfidencePercent(landuseAlignment)}`)
+  }
+
+  const refinement = generation.refinement || {}
+  if (refinement?.model) {
+    const appliedText = refinement.applied ? '已应用' : '未应用'
+    parts.push(`后处理 ${appliedText}`)
+  }
+
+  return parts.join(' · ')
 }
 
 function confidenceClass(score) {
@@ -284,7 +410,7 @@ function confidenceClass(score) {
 }
 
 function levelLabel(level) {
-  const map = { core: '\u6838\u5FC3', transition: '\u8FC7\u6E21', periphery: '\u8FB9\u7F18' }
+  const map = { core: '核心', transition: '过渡', periphery: '边缘' }
   return map[level] || level
 }
 
@@ -379,61 +505,65 @@ function emitFollowup(prompt) {
 
 function askHotspotCause() {
   const top = topHotspots.value[0]
-  const label = top ? formatHotspotLabel(top) : '\u9AD8\u6D3B\u529B\u7247\u533A'
-  emitFollowup(`\u8BF7\u89E3\u91CA\u300C${label}\u300D\u4E3A\u4EC0\u4E48\u4F1A\u6210\u4E3A\u6D3B\u529B\u70ED\u70B9\uFF0C\u5E76\u7ED9\u51FA3\u4E2A\u53EF\u9A8C\u8BC1\u6307\u6807\u3002`)
+  const label = top ? formatHotspotLabel(top) : '高活力片区'
+  emitFollowup(`请解释「${label}」为什么会成为活力热点，并给出 3 个可验证指标。`)
 }
 
 function askHotspotOpportunity() {
   const top = topHotspots.value[0]
-  const label = top ? formatHotspotLabel(top) : '\u9AD8\u6D3B\u529B\u7247\u533A'
-  emitFollowup(`\u56F4\u7ED5\u300C${label}\u300D\u5E2E\u6211\u627E3\u4E2A\u4F4E\u4F9B\u7ED9\u9AD8\u9700\u6C42\u7684\u673A\u4F1A\u70B9\uFF0C\u8BF4\u660E\u539F\u56E0\u548C\u9002\u5408\u4E1A\u6001\u3002`)
+  const label = top ? formatHotspotLabel(top) : '高活力片区'
+  emitFollowup(`围绕「${label}」帮我找 3 个低供给高需求的机会点，说明原因和适合业态。`)
 }
 
 function askRegionCompare() {
   const [first, second] = topRegions.value
-  const firstName = first ? formatRegionLabel(first) : '\u7247\u533AA'
-  const secondName = second ? formatRegionLabel(second) : '\u7247\u533AB'
-  emitFollowup(`\u8BF7\u5BF9\u6BD4\u300C${firstName}\u300D\u548C\u300C${secondName}\u300D\u7684\u4E1A\u6001\u7ED3\u6784\u5DEE\u5F02\u4E0E\u6F5C\u5728\u98CE\u9669\u3002`)
+  const firstName = first ? formatRegionLabel(first) : '片区 A'
+  const secondName = second ? formatRegionLabel(second) : '片区 B'
+  emitFollowup(`请对比「${firstName}」和「${secondName}」的业态结构差异与潜在风险。`)
 }
 
 function askRegionStrategy() {
   const top = topRegions.value[0]
-  const name = top ? formatRegionLabel(top) : '\u4E3B\u5BFC\u4E1A\u6001\u7247\u533A'
-  emitFollowup(`\u9488\u5BF9\u300C${name}\u300D\u8F93\u51FA\u4E00\u4EFD\u53EF\u6267\u884C\u7684\u7ECF\u8425\u7B56\u7565\uFF1A\u76EE\u6807\u4EBA\u7FA4\u3001\u4E1A\u6001\u7EC4\u5408\u3001\u6295\u5165\u4F18\u5148\u7EA7\u3002`)
+  const name = top ? formatRegionLabel(top) : '主导业态片区'
+  emitFollowup(`针对「${name}」输出一份可执行经营策略：目标人群、业态组合、投入优先级。`)
 }
 </script>
 
 <style scoped>
 .spatial-evidence-card {
-  margin: 8px 0;
-  border-radius: 10px;
-  background: rgba(59, 130, 246, 0.08);
-  border: 1px solid rgba(59, 130, 246, 0.2);
+  margin: 10px 0;
+  border-radius: 16px;
+  border: 1px solid rgba(14, 116, 144, 0.24);
+  background:
+    radial-gradient(120% 140% at -5% -10%, rgba(14, 165, 233, 0.22), rgba(14, 165, 233, 0) 55%),
+    radial-gradient(120% 160% at 100% 0%, rgba(6, 182, 212, 0.2), rgba(6, 182, 212, 0) 62%),
+    linear-gradient(155deg, rgba(15, 23, 42, 0.94), rgba(17, 24, 39, 0.94));
+  box-shadow: 0 12px 36px rgba(2, 6, 23, 0.35);
+  color: rgba(241, 245, 249, 0.95);
   overflow: hidden;
-  font-size: 12px;
+  font-family: "Noto Sans SC", "Source Han Sans SC", "PingFang SC", sans-serif;
 }
 
 .evidence-section + .evidence-section {
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid rgba(148, 163, 184, 0.2);
 }
 
 .section-header {
   width: 100%;
-  box-sizing: border-box;
   border: 0;
   background: transparent;
+  color: inherit;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 9px 10px;
+  gap: 10px;
+  padding: 11px 12px;
   cursor: pointer;
   text-align: left;
-  color: inherit;
-  transition: background 0.2s ease;
+  transition: background 0.24s ease;
 }
 
 .section-header:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(15, 118, 110, 0.12);
 }
 
 .section-header.static {
@@ -449,16 +579,10 @@ function askRegionStrategy() {
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   column-gap: 8px;
-  padding-right: 10px;
-  overflow: hidden;
-}
-
-.boundary-section .section-title-group {
-  min-width: 0;
 }
 
 .section-icon {
-  font-size: 14px;
+  font-size: 15px;
   line-height: 1;
 }
 
@@ -466,31 +590,32 @@ function askRegionStrategy() {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
   min-width: 0;
 }
 
 .section-title {
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.9);
+  font-size: 13px;
+  font-weight: 700;
+  color: rgba(248, 250, 252, 0.98);
 }
 
 .section-subtitle {
-  color: rgba(255, 255, 255, 0.55);
+  color: rgba(186, 230, 253, 0.85);
   font-size: 11px;
-  line-height: 1.3;
+  line-height: 1.34;
   overflow-wrap: anywhere;
 }
 
 .section-subtitle.boundary-model {
+  color: rgba(125, 211, 252, 0.95);
   font-size: 10px;
-  color: rgba(125, 211, 252, 0.85);
 }
 
 .toggle-arrow {
-  color: rgba(255, 255, 255, 0.45);
-  transition: transform 0.2s ease;
+  color: rgba(186, 230, 253, 0.72);
   font-size: 11px;
+  transition: transform 0.2s ease;
 }
 
 .toggle-arrow.expanded {
@@ -498,108 +623,174 @@ function askRegionStrategy() {
 }
 
 .section-body {
-  padding: 5px 10px 10px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
+  padding: 8px 10px 12px;
+  display: grid;
+  gap: 8px;
 }
 
 .section-actions {
-  width: 100%;
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-bottom: 2px;
 }
 
 .mini-action-btn {
-  border: 1px solid rgba(96, 165, 250, 0.45);
-  background: rgba(96, 165, 250, 0.12);
-  color: rgba(219, 234, 254, 0.95);
   border-radius: 999px;
+  border: 1px solid rgba(45, 212, 191, 0.42);
+  background: rgba(13, 148, 136, 0.16);
+  color: rgba(204, 251, 241, 0.96);
   font-size: 11px;
-  padding: 2px 8px;
+  line-height: 1.2;
+  padding: 4px 10px;
   cursor: pointer;
-  transition: transform 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+  transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease;
 }
 
 .mini-action-btn:hover {
   transform: translateY(-1px);
-  background: rgba(96, 165, 250, 0.22);
-  border-color: rgba(147, 197, 253, 0.85);
+  border-color: rgba(94, 234, 212, 0.82);
+  background: rgba(13, 148, 136, 0.28);
 }
 
 .hotspot-chip,
 .region-chip {
-  border: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 4px 9px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.1);
+  position: relative;
+  width: 100%;
+  border: 1px solid rgba(56, 189, 248, 0.24);
+  background: linear-gradient(145deg, rgba(30, 41, 59, 0.72), rgba(15, 23, 42, 0.8));
   color: inherit;
+  text-align: left;
+  border-radius: 12px;
+  padding: 9px 10px 10px;
   cursor: pointer;
-  transition: background 0.18s ease, transform 0.18s ease;
-  animation: chipFadeIn 0.28s ease both;
-  animation-delay: calc(var(--stagger, 0) * 40ms);
+  display: grid;
+  gap: 6px;
+  overflow: hidden;
+  transition: border-color 0.22s ease, transform 0.22s ease, box-shadow 0.22s ease;
+  animation: chipFadeIn 0.34s ease both;
+  animation-delay: calc(var(--stagger, 0) * 45ms);
+}
+
+.hotspot-chip::before,
+.region-chip::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(120deg, rgba(45, 212, 191, 0.14), rgba(14, 165, 233, 0.04) 45%, rgba(14, 116, 144, 0));
+  opacity: 0;
+  transition: opacity 0.2s ease;
 }
 
 .hotspot-chip:hover,
 .region-chip:hover {
-  background: rgba(59, 130, 246, 0.26);
-  transform: translateY(-1px);
+  transform: translateY(-2px);
+  border-color: rgba(45, 212, 191, 0.58);
+  box-shadow: 0 10px 24px rgba(8, 47, 73, 0.42);
+}
+
+.hotspot-chip:hover::before,
+.region-chip:hover::before {
+  opacity: 1;
+}
+
+.chip-top-line,
+.chip-bottom-line {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .chip-rank {
   font-size: 10px;
-  font-weight: 700;
-  color: rgba(191, 219, 254, 0.95);
+  font-weight: 800;
+  color: rgba(103, 232, 249, 0.95);
+  background: rgba(6, 182, 212, 0.2);
+  border: 1px solid rgba(34, 211, 238, 0.35);
+  border-radius: 999px;
+  padding: 1px 6px;
 }
 
 .chip-label {
-  color: rgba(255, 255, 255, 0.9);
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(240, 249, 255, 0.98);
 }
 
 .chip-meta {
-  color: rgba(255, 255, 255, 0.52);
   font-size: 11px;
+  color: rgba(148, 230, 255, 0.9);
 }
 
-.chip-confidence {
+.chip-semantic {
   font-size: 10px;
-  padding: 1px 4px;
-  border-radius: 7px;
-  font-weight: 700;
+  color: rgba(204, 251, 241, 0.96);
+  background: rgba(13, 148, 136, 0.22);
+  border: 1px solid rgba(45, 212, 191, 0.4);
+  border-radius: 8px;
+  padding: 2px 7px;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
+.chip-confidence,
 .chip-boundary-confidence {
   font-size: 10px;
-  padding: 1px 5px;
-  border-radius: 7px;
   font-weight: 700;
-  background: rgba(99, 102, 241, 0.2);
-  color: #c4b5fd;
+  border-radius: 8px;
+  padding: 2px 6px;
 }
 
-.chip-confidence.high {
-  background: rgba(34, 197, 94, 0.22);
-  color: #4ade80;
+.chip-confidence.high,
+.chip-boundary-confidence.high {
+  background: rgba(34, 197, 94, 0.2);
+  color: #86efac;
 }
 
-.chip-confidence.medium {
-  background: rgba(234, 179, 8, 0.24);
-  color: #facc15;
+.chip-confidence.medium,
+.chip-boundary-confidence.medium {
+  background: rgba(251, 191, 36, 0.24);
+  color: #fde68a;
 }
 
-.chip-confidence.low {
-  background: rgba(239, 68, 68, 0.25);
-  color: #f87171;
+.chip-confidence.low,
+.chip-boundary-confidence.low {
+  background: rgba(239, 68, 68, 0.22);
+  color: #fca5a5;
 }
 
 .chip-level {
   font-size: 10px;
-  color: rgba(255, 255, 255, 0.45);
+  color: rgba(226, 232, 240, 0.82);
+}
+
+.chip-hover-panel {
+  position: absolute;
+  right: 10px;
+  top: calc(100% + 6px);
+  max-width: min(84vw, 320px);
+  border-radius: 10px;
+  border: 1px solid rgba(45, 212, 191, 0.34);
+  background: rgba(2, 44, 34, 0.94);
+  color: rgba(204, 251, 241, 0.95);
+  font-size: 10px;
+  line-height: 1.4;
+  padding: 7px 8px;
+  z-index: 3;
+  opacity: 0;
+  transform: translateY(5px);
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.hotspot-chip:hover .chip-hover-panel,
+.region-chip:hover .chip-hover-panel {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 .fuzzy-summary {
@@ -608,21 +799,39 @@ function askRegionStrategy() {
   flex-wrap: wrap;
 }
 
+.fuzzy-level-badge {
+  font-size: 11px;
+  border-radius: 999px;
+  padding: 3px 9px;
+}
+
+.fuzzy-level-badge.core {
+  background: rgba(20, 184, 166, 0.24);
+  color: #99f6e4;
+}
+
+.fuzzy-level-badge.transition {
+  background: rgba(251, 191, 36, 0.22);
+  color: #fde68a;
+}
+
+.fuzzy-level-badge.periphery {
+  background: rgba(148, 163, 184, 0.22);
+  color: #d1d5db;
+}
+
 .confidence-row {
-  width: 100%;
-  margin-top: 6px;
   display: flex;
-  align-items: center;
-  gap: 8px;
   flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
 }
 
 .fuzzy-confidence-badge {
   font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 10px;
-  background: rgba(148, 163, 184, 0.2);
-  color: #cbd5e1;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 4px 10px;
 }
 
 .fuzzy-confidence-badge.high {
@@ -631,66 +840,49 @@ function askRegionStrategy() {
 }
 
 .fuzzy-confidence-badge.medium {
-  background: rgba(234, 179, 8, 0.2);
+  background: rgba(251, 191, 36, 0.22);
   color: #fde68a;
 }
 
 .fuzzy-confidence-badge.low {
-  background: rgba(239, 68, 68, 0.18);
+  background: rgba(239, 68, 68, 0.2);
   color: #fda4af;
 }
 
 .confidence-model-note {
   font-size: 10px;
-  color: rgba(186, 230, 253, 0.72);
-}
-
-.fuzzy-level-badge {
-  padding: 2px 8px;
-  border-radius: 10px;
-  font-size: 11px;
-}
-
-.fuzzy-level-badge.core {
-  background: rgba(99, 102, 241, 0.25);
-  color: #a5b4fc;
-}
-
-.fuzzy-level-badge.transition {
-  background: rgba(234, 179, 8, 0.2);
-  color: #fde68a;
-}
-
-.fuzzy-level-badge.periphery {
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.58);
+  color: rgba(186, 230, 253, 0.86);
 }
 
 .boundary-btn {
-  padding: 3px 10px;
-  border-radius: 999px;
-  border: 1px solid rgba(96, 165, 250, 0.55);
-  background: rgba(96, 165, 250, 0.15);
-  color: #bfdbfe;
+  border: 1px solid rgba(34, 211, 238, 0.56);
+  background: rgba(6, 182, 212, 0.2);
+  color: rgba(224, 242, 254, 0.98);
   font-size: 11px;
-  line-height: 1.2;
+  border-radius: 999px;
+  padding: 4px 11px;
   cursor: pointer;
-  transition: background 0.2s ease;
-  justify-self: end;
-  max-width: 100%;
-  min-width: 56px;
-  box-sizing: border-box;
-  flex-shrink: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  transition: background 0.2s ease, border-color 0.2s ease;
 }
 
 .boundary-btn:hover {
-  background: rgba(96, 165, 250, 0.28);
+  background: rgba(6, 182, 212, 0.34);
+  border-color: rgba(103, 232, 249, 0.88);
 }
 
-@media (max-width: 520px) {
+@media (max-width: 640px) {
+  .spatial-evidence-card {
+    border-radius: 12px;
+  }
+
+  .section-header {
+    padding: 9px 10px;
+  }
+
+  .section-body {
+    padding: 7px 8px 10px;
+  }
+
   .boundary-section .section-header.static {
     grid-template-columns: auto minmax(0, 1fr);
     row-gap: 6px;
@@ -705,7 +897,7 @@ function askRegionStrategy() {
 @keyframes chipFadeIn {
   from {
     opacity: 0;
-    transform: translateY(4px);
+    transform: translateY(6px);
   }
   to {
     opacity: 1;

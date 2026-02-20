@@ -1,0 +1,20 @@
+[PIPELINE_DEBUG] candidates_json present: False
+[PIPELINE_DEBUG] payload_candidates count: 0
+[PIPELINE_DEBUG] py_data_source: python
+[PIPELINE_DEBUG] spatial_context: {'mode': 'Viewport', 'viewport': [113.95, 30.4, 114.45, 30.88]}
+[PIPELINE_DEBUG] Using repository.fetch_pois (PostGIS)
+[PIPELINE_DEBUG] fetch_pois returned 80 POIs
+F
+======================================================================
+FAIL: test_semantic_anchor_does_not_use_city_level_name (tests.test_spatial_pipeline.SpatialPipelineTest.test_semantic_anchor_does_not_use_city_level_name)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "D:\AAA_Edu\TagCloud\vite-project\fastify-backend\python_service\tests\test_spatial_pipeline.py", line 836, in test_semantic_anchor_does_not_use_city_level_name
+    self.assertGreater(len(hotspots), 0)
+    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+AssertionError: 0 not greater than 0
+
+----------------------------------------------------------------------
+Ran 1 test in 0.004s
+
+FAILED (failures=1)

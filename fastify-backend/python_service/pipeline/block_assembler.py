@@ -21,31 +21,46 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from shapely.geometry import MultiPoint, Point, Polygon, mapping, shape
 from shapely.ops import unary_union
-
-from algorithms.hdbscan_cluster import cluster_points
+from shapely.strtree import STRtree
 
 
 # ────────────────────────────────────────────────────────────
 # 低置信度名称黑名单（不适合作为"片区名"的 POI 名称/AOI 名称关键词）
 # ────────────────────────────────────────────────────────────
-_LOW_CONFIDENCE_NAME_KEYWORDS: Tuple[str, ...] = (
-    "停车场", "公厕", "公共厕所", "卫生间", "垃圾站", "垃圾回收",
+_LOW_CONFIDENCE_NAME_KEYWORDS: frozenset = frozenset((
+    "停车场", "公厠", "公共厠所", "卫生间", "垃圾站", "垃圾回收",
     "配电房", "变电站", "水泵房", "泵站", "加油站",
     "居民楼", "住宅楼", "宿舍", "小区门卫", "保安室",
     "快递柜", "自动售货机", "ATM", "取款机",
     "停车位", "充电桩", "充电站",
     "公交站", "公交站台",
-)
+))
+
+# 宏观地名黑名单：省/市/区/历史区域名不应作为片区锨点
+_MACRO_GEO_NAMES: frozenset = frozenset((
+    # 省级
+    "湖北", "湖南", "广东", "江苏", "浙江", "山东", "四川", "河南", "河北",
+    "安徽", "福建", "江西", "陕西", "山西", "吉林", "辽宁", "云南", "贵州",
+    "甘肃", "青海", "内蒙古", "广西", "西藏", "新疆", "宁夏", "海南",
+    "黑龙江", "北京", "上海", "天津", "重庆",
+    # 武汉相关
+    "武汉", "武汉市", "汉口", "武昌", "汉阳",
+    "洪山", "青山", "江夏", "汉南", "硅口",
+    "东西湖", "武汉开发区", "光谷",
+    # 通用极宽泛的名称
+    "中国", "中华", "全国",
+    "有限公司", "股份", "集团",
+))
 
 # 低置信度 AOI type（不适合作为片区代表性类别的面类型）
-_LOW_CONFIDENCE_AOI_TYPES: Set[str] = {
+_LOW_CONFIDENCE_AOI_TYPES: frozenset = frozenset({
     "停车场", "水域", "居住区", "草地",
-}
+})
 
 # 低置信度 EULUC 用地类型
-_LOW_CONFIDENCE_LAND_TYPES: Set[str] = {
+_LOW_CONFIDENCE_LAND_TYPES: frozenset = frozenset({
     "居住用地", "河流湖泊",
-}
+})
 
 
 @dataclass
@@ -67,7 +82,7 @@ class ClusterDistrict:
 
 
 def _is_low_confidence_name(name: str) -> bool:
-    """判断名称是否命中低置信度黑名单。"""
+    """判断名称是否命中低置信度黑名单（含宏观地名过滤）。"""
     if not name:
         return True
     normalized = name.strip().lower()
@@ -78,6 +93,11 @@ def _is_low_confidence_name(name: str) -> bool:
         return True
     if normalized.replace(".", "").replace("-", "").isdigit():
         return True
+    # 宏观地名过滤
+    stripped = name.strip()
+    if stripped in _MACRO_GEO_NAMES:
+        return True
+    # 关键词过滤
     return any(kw in normalized for kw in _LOW_CONFIDENCE_NAME_KEYWORDS)
 
 
@@ -100,10 +120,10 @@ def _extract_dominant(values: List[str], blacklist: Set[str] | None = None) -> T
     return top, count
 
 
-def _extract_name_fragments(poi_names: List[str], *, min_len: int = 2, max_len: int = 6) -> Counter:
-    """从 POI 名称中提取 CJK 子串频次统计。"""
+def _extract_name_fragments(poi_names: List[str], *, min_len: int = 2, max_len: int = 6, max_names: int = 100) -> Counter:
+    """从 POI 名称中提取 CJK 子串频次统计，限制最多处理 max_names 个名称以避免大聚类性能问题。"""
     fragment_counter: Counter = Counter()
-    for raw_name in poi_names:
+    for raw_name in poi_names[:max_names]:
         if not raw_name:
             continue
         # 仅提取中文字符部分
@@ -114,7 +134,7 @@ def _extract_name_fragments(poi_names: List[str], *, min_len: int = 2, max_len: 
         for size in range(min_len, upper + 1):
             for start in range(0, len(cjk) - size + 1):
                 frag = cjk[start:start + size]
-                if not _is_low_confidence_name(frag):
+                if frag not in _LOW_CONFIDENCE_NAME_KEYWORDS:
                     fragment_counter[frag] += 1
     return fragment_counter
 
@@ -221,8 +241,9 @@ def assemble_block_boundaries(
         except Exception:
             continue
 
-    # 预构建 AOI 几何索引
-    aoi_geoms: List[Tuple[Polygon, str, str]] = []  # (polygon, name, type)
+    # 预构建 AOI 几何索引（使用 STRtree 加速回退查询）
+    aoi_polys: List[Polygon] = []
+    aoi_meta: List[Tuple[str, str]] = []  # (name, type)
     for aoi in osm_aoi_features:
         geojson_str = aoi.get("geometry_geojson")
         if not geojson_str:
@@ -231,12 +252,15 @@ def assemble_block_boundaries(
             geojson = json.loads(geojson_str) if isinstance(geojson_str, str) else geojson_str
             poly = shape(geojson)
             if poly.is_valid and not poly.is_empty:
-                aoi_geoms.append((poly, str(aoi.get("name", "")), str(aoi.get("type", ""))))
+                aoi_polys.append(poly)
+                aoi_meta.append((str(aoi.get("name", "")), str(aoi.get("type", ""))))
         except Exception:
             continue
+    aoi_tree = STRtree(aoi_polys) if aoi_polys else None
 
     # 预构建 EULUC 几何索引
-    euluc_geoms: List[Tuple[Polygon, str]] = []  # (polygon, land_type)
+    euluc_polys: List[Polygon] = []
+    euluc_types: List[str] = []
     for eu in euluc_features:
         geojson_str = eu.get("geometry_geojson")
         if not geojson_str:
@@ -245,9 +269,11 @@ def assemble_block_boundaries(
             geojson = json.loads(geojson_str) if isinstance(geojson_str, str) else geojson_str
             poly = shape(geojson)
             if poly.is_valid and not poly.is_empty:
-                euluc_geoms.append((poly, str(eu.get("land_type", ""))))
+                euluc_polys.append(poly)
+                euluc_types.append(str(eu.get("land_type", "")))
         except Exception:
             continue
+    euluc_tree = STRtree(euluc_polys) if euluc_polys else None
 
     # 按聚类分组
     unique_labels = sorted(set(lab for lab in cluster_labels if lab >= 0))
@@ -300,21 +326,23 @@ def assemble_block_boundaries(
                 except Exception:
                     pass
 
-        # ─── 策略 2：AOI 面回退 ───
-        if boundary_polygon is None:
+        # ─── 策略 2：AOI 面回退（使用 STRtree 空间索引加速）───
+        if boundary_polygon is None and aoi_tree is not None:
             centroid = MultiPoint(coords).centroid
-            for aoi_poly, aoi_name, aoi_type in aoi_geoms:
-                if aoi_poly.contains(centroid):
-                    boundary_polygon = aoi_poly
+            candidate_indices = aoi_tree.query(centroid)
+            for idx in candidate_indices:
+                if aoi_polys[idx].contains(centroid):
+                    boundary_polygon = aoi_polys[idx]
                     boundary_method = "aoi_fallback_v5"
                     break
 
-        # ─── 策略 3：EULUC 面回退 ───
-        if boundary_polygon is None:
-            centroid = MultiPoint(coords).centroid
-            for eu_poly, eu_type in euluc_geoms:
-                if eu_poly.contains(centroid):
-                    boundary_polygon = eu_poly
+        # ─── 策略 3：EULUC 面回退（使用 STRtree 空间索引加速）───
+        if boundary_polygon is None and euluc_tree is not None:
+            centroid = MultiPoint(coords).centroid if not boundary_polygon else centroid
+            candidate_indices = euluc_tree.query(centroid)
+            for idx in candidate_indices:
+                if euluc_polys[idx].contains(centroid):
+                    boundary_polygon = euluc_polys[idx]
                     boundary_method = "euluc_fallback_v5"
                     break
 
