@@ -1,4 +1,5 @@
-"""Python spatial compute pipeline."""
+# -*- coding: utf-8 -*-
+"""Python 空间计算管线。"""
 
 from __future__ import annotations
 
@@ -7,12 +8,23 @@ import math
 import sys
 from collections import Counter, defaultdict
 from dataclasses import asdict
+from numbers import Integral
 from typing import Any, Dict, Iterable, Iterator, List, Tuple
 
 from shapely.geometry import MultiPoint, Point, Polygon, mapping, shape
 from shapely.prepared import prep
+from shapely.strtree import STRtree
 
 from algorithms.alpha_shape import build_alpha_shape
+from algorithms.geo_metrics import (
+    bbox_area_m2,
+    haversine_km,
+    meters_per_degree_lat,
+    meters_per_degree_lon,
+    nearest_point_and_distance_m,
+    polygon_area_km2,
+    polygon_perimeter_km,
+)
 from algorithms.direction_filter import filter_pois_by_direction, resolve_direction_from_query_plan
 from algorithms.h3_aggregate import aggregate_pois_h3
 from algorithms.graph_reasoning import analyze_spatial_graph
@@ -20,10 +32,21 @@ from algorithms.hdbscan_cluster import cluster_points
 from algorithms.membership import compute_membership
 from algorithms.region_comparison import analyze_region_set, compute_region_comparison
 from db.repository import POIRepository
+from pipeline import (
+    boundary_builder,
+    confidence_scorer,
+    context_loader,
+    poi_quality_scorer,
+    result_assembler,
+    semantic_reasoner,
+    self_validator,
+    spatial_knowledge_graph,
+    vlm_reviewer,
+)
 
 
 def _safe_json_loads(raw: Any, fallback: Any) -> Any:
-    """瀹夊叏 JSON 瑙ｆ瀽锛岃В鏋愬け璐ヨ繑鍥為粯璁ゅ€笺€?"""
+    """注释说明。"""
     if raw is None:
         return fallback
     if isinstance(raw, (dict, list)):
@@ -38,7 +61,7 @@ def _safe_json_loads(raw: Any, fallback: Any) -> Any:
 
 
 def _category_of(poi: Dict[str, Any]) -> str:
-    """鎻愬彇 POI 涓荤被鍒瓧娈点€?"""
+    """注释说明。"""
     return (
         poi.get("category_small")
         or poi.get("category_mid")
@@ -49,19 +72,12 @@ def _category_of(poi: Dict[str, Any]) -> str:
 
 
 def _calc_bbox_area(points: Iterable[Tuple[float, float]]) -> float:
-    """鎸夊寘鍥寸洅浼扮畻闈㈢Н锛坢虏锛夈€?"""
-    xs = [x for x, _ in points]
-    ys = [y for _, y in points]
-    if not xs or not ys:
-        return 0.0
-
-    width = (max(xs) - min(xs)) * 111_320.0
-    height = (max(ys) - min(ys)) * 111_320.0
-    return max(0.0, width * height)
+    """注释说明。"""
+    return bbox_area_m2(points)
 
 
 def _dynamic_h3_resolution(area_km2: float) -> int:
-    """鎸夐潰绉槧灏勫姩鎬?H3 鍒嗚鲸鐜囥€?"""
+    """注释说明。"""
     if area_km2 < 1:
         return 10
     if area_km2 < 5:
@@ -74,7 +90,7 @@ def _dynamic_h3_resolution(area_km2: float) -> int:
 
 
 def _extract_area_km2(spatial_context: Dict[str, Any]) -> float:
-    """浠庤姹備笂涓嬫枃浼扮畻鏌ヨ鑼冨洿闈㈢Н锛坘m虏锛夈€?"""
+    """注释说明。"""
     mode = str(spatial_context.get("mode", "")).lower()
 
     if mode == "circle" and spatial_context.get("radius"):
@@ -87,15 +103,16 @@ def _extract_area_km2(spatial_context: Dict[str, Any]) -> float:
             min_lon, min_lat, max_lon, max_lat = map(float, viewport[:4])
         except Exception:
             return 0.0
-        width = abs(max_lon - min_lon) * 111.32
-        height = abs(max_lat - min_lat) * 111.32
-        return max(0.0, width * height)
+        mean_lat = (max_lat + min_lat) * 0.5
+        width_km = abs(max_lon - min_lon) * meters_per_degree_lon(mean_lat) / 1000.0
+        height_km = abs(max_lat - min_lat) * meters_per_degree_lat(mean_lat) / 1000.0
+        return max(0.0, width_km * height_km)
 
     return 0.0
 
 
 def _to_float(value: Any) -> float | None:
-    """Safe float conversion helper."""
+    """注释说明。"""
     try:
         return float(value)
     except (TypeError, ValueError):
@@ -103,7 +120,7 @@ def _to_float(value: Any) -> float | None:
 
 
 def _normalize_payload_poi(raw: Any) -> Dict[str, Any] | None:
-    """Normalize payload POI into repository-compatible shape."""
+    """注释说明。"""
     if not isinstance(raw, dict):
         return None
 
@@ -147,7 +164,7 @@ def _normalize_payload_poi(raw: Any) -> Dict[str, Any] | None:
 
 
 def _normalize_payload_candidates(raw_candidates: Any) -> List[Dict[str, Any]]:
-    """Parse gRPC candidates_json and discard invalid points."""
+    """注释说明。"""
     if not isinstance(raw_candidates, list):
         return []
 
@@ -206,7 +223,7 @@ def _matches_terms(poi: Dict[str, Any], terms: List[str]) -> bool:
 
 
 def _build_spatial_checker(spatial_context: Dict[str, Any]):
-    """Build a callable spatial filter from spatial_context."""
+    """注释说明。"""
     boundary = spatial_context.get("boundary")
     if isinstance(boundary, list) and len(boundary) >= 3:
         ring: List[Tuple[float, float]] = []
@@ -234,7 +251,7 @@ def _build_spatial_checker(spatial_context: Dict[str, Any]):
                 min_lon, min_lat, max_lon, max_lat = polygon.bounds
                 prepared_polygon = prep(polygon)
 
-                # ??????? bbox ?????? prepared geometry ????????? Shapely ???????
+                # 注释说明
                 def _within_polygon(lon: float, lat: float) -> bool:
                     if lon < min_lon or lon > max_lon or lat < min_lat or lat > max_lat:
                         return False
@@ -268,22 +285,139 @@ def _build_spatial_checker(spatial_context: Dict[str, Any]):
     return lambda *_: True
 
 
+def _build_spatial_constraint_polygon(spatial_context: Dict[str, Any]) -> Polygon | None:
+    """注释说明。"""
+    boundary = spatial_context.get("boundary")
+    if isinstance(boundary, list) and len(boundary) >= 3:
+        ring: List[Tuple[float, float]] = []
+        for raw in boundary:
+            if isinstance(raw, dict):
+                lon = _to_float(raw.get("lon", raw.get("lng", raw.get("longitude"))))
+                lat = _to_float(raw.get("lat", raw.get("latitude")))
+            elif isinstance(raw, (list, tuple)) and len(raw) >= 2:
+                lon = _to_float(raw[0])
+                lat = _to_float(raw[1])
+            else:
+                lon = None
+                lat = None
+            if lon is not None and lat is not None:
+                ring.append((lon, lat))
+
+        if len(ring) >= 3:
+            if ring[0] != ring[-1]:
+                ring.append(ring[0])
+            polygon = Polygon(ring)
+            if not polygon.is_valid:
+                polygon = polygon.buffer(0)
+            if isinstance(polygon, Polygon) and not polygon.is_empty:
+                return polygon
+
+    viewport = spatial_context.get("viewport")
+    if isinstance(viewport, list) and len(viewport) >= 4:
+        try:
+            min_lon, min_lat, max_lon, max_lat = map(float, viewport[:4])
+        except (TypeError, ValueError):
+            min_lon = min_lat = max_lon = max_lat = 0.0
+        if max_lon > min_lon and max_lat > min_lat:
+            return Polygon(
+                [
+                    (min_lon, min_lat),
+                    (max_lon, min_lat),
+                    (max_lon, max_lat),
+                    (min_lon, max_lat),
+                    (min_lon, min_lat),
+                ]
+            )
+
+    center = spatial_context.get("center")
+    radius_m = _to_float(spatial_context.get("radius"))
+    if isinstance(center, dict) and radius_m and radius_m > 0:
+        center_lon = _to_float(center.get("lon", center.get("lng", center.get("longitude"))))
+        center_lat = _to_float(center.get("lat", center.get("latitude")))
+        if center_lon is not None and center_lat is not None:
+            lat_scale = meters_per_degree_lat(center_lat)
+            lon_scale = meters_per_degree_lon(center_lat)
+            if lat_scale > 0 and lon_scale > 0:
+                ring: List[Tuple[float, float]] = []
+                for step in range(0, 48):
+                    theta = 2.0 * math.pi * (step / 48.0)
+                    dlon = (math.cos(theta) * radius_m) / lon_scale
+                    dlat = (math.sin(theta) * radius_m) / lat_scale
+                    ring.append((center_lon + dlon, center_lat + dlat))
+                ring.append(ring[0])
+                return Polygon(ring)
+
+    return None
+
+
+def _clip_polygon_to_constraint(polygon: Polygon | None, constraint_polygon: Polygon | None) -> Polygon | None:
+    """注释说明。"""
+    if polygon is None or polygon.is_empty or constraint_polygon is None or constraint_polygon.is_empty:
+        return polygon
+
+    try:
+        clipped = polygon.intersection(constraint_polygon)
+    except Exception:
+        return polygon
+
+    clipped_polygon = _to_surface_polygon(clipped)
+    if clipped_polygon is None or clipped_polygon.is_empty:
+        return None
+    return clipped_polygon
+
+
+def _clip_boundary_geojson_to_constraint(
+    *,
+    boundary_geojson: Dict[str, Any],
+    cluster_points: List[Tuple[float, float]],
+    constraint_polygon: Polygon | None,
+) -> Dict[str, Any]:
+    """注释说明。"""
+    if constraint_polygon is None or constraint_polygon.is_empty:
+        return {
+            "boundary_geojson": boundary_geojson,
+            "clip": {"applied": False},
+        }
+
+    polygon = _polygon_from_geojson(boundary_geojson, cluster_points=cluster_points)
+    if polygon is None or polygon.is_empty:
+        return {
+            "boundary_geojson": boundary_geojson,
+            "clip": {"applied": False},
+        }
+
+    clipped_polygon = _clip_polygon_to_constraint(polygon, constraint_polygon)
+    if clipped_polygon is None or clipped_polygon.is_empty:
+        return {
+            "boundary_geojson": boundary_geojson,
+            "clip": {"applied": False},
+        }
+
+    area_before = _polygon_area_km2(polygon)
+    area_after = _polygon_area_km2(clipped_polygon)
+    changed = not polygon.equals_exact(clipped_polygon, tolerance=1e-10)
+    return {
+        "boundary_geojson": mapping(clipped_polygon),
+        "clip": {
+            "applied": bool(changed),
+            "area_ratio": round(_clamp01(area_after / area_before) if area_before > 0 else 0.0, 4),
+            "area_km2_before": round(area_before, 6),
+            "area_km2_after": round(area_after, 6),
+        },
+    }
+
+
 def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Compute haversine distance in kilometers."""
-    r = 6371.0
-    dlat = math.radians(lat2 - lat1)
-    dlon = math.radians(lon2 - lon1)
-    a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-    return r * c
+    """注释说明。"""
+    return haversine_km(lat1, lon1, lat2, lon2)
 
 
 def _sample_coordinates(coords: List[Tuple[float, float]], max_points: int) -> List[Tuple[float, float]]:
-    """Deterministically sample coordinates to cap heavy geometry operations."""
+    """注释说明。"""
     if max_points <= 0 or len(coords) <= max_points:
         return coords
 
-    # ???????????????????????????????
+    # 注释说明
     step = max(1, len(coords) // max_points)
     sampled = coords[::step]
 
@@ -297,7 +431,7 @@ def _sample_coordinates(coords: List[Tuple[float, float]], max_points: int) -> L
 
 
 def _top_membership_drivers(membership, top_n: int = 2) -> List[Dict[str, Any]]:
-    """Return top contributing factors for fuzzy-region explainability."""
+    """注释说明。"""
     factors = [
         ("density", float(getattr(membership, "density", 0.0))),
         ("purity", float(getattr(membership, "purity", 0.0))),
@@ -313,8 +447,468 @@ def _top_membership_drivers(membership, top_n: int = 2) -> List[Dict[str, Any]]:
     ]
 
 
+def _infer_semantic_anchor(
+    *,
+    cluster_pois: List[Dict[str, Any]],
+    dominant_category: str,
+    llm_anchor_candidates: List[str] | None = None,
+) -> Dict[str, Any]:
+    return semantic_reasoner.infer_semantic_anchor(
+        cluster_pois=cluster_pois,
+        dominant_category=dominant_category,
+        llm_anchor_candidates=llm_anchor_candidates,
+    )
+
+
+def _recover_waterbody_anchor(
+    *,
+    cluster_pois: List[Dict[str, Any]],
+    semantic_anchor: Dict[str, Any],
+    landuse_context: Dict[str, Any],
+) -> Dict[str, Any]:
+    return semantic_reasoner.recover_waterbody_anchor(
+        cluster_pois=cluster_pois,
+        semantic_anchor=semantic_anchor,
+        landuse_context=landuse_context,
+    )
+
+
+def _landuse_label_text(properties: Any) -> str:
+    return semantic_reasoner.landuse_label_text(properties)
+
+
+def _niche_type_from_landuse_label(label_text: str) -> str:
+    return semantic_reasoner.niche_type_from_landuse_label(label_text)
+
+
+def _cluster_landuse_semantic_context(
+    *,
+    boundary_geojson: Dict[str, Any],
+    cluster_points: List[Tuple[float, float]],
+    semantic_features: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    return semantic_reasoner.cluster_landuse_semantic_context(
+        boundary_geojson=boundary_geojson,
+        cluster_points=cluster_points,
+        semantic_features=semantic_features,
+        polygon_from_geojson=_polygon_from_geojson,
+    )
+
+
+def _build_niche_profile(
+    *,
+    cluster_pois: List[Dict[str, Any]],
+    dominant_category: str,
+    semantic_anchor: Dict[str, Any],
+    landuse_context: Dict[str, Any],
+) -> Dict[str, Any]:
+    return semantic_reasoner.build_niche_profile(
+        cluster_pois=cluster_pois,
+        dominant_category=dominant_category,
+        semantic_anchor=semantic_anchor,
+        landuse_context=landuse_context,
+        category_of=_category_of,
+    )
+
+
+def _apply_water_overlap_penalty(
+    *,
+    boundary_quality: Dict[str, Any],
+    niche_profile: Dict[str, Any],
+    landuse_context: Dict[str, Any],
+) -> Dict[str, Any]:
+    return semantic_reasoner.apply_water_overlap_penalty(
+        boundary_quality=boundary_quality,
+        niche_profile=niche_profile,
+        landuse_context=landuse_context,
+    )
+
+
+def _build_semantic_reasoning_payload(
+    *,
+    semantic_anchor: Dict[str, Any],
+    niche_profile: Dict[str, Any],
+    landuse_context: Dict[str, Any],
+) -> Dict[str, Any]:
+    return semantic_reasoner.build_semantic_reasoning_payload(
+        semantic_anchor=semantic_anchor,
+        niche_profile=niche_profile,
+        landuse_context=landuse_context,
+    )
+
+
+def _is_valid_lon_lat(lon: float | None, lat: float | None) -> bool:
+    return poi_quality_scorer.is_valid_lon_lat(lon, lat)
+
+
+def _poi_point_quality_score(poi: Dict[str, Any]) -> float:
+    return poi_quality_scorer.poi_point_quality_score(poi)
+
+
+def _cluster_poi_quality(cluster_pois: List[Dict[str, Any]]) -> Dict[str, Any]:
+    return poi_quality_scorer.cluster_poi_quality(cluster_pois)
+
+
+def _normalize_road_geometries(rows: List[Dict[str, Any]]) -> List[Any]:
+    return context_loader.normalize_road_geometries(
+        rows=rows,
+        safe_json_loads=_safe_json_loads,
+    )
+
+
+def _sample_polygon_boundary_coords(
+    polygon: Polygon,
+    *,
+    min_samples: int = 10,
+    max_samples: int = 48,
+) -> List[Tuple[float, float]]:
+    """注释说明。"""
+    ring = list(polygon.exterior.coords)
+    if len(ring) < 4:
+        return []
+
+    usable = ring[:-1] if len(ring) > 1 and ring[0] == ring[-1] else ring
+    sample_count = max(min_samples, min(max_samples, len(usable)))
+    if len(usable) <= sample_count:
+        return [(float(x), float(y)) for x, y in usable]
+
+    step = len(usable) / float(sample_count)
+    sampled = [usable[min(int(i * step), len(usable) - 1)] for i in range(sample_count)]
+    return [(float(x), float(y)) for x, y in sampled]
+
+
+def _landuse_boundary_weight(properties: Any) -> float:
+    return context_loader.landuse_boundary_weight(
+        properties=properties,
+        safe_json_loads=_safe_json_loads,
+    )
+
+
+def _normalize_landuse_geometries(rows: List[Dict[str, Any]]) -> Dict[str, List[Any]]:
+    return context_loader.normalize_landuse_geometries(
+        rows=rows,
+        safe_json_loads=_safe_json_loads,
+        clamp01=_clamp01,
+        landuse_label_text=_landuse_label_text,
+        niche_type_from_landuse_label=_niche_type_from_landuse_label,
+    )
+
+
+def _compute_road_alignment_score(
+    *,
+    boundary_geojson: Dict[str, Any],
+    cluster_points: List[Tuple[float, float]],
+    road_index: STRtree | None,
+    road_geometries: List[Any] | None,
+) -> float | None:
+    """
+    注释说明。
+    注释说明。
+    """
+    if road_index is None or not road_geometries:
+        return None
+
+    polygon = _polygon_from_geojson(boundary_geojson, cluster_points=cluster_points)
+    if polygon is None or polygon.is_empty:
+        return None
+
+    sampled = _sample_polygon_boundary_coords(polygon, min_samples=10, max_samples=48)
+    if not sampled:
+        return None
+
+    distances_m: List[float] = []
+    for x, y in sampled:
+        point = Point(x, y)
+        try:
+            nearest_ref = road_index.nearest(point)
+        except Exception:
+            continue
+
+        if nearest_ref is None:
+            continue
+
+        try:
+            if isinstance(nearest_ref, Integral):
+                nearest_geom = road_geometries[int(nearest_ref)]
+            else:
+                nearest_geom = nearest_ref
+        except Exception:
+            continue
+
+        _, distance_m = nearest_point_and_distance_m(point, nearest_geom)
+        if distance_m is None:
+            continue
+        distances_m.append(float(distance_m))
+
+    if not distances_m:
+        return None
+
+    sorted_distances = sorted(distances_m)
+    mid = len(sorted_distances) // 2
+    if len(sorted_distances) % 2 == 1:
+        median_distance = sorted_distances[mid]
+    else:
+        median_distance = (sorted_distances[mid - 1] + sorted_distances[mid]) / 2.0
+
+    near_ratio = len([dist for dist in distances_m if dist <= 35.0]) / len(distances_m)
+    median_component = _clamp01(1.0 - min(median_distance, 220.0) / 220.0)
+
+    return round(_clamp01(0.68 * median_component + 0.32 * near_ratio), 4)
+
+
+def _compute_landuse_alignment_score(
+    *,
+    boundary_geojson: Dict[str, Any],
+    cluster_points: List[Tuple[float, float]],
+    landuse_index: STRtree | None,
+    landuse_geometries: List[Any] | None,
+    landuse_weights: List[float] | None,
+) -> float | None:
+    """
+    注释说明。
+    注释说明。
+    """
+    if landuse_index is None or not landuse_geometries:
+        return None
+
+    polygon = _polygon_from_geojson(boundary_geojson, cluster_points=cluster_points)
+    if polygon is None or polygon.is_empty:
+        return None
+
+    sampled = _sample_polygon_boundary_coords(polygon, min_samples=12, max_samples=60)
+    if not sampled:
+        return None
+
+    distances_m: List[float] = []
+    sampled_weights: List[float] = []
+
+    for x, y in sampled:
+        point = Point(x, y)
+        try:
+            nearest_ref = landuse_index.nearest(point)
+        except Exception:
+            continue
+
+        if nearest_ref is None:
+            continue
+
+        nearest_geom: Any | None = None
+        nearest_weight = 0.72
+
+        try:
+            if isinstance(nearest_ref, Integral):
+                nearest_idx = int(nearest_ref)
+                nearest_geom = landuse_geometries[nearest_idx]
+                if landuse_weights and 0 <= nearest_idx < len(landuse_weights):
+                    nearest_weight = _clamp01(float(landuse_weights[nearest_idx]))
+            else:
+                nearest_geom = nearest_ref
+        except Exception:
+            continue
+
+        if nearest_geom is None:
+            continue
+
+        _, distance_m = nearest_point_and_distance_m(point, nearest_geom)
+        if distance_m is None:
+            continue
+        distances_m.append(float(distance_m))
+        sampled_weights.append(nearest_weight)
+
+    if not distances_m:
+        return None
+
+    sorted_distances = sorted(distances_m)
+    mid = len(sorted_distances) // 2
+    if len(sorted_distances) % 2 == 1:
+        median_distance = sorted_distances[mid]
+    else:
+        median_distance = (sorted_distances[mid - 1] + sorted_distances[mid]) / 2.0
+
+    near_ratio = len([dist for dist in distances_m if dist <= 45.0]) / len(distances_m)
+    median_component = _clamp01(1.0 - min(median_distance, 260.0) / 260.0)
+    weight_component = sum(sampled_weights) / len(sampled_weights) if sampled_weights else 0.72
+
+    return round(_clamp01(0.58 * median_component + 0.27 * near_ratio + 0.15 * _clamp01(weight_component)), 4)
+
+
+def _resolve_nearest_geometry(
+    *,
+    point: Point,
+    geometry_index: STRtree | None,
+    geometries: List[Any] | None,
+) -> Any | None:
+    """注释说明。"""
+    if geometry_index is None or not geometries:
+        return None
+
+    try:
+        nearest_ref = geometry_index.nearest(point)
+    except Exception:
+        return None
+
+    if nearest_ref is None:
+        return None
+
+    try:
+        if isinstance(nearest_ref, Integral):
+            nearest_idx = int(nearest_ref)
+            if 0 <= nearest_idx < len(geometries):
+                return geometries[nearest_idx]
+            return None
+    except Exception:
+        return None
+
+    return nearest_ref
+
+
+def _snap_polygon_to_linear_context(
+    *,
+    boundary_geojson: Dict[str, Any],
+    cluster_points: List[Tuple[float, float]],
+    road_index: STRtree | None,
+    road_geometries: List[Any] | None,
+    landuse_index: STRtree | None,
+    landuse_geometries: List[Any] | None,
+) -> Dict[str, Any] | None:
+    """
+    注释说明。
+    注释说明。
+    """
+    polygon = _polygon_from_geojson(boundary_geojson, cluster_points=cluster_points)
+    if polygon is None or polygon.is_empty:
+        return None
+
+    has_road_context = road_index is not None and bool(road_geometries)
+    has_landuse_context = landuse_index is not None and bool(landuse_geometries)
+    if not has_road_context and not has_landuse_context:
+        return None
+
+    sampled = _sample_polygon_boundary_coords(polygon, min_samples=20, max_samples=120)
+    if len(sampled) < 8:
+        return None
+
+    span = max(_cluster_span_deg(cluster_points), max(polygon.bounds[2] - polygon.bounds[0], polygon.bounds[3] - polygon.bounds[1]))
+    mean_lat = float(polygon.centroid.y)
+    degree_scale_m = max(meters_per_degree_lon(mean_lat), meters_per_degree_lat(mean_lat), 1.0)
+    span_m = span * degree_scale_m
+    snap_distance_m = max(8.0, min(120.0, span_m * 0.30))
+    snap_distance_deg = snap_distance_m / degree_scale_m
+    min_snap_count = max(3, int(len(sampled) * 0.10))
+
+    snapped_coords: List[Tuple[float, float]] = []
+    snap_count = 0
+    road_snap_count = 0
+    landuse_snap_count = 0
+
+    for x, y in sampled:
+        point = Point(float(x), float(y))
+        best_distance = None
+        best_coord = None
+        best_source = ""
+
+        if has_road_context:
+            nearest_road = _resolve_nearest_geometry(
+                point=point,
+                geometry_index=road_index,
+                geometries=road_geometries,
+            )
+            if nearest_road is not None and not nearest_road.is_empty:
+                try:
+                    projected_coord, distance = nearest_point_and_distance_m(point, nearest_road)
+                    if projected_coord is not None and distance is not None and distance <= snap_distance_m:
+                        best_distance = float(distance)
+                        best_coord = projected_coord
+                        best_source = "road"
+                except Exception:
+                    pass
+
+        if has_landuse_context:
+            nearest_landuse = _resolve_nearest_geometry(
+                point=point,
+                geometry_index=landuse_index,
+                geometries=landuse_geometries,
+            )
+            if nearest_landuse is not None and not nearest_landuse.is_empty:
+                try:
+                    projected_coord, distance = nearest_point_and_distance_m(point, nearest_landuse)
+                    if (
+                        projected_coord is not None
+                        and distance is not None
+                        and distance <= snap_distance_m
+                        and (best_distance is None or distance < best_distance)
+                    ):
+                        best_distance = float(distance)
+                        best_coord = projected_coord
+                        best_source = "landuse"
+                except Exception:
+                    pass
+
+        if best_coord is not None:
+            snapped_coords.append(best_coord)
+            snap_count += 1
+            if best_source == "road":
+                road_snap_count += 1
+            elif best_source == "landuse":
+                landuse_snap_count += 1
+        else:
+            snapped_coords.append((float(x), float(y)))
+
+    if snap_count < min_snap_count:
+        return None
+
+    if snapped_coords[0] != snapped_coords[-1]:
+        snapped_coords.append(snapped_coords[0])
+
+    try:
+        snapped_polygon = Polygon(snapped_coords).buffer(0)
+    except Exception:
+        return None
+
+    snapped_polygon = _as_polygon(snapped_polygon)
+    if snapped_polygon is None or snapped_polygon.is_empty:
+        return None
+
+    original_area = max(float(polygon.area), 1e-12)
+    area_ratio = float(snapped_polygon.area) / original_area
+    if area_ratio < 0.22 or area_ratio > 2.20:
+        return None
+
+    smooth_distance = snap_distance_deg * 0.30
+    if smooth_distance > 0:
+        try:
+            smoothed = snapped_polygon.buffer(smooth_distance).buffer(-smooth_distance)
+            smoothed = _as_polygon(smoothed.buffer(0))
+            if smoothed is not None and not smoothed.is_empty:
+                snapped_polygon = smoothed
+        except Exception:
+            pass
+
+    prepared_polygon = prep(snapped_polygon)
+    inside_count = sum(
+        1
+        for lon, lat in cluster_points
+        if prepared_polygon.covers(Point(float(lon), float(lat)))
+    )
+    coverage_ratio = inside_count / max(1, len(cluster_points))
+    if coverage_ratio < 0.54:
+        return None
+
+    return {
+        "geojson": mapping(snapped_polygon),
+        "model": "road_landuse_snap_v1",
+        "snap_distance_m": round(float(snap_distance_m), 1),
+        "sampled_vertices": int(len(sampled)),
+        "snapped_vertices": int(snap_count),
+        "road_snap_vertices": int(road_snap_count),
+        "landuse_snap_vertices": int(landuse_snap_count),
+        "coverage_ratio": round(float(coverage_ratio), 4),
+        "area_ratio_to_original": round(float(area_ratio), 4),
+    }
+
+
 def _empty_graph_summary() -> Dict[str, Any]:
-    """Return stable empty graph payload for API compatibility."""
+    """注释说明。"""
     return {
         "node_count": 0,
         "edge_count": 0,
@@ -334,7 +928,7 @@ def _filter_payload_candidates(
     terms: List[str],
     limit: int = 8000,
 ) -> List[Dict[str, Any]]:
-    """Apply secondary filtering on payload candidates in Python."""
+    """注释说明。"""
     checker = _build_spatial_checker(spatial_context)
     filtered: List[Dict[str, Any]] = []
 
@@ -361,7 +955,7 @@ def _filter_payload_candidates(
 
 
 def _resolve_limit(raw_value: Any, *, default_value: int, max_value: int) -> int:
-    """Resolve runtime limit with strict numeric clamp."""
+    """注释说明。"""
     try:
         parsed = int(raw_value)
     except (TypeError, ValueError):
@@ -373,8 +967,22 @@ def _resolve_limit(raw_value: Any, *, default_value: int, max_value: int) -> int
     return max(1, min(parsed, max_value))
 
 
+def _option_enabled(raw_value: Any, *, default_value: bool = False) -> bool:
+    """解析布尔开关（兼容 true/false、1/0、on/off）。"""
+    if raw_value is None:
+        return default_value
+    normalized = str(raw_value).strip().lower()
+    if not normalized:
+        return default_value
+    if normalized in {"1", "true", "yes", "on", "y"}:
+        return True
+    if normalized in {"0", "false", "no", "off", "n"}:
+        return False
+    return default_value
+
+
 def _as_polygon(geometry: Any) -> Polygon | None:
-    """Normalize arbitrary shapely geometry to a single Polygon."""
+    """注释说明。"""
     if geometry is None:
         return None
 
@@ -396,7 +1004,7 @@ def _as_polygon(geometry: Any) -> Polygon | None:
 
 
 def _cluster_span_deg(cluster_points: List[Tuple[float, float]] | None) -> float:
-    """Return max longitude/latitude span of point set in degree space."""
+    """注释说明。"""
     if not cluster_points:
         return 0.0
     xs = [float(pt[0]) for pt in cluster_points]
@@ -412,8 +1020,8 @@ def _adaptive_surface_buffer_deg(
     cluster_points: List[Tuple[float, float]] | None = None,
 ) -> float:
     """
-    Adaptive buffer for converting line/point hulls into surface polygons.
-    Keeps degenerate geometries as area features for map rendering and scoring.
+    注释说明。
+    注释说明。
     """
     span = _cluster_span_deg(cluster_points)
 
@@ -436,7 +1044,7 @@ def _to_surface_polygon(
     cluster_points: List[Tuple[float, float]] | None = None,
 ) -> Polygon | None:
     """
-    Convert polygon/line/point geometries into a renderable Polygon surface.
+    注释说明。
     """
     if geometry is None or getattr(geometry, "is_empty", False):
         return None
@@ -465,7 +1073,7 @@ def _polygon_from_geojson(
     *,
     cluster_points: List[Tuple[float, float]] | None = None,
 ) -> Polygon | None:
-    """Parse GeoJSON boundary into Polygon surface."""
+    """注释说明。"""
     if not isinstance(boundary_geojson, dict):
         return None
 
@@ -479,7 +1087,7 @@ def _polygon_from_geojson(
 
 
 def _polygon_ring(polygon: Polygon | None) -> List[List[float]]:
-    """Convert polygon exterior into [lon, lat] ring list."""
+    """注释说明。"""
     if polygon is None or polygon.is_empty:
         return []
 
@@ -487,10 +1095,8 @@ def _polygon_ring(polygon: Polygon | None) -> List[List[float]]:
 
 
 def _polygon_area_km2(polygon: Polygon | None) -> float:
-    """Approximate area from degree-space geometry to km虏."""
-    if polygon is None or polygon.is_empty:
-        return 0.0
-    return float(polygon.area) * (111.32 ** 2)
+    """注释说明。"""
+    return polygon_area_km2(polygon)
 
 
 def _clamp01(value: float) -> float:
@@ -507,83 +1113,21 @@ def _build_region_layers(
     base_boundary_geojson: Dict[str, Any],
     density: float,
     membership_score: float,
+    constraint_polygon: Polygon | None = None,
 ) -> Dict[str, Any]:
-    """
-    Build nested surface layers (outer / transition / core) from cluster geometry.
-    This is used by hotspots, vernacular regions and fuzzy regions.
-    """
-    polygon = _polygon_from_geojson(base_boundary_geojson, cluster_points=cluster_points)
-    if polygon is None:
-        polygon = _to_surface_polygon(MultiPoint(cluster_points).convex_hull, cluster_points=cluster_points)
-    if polygon is None and cluster_points:
-        xs = [pt[0] for pt in cluster_points]
-        ys = [pt[1] for pt in cluster_points]
-        center = Point(sum(xs) / len(xs), sum(ys) / len(ys))
-        lon_span = max(xs) - min(xs) if len(xs) > 1 else 0.0
-        lat_span = max(ys) - min(ys) if len(ys) > 1 else 0.0
-        radius = max(0.00012, max(lon_span, lat_span) * 0.25)
-        polygon = _as_polygon(center.buffer(radius))
-    if polygon is None:
-        return {
-            "outer": {"boundary": [], "geojson": None, "area_km2": 0.0, "confidence": 0.0},
-            "transition": {"boundary": [], "geojson": None, "area_km2": 0.0, "confidence": 0.0},
-            "core": {"boundary": [], "geojson": None, "area_km2": 0.0, "confidence": 0.0},
-            "representative_boundary": [],
-            "representative_geojson": None,
-        }
-
-    min_x, min_y, max_x, max_y = polygon.bounds
-    span = max(max_x - min_x, max_y - min_y)
-
-    # Adaptive offset by geometry scale + density confidence.
-    adaptive = max(0.00008, min(0.0045, span * (0.20 + (1.0 - _clamp01(density)) * 0.10)))
-    outer_expand = adaptive * 0.60
-    transition_expand = adaptive * 0.22
-    core_shrink = adaptive * (0.30 + 0.25 * (1.0 - _clamp01(membership_score)))
-
-    outer = _as_polygon(polygon.buffer(outer_expand))
-    transition = _as_polygon(polygon.buffer(transition_expand))
-    core = _as_polygon(polygon.buffer(-core_shrink))
-
-    if outer is None:
-        outer = polygon
-    if transition is None:
-        transition = polygon
-    if core is None or core.is_empty:
-        core = _as_polygon(polygon.centroid.buffer(max(adaptive * 0.35, 0.00006)))
-        if core is None:
-            core = polygon
-
-    outer_conf = _clamp01(0.40 + _clamp01(density) * 0.25)
-    transition_conf = _clamp01(0.52 + _clamp01(membership_score) * 0.30)
-    core_conf = _clamp01(0.60 + _clamp01(membership_score) * 0.32)
-
-    layers = {
-        "outer": {
-            "boundary": _polygon_ring(outer),
-            "geojson": mapping(outer),
-            "area_km2": round(_polygon_area_km2(outer), 6),
-            "confidence": round(outer_conf, 4),
-        },
-        "transition": {
-            "boundary": _polygon_ring(transition),
-            "geojson": mapping(transition),
-            "area_km2": round(_polygon_area_km2(transition), 6),
-            "confidence": round(transition_conf, 4),
-        },
-        "core": {
-            "boundary": _polygon_ring(core),
-            "geojson": mapping(core),
-            "area_km2": round(_polygon_area_km2(core), 6),
-            "confidence": round(core_conf, 4),
-        },
-    }
-
-    return {
-        **layers,
-        "representative_boundary": layers["transition"]["boundary"] or layers["outer"]["boundary"],
-        "representative_geojson": layers["transition"]["geojson"] or layers["outer"]["geojson"],
-    }
+    return boundary_builder.build_region_layers(
+        cluster_points=cluster_points,
+        base_boundary_geojson=base_boundary_geojson,
+        density=density,
+        membership_score=membership_score,
+        constraint_polygon=constraint_polygon,
+        polygon_from_geojson=_polygon_from_geojson,
+        to_surface_polygon=_to_surface_polygon,
+        as_polygon=_as_polygon,
+        clip_polygon_to_constraint=_clip_polygon_to_constraint,
+        polygon_area_km2=_polygon_area_km2,
+        clamp01=_clamp01,
+    )
 
 
 def _calc_vitality_score(
@@ -594,7 +1138,7 @@ def _calc_vitality_score(
     cluster_size: int,
     total_size: int,
     ) -> float:
-    """Composite score for hotspot/region ranking."""
+    """注释说明。"""
     cluster_ratio = 0.0 if total_size <= 0 else cluster_size / total_size
     return round(
         _clamp01(
@@ -608,78 +1152,27 @@ def _calc_vitality_score(
 
 
 def _boundary_method_confidence(boundary_method: str) -> float:
-    """Method reliability prior for boundary geometry quality."""
-    method = str(boundary_method or "").lower()
-    if method in {"alpha_shape", "alpha_shape_simplified"}:
-        return 0.86
-    if method in {"buffered_hull_degenerate", "buffered_hull_small_cluster"}:
-        return 0.72
-    if method == "convex_hull_small_cluster":
-        return 0.64
-    if method == "convex_hull_fallback":
-        return 0.58
-    if method.startswith("alpha_shape"):
-        return 0.82
-    if "convex_hull" in method:
-        return 0.60
-    return 0.62
+    return confidence_scorer.boundary_method_confidence(boundary_method)
 
 
 def _score_boundary_quality(
     *,
     cluster_points: List[Tuple[float, float]],
     boundary_geojson: Dict[str, Any],
+    road_alignment_score: float | None = None,
+    landuse_alignment_score: float | None = None,
 ) -> Dict[str, Any]:
-    """Evaluate boundary quality against source points."""
-    polygon = _polygon_from_geojson(boundary_geojson, cluster_points=cluster_points)
-    if polygon is None or polygon.is_empty or not cluster_points:
-        return {
-            "coverage_ratio": 0.0,
-            "inside_point_count": 0,
-            "point_count": len(cluster_points),
-            "area_ratio_to_hull": 0.0,
-            "compactness": 0.0,
-            "quality_score": 0.0,
-            "pass": False,
-        }
-
-    prepared_polygon = prep(polygon)
-    inside_count = 0
-    for lon, lat in cluster_points:
-        if prepared_polygon.covers(Point(lon, lat)):
-            inside_count += 1
-
-    coverage_ratio = inside_count / max(1, len(cluster_points))
-
-    hull_polygon = _to_surface_polygon(MultiPoint(cluster_points).convex_hull, cluster_points=cluster_points)
-    hull_area_km2 = _polygon_area_km2(hull_polygon)
-    polygon_area_km2 = _polygon_area_km2(polygon)
-    area_ratio_to_hull = polygon_area_km2 / hull_area_km2 if hull_area_km2 > 0 else 1.0
-
-    perimeter_km = float(polygon.length) * 111.32
-    compactness = 0.0
-    if perimeter_km > 0 and polygon_area_km2 > 0:
-        compactness = _clamp01((4.0 * math.pi * polygon_area_km2) / (perimeter_km * perimeter_km))
-
-    # Prefer boundaries that keep high point coverage while avoiding extreme area shrink/expansion.
-    hull_similarity = _clamp01(1.0 - min(abs(area_ratio_to_hull - 0.72) / 0.72, 1.0))
-    quality_score = _clamp01(
-        0.62 * _clamp01(coverage_ratio)
-        + 0.23 * hull_similarity
-        + 0.15 * _clamp01(compactness)
+    return boundary_builder.score_boundary_quality(
+        cluster_points=cluster_points,
+        boundary_geojson=boundary_geojson,
+        road_alignment_score=road_alignment_score,
+        landuse_alignment_score=landuse_alignment_score,
+        polygon_from_geojson=_polygon_from_geojson,
+        to_surface_polygon=_to_surface_polygon,
+        polygon_area_km2=_polygon_area_km2,
+        polygon_perimeter_km=polygon_perimeter_km,
+        clamp01=_clamp01,
     )
-
-    pass_quality = coverage_ratio >= 0.78 and 0.14 <= area_ratio_to_hull <= 1.35
-
-    return {
-        "coverage_ratio": round(coverage_ratio, 4),
-        "inside_point_count": int(inside_count),
-        "point_count": int(len(cluster_points)),
-        "area_ratio_to_hull": round(float(area_ratio_to_hull), 4),
-        "compactness": round(float(compactness), 4),
-        "quality_score": round(float(quality_score), 4),
-        "pass": bool(pass_quality),
-    }
 
 
 def _build_cluster_boundary(
@@ -688,176 +1181,29 @@ def _build_cluster_boundary(
     bbox_area_m2: float,
     density: float,
     alpha_max_input_points: int,
+    road_index: STRtree | None = None,
+    road_geometries: List[Any] | None = None,
+    landuse_index: STRtree | None = None,
+    landuse_geometries: List[Any] | None = None,
+    landuse_weights: List[float] | None = None,
 ) -> Dict[str, Any]:
-    """
-    Build cluster boundary via iterative alpha-shape candidates with quality scoring.
-    Falls back to convex hull when alpha candidates are weak or invalid.
-    """
-    raw_hull = MultiPoint(cluster_points).convex_hull
-    raw_hull_type = str(getattr(raw_hull, "geom_type", ""))
-    hull_polygon = _to_surface_polygon(raw_hull, cluster_points=cluster_points)
-    hull_geojson = mapping(hull_polygon) if hull_polygon is not None else mapping(raw_hull)
-
-    is_degenerate_hull = raw_hull_type in {"Point", "MultiPoint", "LineString", "LinearRing", "MultiLineString"}
-    small_cluster_method = "buffered_hull_small_cluster" if is_degenerate_hull else "convex_hull_small_cluster"
-
-    if len(cluster_points) < 8:
-        quality = _score_boundary_quality(cluster_points=cluster_points, boundary_geojson=hull_geojson)
-        return {
-            "boundary_geojson": hull_geojson,
-            "boundary_method": small_cluster_method,
-            "boundary_quality": quality,
-            "boundary_generation": {
-                "attempts": 1,
-                "alpha_attempts": 0,
-                "selected_attempt": 1,
-                "selected_alpha": None,
-                "base_alpha": None,
-                "attempt_log": [
-                    {
-                        "attempt": 1,
-                        "method": small_cluster_method,
-                        "quality_score": quality["quality_score"],
-                        "coverage_ratio": quality["coverage_ratio"],
-                        "area_ratio_to_hull": quality["area_ratio_to_hull"],
-                        "pass": quality["pass"],
-                    }
-                ],
-            },
-        }
-
-    base_alpha = max(0.8, min(4.0, 2.0 - density + (bbox_area_m2 / 1_000_000.0)))
-    alpha_factors = (1.0, 0.82, 1.28, 0.68, 1.55)
-    attempt_log: List[Dict[str, Any]] = []
-    best_candidate: Dict[str, Any] | None = None
-
-    if is_degenerate_hull:
-        quality = _score_boundary_quality(cluster_points=cluster_points, boundary_geojson=hull_geojson)
-        return {
-            "boundary_geojson": hull_geojson,
-            "boundary_method": "buffered_hull_degenerate",
-            "boundary_quality": quality,
-            "boundary_generation": {
-                "attempts": 1,
-                "alpha_attempts": 0,
-                "selected_attempt": 1,
-                "selected_alpha": None,
-                "base_alpha": round(float(base_alpha), 4),
-                "attempt_log": [
-                    {
-                        "attempt": 1,
-                        "method": "buffered_hull_degenerate",
-                        "quality_score": quality["quality_score"],
-                        "coverage_ratio": quality["coverage_ratio"],
-                        "area_ratio_to_hull": quality["area_ratio_to_hull"],
-                        "pass": quality["pass"],
-                    }
-                ],
-            },
-        }
-
-    for attempt_index, factor in enumerate(alpha_factors, start=1):
-        alpha = max(0.55, min(5.5, base_alpha * factor))
-        alpha_polygon = build_alpha_shape(
-            cluster_points,
-            alpha=alpha,
-            min_polygon_area_m2=800.0,
-            max_input_points=alpha_max_input_points,
-        )
-
-        if not alpha_polygon:
-            attempt_log.append(
-                {
-                    "attempt": attempt_index,
-                    "alpha": round(alpha, 4),
-                    "method": "alpha_shape_invalid",
-                    "quality_score": 0.0,
-                    "coverage_ratio": 0.0,
-                    "area_ratio_to_hull": 0.0,
-                    "pass": False,
-                }
-            )
-            continue
-
-        boundary_geojson = alpha_polygon["geojson"]
-        boundary_method = alpha_polygon.get("method", "alpha_shape")
-        quality = _score_boundary_quality(
-            cluster_points=cluster_points,
-            boundary_geojson=boundary_geojson,
-        )
-        attempt_log.append(
-            {
-                "attempt": attempt_index,
-                "alpha": round(alpha, 4),
-                "method": boundary_method,
-                "quality_score": quality["quality_score"],
-                "coverage_ratio": quality["coverage_ratio"],
-                "area_ratio_to_hull": quality["area_ratio_to_hull"],
-                "pass": quality["pass"],
-            }
-        )
-
-        candidate = {
-            "attempt": attempt_index,
-            "alpha": alpha,
-            "boundary_geojson": boundary_geojson,
-            "boundary_method": boundary_method,
-            "boundary_quality": quality,
-        }
-
-        if best_candidate is None or quality["quality_score"] > best_candidate["boundary_quality"]["quality_score"]:
-            best_candidate = candidate
-
-        if quality["pass"] and quality["quality_score"] >= 0.70:
-            best_candidate = candidate
-            break
-
-    hull_quality = _score_boundary_quality(cluster_points=cluster_points, boundary_geojson=hull_geojson)
-    attempt_log.append(
-        {
-            "attempt": len(attempt_log) + 1,
-            "alpha": None,
-            "method": "convex_hull_quality_fallback",
-            "quality_score": hull_quality["quality_score"],
-            "coverage_ratio": hull_quality["coverage_ratio"],
-            "area_ratio_to_hull": hull_quality["area_ratio_to_hull"],
-            "pass": hull_quality["pass"],
-        }
+    return boundary_builder.build_cluster_boundary(
+        cluster_points=cluster_points,
+        bbox_area_m2=bbox_area_m2,
+        density=density,
+        alpha_max_input_points=alpha_max_input_points,
+        road_index=road_index,
+        road_geometries=road_geometries,
+        landuse_index=landuse_index,
+        landuse_geometries=landuse_geometries,
+        landuse_weights=landuse_weights,
+        build_alpha_shape_func=build_alpha_shape,
+        compute_road_alignment_score_func=_compute_road_alignment_score,
+        compute_landuse_alignment_score_func=_compute_landuse_alignment_score,
+        score_boundary_quality_func=_score_boundary_quality,
+        snap_polygon_to_linear_context_func=_snap_polygon_to_linear_context,
+        to_surface_polygon_func=_to_surface_polygon,
     )
-
-    hull_candidate = {
-        "attempt": len(attempt_log),
-        "alpha": None,
-        "boundary_geojson": hull_geojson,
-        "boundary_method": "convex_hull_quality_fallback",
-        "boundary_quality": hull_quality,
-    }
-
-    if best_candidate is None:
-        best_candidate = hull_candidate
-    else:
-        best_quality = best_candidate["boundary_quality"]
-        if (
-            best_quality["coverage_ratio"] < 0.72
-            and hull_quality["coverage_ratio"] > best_quality["coverage_ratio"] + 0.12
-        ):
-            best_candidate = hull_candidate
-        elif hull_quality["quality_score"] > best_quality["quality_score"] + 0.08:
-            best_candidate = hull_candidate
-
-    return {
-        "boundary_geojson": best_candidate["boundary_geojson"],
-        "boundary_method": best_candidate["boundary_method"],
-        "boundary_quality": best_candidate["boundary_quality"],
-        "boundary_generation": {
-            "attempts": len(attempt_log),
-            "alpha_attempts": sum(1 for attempt in attempt_log if str(attempt.get("method", "")).startswith("alpha_shape")),
-            "selected_attempt": int(best_candidate["attempt"]),
-            "selected_alpha": round(float(best_candidate["alpha"]), 4) if best_candidate["alpha"] is not None else None,
-            "base_alpha": round(float(base_alpha), 4),
-            "attempt_log": attempt_log[:6],
-        },
-    }
 
 
 def _build_boundary_confidence(
@@ -866,54 +1212,58 @@ def _build_boundary_confidence(
     membership_score: float,
     boundary_method: str,
     boundary_quality_score: float | None = None,
+    poi_quality_score: float | None = None,
+    semantic_anchor_confidence: float | None = None,
+    niche_consistency_score: float | None = None,
+    visual_morphology_confidence: float | None = None,
+    self_validation_confidence: float | None = None,
+    skg_consistency_score: float | None = None,
+    ) -> Dict[str, Any]:
+    return confidence_scorer.build_boundary_confidence(
+        layer_bundle=layer_bundle,
+        membership_score=membership_score,
+        boundary_method=boundary_method,
+        boundary_quality_score=boundary_quality_score,
+        poi_quality_score=poi_quality_score,
+        semantic_anchor_confidence=semantic_anchor_confidence,
+        niche_consistency_score=niche_consistency_score,
+        visual_morphology_confidence=visual_morphology_confidence,
+        self_validation_confidence=self_validation_confidence,
+        skg_consistency_score=skg_consistency_score,
+    )
+
+
+def _review_cluster_morphology(
+    *,
+    spatial_context: Dict[str, Any],
+    boundary_geojson: Dict[str, Any] | None,
+    boundary_quality: Dict[str, Any] | None,
+    poi_count: int,
+    model_name: str,
+    endpoint: str,
+    image_data_url: str | None,
+    enable_remote: bool,
+    timeout_ms: int,
 ) -> Dict[str, Any]:
-    """Build explainable boundary confidence score in [0, 1]."""
-    transition_conf = _to_float((layer_bundle.get("transition") or {}).get("confidence"))
-    outer_conf = _to_float((layer_bundle.get("outer") or {}).get("confidence"))
-    layer_conf = transition_conf if transition_conf is not None else (outer_conf if outer_conf is not None else 0.0)
-    membership_conf = _clamp01(membership_score)
-    method_conf = _clamp01(_boundary_method_confidence(boundary_method))
-    quality_conf = _clamp01(float(boundary_quality_score)) if boundary_quality_score is not None else None
+    return vlm_reviewer.review_cluster_morphology(
+        spatial_context=spatial_context,
+        boundary_geojson=boundary_geojson,
+        boundary_quality=boundary_quality,
+        poi_count=poi_count,
+        model_name=model_name,
+        endpoint=endpoint,
+        image_data_url=image_data_url,
+        enable_remote=enable_remote,
+        timeout_ms=timeout_ms,
+    )
 
-    if quality_conf is None:
-        weights = {
-            "layer": 0.55,
-            "membership": 0.25,
-            "method": 0.20,
-        }
-        score = _clamp01(
-            weights["layer"] * layer_conf
-            + weights["membership"] * membership_conf
-            + weights["method"] * method_conf
-        )
-    else:
-        weights = {
-            "layer": 0.45,
-            "membership": 0.20,
-            "method": 0.15,
-            "quality": 0.20,
-        }
-        score = _clamp01(
-            weights["layer"] * layer_conf
-            + weights["membership"] * membership_conf
-            + weights["method"] * method_conf
-            + weights["quality"] * quality_conf
-        )
 
-    explain = {
-        "model": "composite_v1",
-        "layer_confidence": round(layer_conf, 4),
-        "membership_confidence": round(membership_conf, 4),
-        "method_confidence": round(method_conf, 4),
-        "weights": weights,
-    }
-    if quality_conf is not None:
-        explain["quality_confidence"] = round(quality_conf, 4)
+def _validate_cluster_entries(cluster_entries: List[Dict[str, Any]]) -> Dict[str, Any]:
+    return self_validator.validate_cluster_entries(cluster_entries)
 
-    return {
-        "score": round(score, 4),
-        "explain": explain,
-    }
+
+def _build_spatial_knowledge_graph(cluster_entries: List[Dict[str, Any]]) -> Dict[str, Any]:
+    return spatial_knowledge_graph.build_spatial_knowledge_graph(cluster_entries)
 
 
 def _poi_priority(
@@ -923,7 +1273,7 @@ def _poi_priority(
     center_lat: float,
     vitality_score: float,
 ) -> float:
-    """Score a POI for display ordering (high-value + center proximity)."""
+    """注释说明。"""
     rating_raw = _to_float(poi.get("rating"))
     rating_norm = 0.0
     if rating_raw is not None and rating_raw > 0:
@@ -951,8 +1301,8 @@ def _build_representative_pois(
     max_count: int,
 ) -> List[Dict[str, Any]]:
     """
-    Build a display list that is both high-value and spatially distributed.
-    The first N points should not collapse into a single corner/cluster.
+    注释说明。
+    注释说明。
     """
     if max_count <= 0:
         return []
@@ -1055,14 +1405,29 @@ def _build_representative_pois(
     return selected[:max_count]
 
 
+def _build_region_views(*, cluster_entries: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    return result_assembler.build_region_views(cluster_entries=cluster_entries)
+
+
+def _summarize_cluster_entries(
+    *,
+    cluster_entries: List[Dict[str, Any]],
+    fuzzy_regions: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    return result_assembler.summarize_cluster_entries(
+        cluster_entries=cluster_entries,
+        fuzzy_regions=fuzzy_regions,
+    )
+
+
 class SpatialPipeline:
-    """鏍稿績娴佹按绾匡細鏌ヨ鍊欓€?-> 鑱氱被 -> 杈圭晫 -> membership -> 杈撳嚭浜嬩欢娴併€?"""
+    """注释说明。"""
 
     def __init__(self, repository: POIRepository | None = None) -> None:
         self.repository = repository or POIRepository()
 
     def run(self, request: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
-        """鎵ц涓€娆＄┖闂翠换鍔″苟鎸佺画浜у嚭闃舵浜嬩欢銆?"""
+        """注释说明。"""
         query_type = str(request.get("query_type") or "poi_search")
         spatial_context = _safe_json_loads(request.get("spatial_context"), {})
         categories = [str(cat).strip() for cat in (request.get("categories") or []) if str(cat).strip()]
@@ -1076,6 +1441,33 @@ class SpatialPipeline:
             hints_options.get("sourcePolicy")
             or hints_options.get("source_policy")
             or {}
+        )
+        requested_confidence_model = str(
+            hints_options.get("confidenceModel") or hints_options.get("confidence_model") or ""
+        ).strip().lower()
+        force_composite_v4 = requested_confidence_model == "composite_v4"
+
+        visual_review_enabled = force_composite_v4 or _option_enabled(
+            hints_options.get("visualReviewEnabled"), default_value=False
+        )
+        visual_remote_enabled = visual_review_enabled and _option_enabled(
+            hints_options.get("visualRemoteEnabled"), default_value=False
+        )
+        self_validation_enabled = force_composite_v4 or _option_enabled(
+            hints_options.get("selfValidationEnabled"), default_value=False
+        )
+        skg_enabled = force_composite_v4 or _option_enabled(
+            hints_options.get("skgEnabled"), default_value=False
+        )
+        visual_model_name = str(hints_options.get("visualModel") or "qwen3-vl-4b")
+        visual_endpoint = str(
+            hints_options.get("visualEndpoint") or "http://localhost:1234/v1/chat/completions"
+        )
+        visual_image_data_url = hints_options.get("visualSnapshotDataUrl") or hints_options.get("mapSnapshotDataUrl")
+        visual_timeout_ms = _resolve_limit(
+            hints_options.get("visualTimeoutMs"),
+            default_value=1200,
+            max_value=15000,
         )
 
         if not categories and isinstance(source_policy, dict) and source_policy.get("has_category_filter"):
@@ -1092,8 +1484,25 @@ class SpatialPipeline:
         need_region_comparison = query_type == "region_comparison"
         region_context = hints_options.get("regions") if isinstance(hints_options.get("regions"), list) else []
         target_region_ids = query_plan.get("target_regions") if isinstance(query_plan.get("target_regions"), list) else []
+        semantic_anchor_hints: List[str] = []
 
-        # 鍥剧粨鏋勬帹鐞嗕互绌洪棿鍏崇郴涓烘牳蹇冿紝閬垮厤璇箟鍒嗚瘝鎶婂€欓€夐泦璇繃婊や负绌恒€?
+        anchor_hint_name = (
+            str((anchor_hint or {}).get("name") or "").strip()
+            if isinstance(anchor_hint, dict)
+            else ""
+        )
+        if anchor_hint_name:
+            semantic_anchor_hints.append(anchor_hint_name)
+
+        for raw_hint in (query_plan.get("semantic_anchor_candidates") or []):
+            if isinstance(raw_hint, str) and raw_hint.strip():
+                semantic_anchor_hints.append(raw_hint.strip())
+        for raw_hint in (hints_options.get("semanticAnchorHints") or []):
+            if isinstance(raw_hint, str) and raw_hint.strip():
+                semantic_anchor_hints.append(raw_hint.strip())
+
+        spatial_constraint_polygon = _build_spatial_constraint_polygon(spatial_context)
+        # 纯图推理模式下不做语义关键词过滤，保持候选点覆盖范围更广。
         if need_graph_reasoning and query_type == "graph_reasoning":
             terms = []
 
@@ -1121,7 +1530,7 @@ class SpatialPipeline:
             total_pois = sum(int(item.get("poi_count", 0)) for item in region_analyses)
             comparison_error = None
             if valid_regions < 2:
-                comparison_error = "瀵规瘮鍒嗘瀽闇€瑕佽嚦灏?涓湁鏁堥€夊尯"
+                comparison_error = "Not enough valid regions for comparison (minimum: 2)."
                 comparison = None
 
             yield {
@@ -1143,12 +1552,14 @@ class SpatialPipeline:
                 "pois": [],
                 "boundary": None,
                 "spatial_clusters": {"hotspots": []},
+                "regions": [],
                 "vernacular_regions": [],
                 "fuzzy_regions": [],
                 "fuzzy_summary": {"core": 0, "transition": 0, "periphery": 0},
                 "graph_reasoning": _empty_graph_summary(),
                 "stats": {
                     "query_type": query_type,
+                    "requested_confidence_model": requested_confidence_model or None,
                     "requested_regions": len(target_region_ids),
                     "valid_regions": valid_regions,
                     "regions_analyzed": valid_regions,
@@ -1200,12 +1611,12 @@ class SpatialPipeline:
         max_fetch_limit = _resolve_limit(hints_options.get("maxFetchLimit"), default_value=20000, max_value=500000)
         fetch_limit = _resolve_limit(hints_options.get("limit"), default_value=8000, max_value=max_fetch_limit)
 
-        # ?????graph ???????? limit????????????????????????
+        # 注释说明
         explicit_limit = hints_options.get("limit")
         if query_type == "graph_reasoning" and explicit_limit is None:
             fetch_limit = min(fetch_limit, max(600, graph_max_nodes * 3))
 
-        # ???????? Node ????????????????????????
+        # 注释说明
         db_order_by_distance = True
 
         yield {
@@ -1220,33 +1631,71 @@ class SpatialPipeline:
         raw_candidates = _safe_json_loads(request.get("candidates_json"), [])
         payload_candidates = _normalize_payload_candidates(raw_candidates)
         
-        # Debug logging
+        # 调试日志
         print(f"[PIPELINE_DEBUG] candidates_json present: {len(raw_candidates) > 0}", flush=True, file=sys.stderr)
         print(f"[PIPELINE_DEBUG] payload_candidates count: {len(payload_candidates)}", flush=True, file=sys.stderr)
         print(f"[PIPELINE_DEBUG] py_data_source: {py_data_source}", flush=True, file=sys.stderr)
         print(f"[PIPELINE_DEBUG] spatial_context: {spatial_context}", flush=True, file=sys.stderr)
 
         candidate_source = "db"
+        original_terms = list(terms)
+        effective_terms = list(terms)
+        term_filter_relaxed = False
         if payload_candidates and py_data_source in {"hybrid", "node"}:
             print(f"[PIPELINE_DEBUG] Using payload candidates (frontend POIs)", flush=True, file=sys.stderr)
             pois = _filter_payload_candidates(
                 payload_candidates,
                 spatial_context=spatial_context,
                 categories=categories,
-                terms=terms,
+                terms=effective_terms,
                 limit=fetch_limit,
             )
             candidate_source = "payload"
+            if not pois and effective_terms:
+                print(
+                    "[PIPELINE_DEBUG] Payload candidates strict terms returned 0, retry without semantic terms",
+                    flush=True,
+                    file=sys.stderr,
+                )
+                pois = _filter_payload_candidates(
+                    payload_candidates,
+                    spatial_context=spatial_context,
+                    categories=categories,
+                    terms=[],
+                    limit=fetch_limit,
+                )
+                term_filter_relaxed = True
+                effective_terms = []
         else:
             print(f"[PIPELINE_DEBUG] Using repository.fetch_pois (PostGIS)", flush=True, file=sys.stderr)
             pois = self.repository.fetch_pois(
                 spatial_context=spatial_context,
                 categories=categories,
-                terms=terms,
+                terms=effective_terms,
                 limit=fetch_limit,
                 order_by_distance=db_order_by_distance,
             )
             print(f"[PIPELINE_DEBUG] fetch_pois returned {len(pois)} POIs", flush=True, file=sys.stderr)
+            if not pois and effective_terms:
+                print(
+                    "[PIPELINE_DEBUG] PostGIS strict terms returned 0, retry without semantic terms",
+                    flush=True,
+                    file=sys.stderr,
+                )
+                pois = self.repository.fetch_pois(
+                    spatial_context=spatial_context,
+                    categories=categories,
+                    terms=[],
+                    limit=fetch_limit,
+                    order_by_distance=db_order_by_distance,
+                )
+                print(
+                    f"[PIPELINE_DEBUG] fetch_pois (relaxed terms) returned {len(pois)} POIs",
+                    flush=True,
+                    file=sys.stderr,
+                )
+                term_filter_relaxed = True
+                effective_terms = []
 
         direction_applied = direction_hint is not None
         if direction_applied:
@@ -1256,6 +1705,65 @@ class SpatialPipeline:
                 anchor=anchor_hint,
                 limit=fetch_limit,
             )
+        query_filter_stats = {
+            "semantic_terms_count": len(original_terms),
+            "semantic_terms_applied_count": len(effective_terms),
+            "term_filter_relaxed": term_filter_relaxed,
+            "requested_confidence_model": requested_confidence_model or None,
+        }
+
+        road_boundary_enhancement = str(hints_options.get("roadBoundaryEnhancement", "true")).lower() not in {
+            "false",
+            "0",
+            "off",
+            "no",
+        }
+        road_fetch_limit = _resolve_limit(
+            hints_options.get("roadMaxFetch"),
+            default_value=12000,
+            max_value=120000,
+        )
+        road_bundle = context_loader.load_road_context(
+            repository=self.repository,
+            spatial_context=spatial_context,
+            query_type=query_type,
+            enabled=road_boundary_enhancement,
+            fetch_limit=road_fetch_limit,
+            normalize_road_geometries_func=_normalize_road_geometries,
+        )
+        road_rows: List[Dict[str, Any]] = list(road_bundle.get("rows") or [])
+        road_geometries: List[Any] = list(road_bundle.get("geometries") or [])
+        road_index: STRtree | None = road_bundle.get("index")
+        road_source = str(road_bundle.get("source") or "disabled")
+
+        landuse_boundary_enhancement = str(hints_options.get("landuseBoundaryEnhancement", "true")).lower() not in {
+            "false",
+            "0",
+            "off",
+            "no",
+        }
+        landuse_fetch_limit = _resolve_limit(
+            hints_options.get("landuseMaxFetch"),
+            default_value=15000,
+            max_value=150000,
+        )
+        landuse_bundle = context_loader.load_landuse_context(
+            repository=self.repository,
+            spatial_context=spatial_context,
+            query_type=query_type,
+            enabled=landuse_boundary_enhancement,
+            fetch_limit=landuse_fetch_limit,
+            normalize_landuse_geometries_func=_normalize_landuse_geometries,
+        )
+        landuse_rows: List[Dict[str, Any]] = list(landuse_bundle.get("rows") or [])
+        landuse_geometries: List[Any] = list(landuse_bundle.get("geometries") or [])
+        landuse_weights: List[float] = [
+            _clamp01(float(value))
+            for value in (landuse_bundle.get("weights") or [])
+        ]
+        landuse_semantic_features: List[Dict[str, Any]] = list(landuse_bundle.get("semantic_features") or [])
+        landuse_index: STRtree | None = landuse_bundle.get("index")
+        landuse_source = str(landuse_bundle.get("source") or "disabled")
 
         graph_summary = (
             analyze_spatial_graph(
@@ -1278,22 +1786,31 @@ class SpatialPipeline:
                 "direction_applied": direction_applied,
                 "graph_enabled": need_graph_reasoning,
                 "graph_nodes": graph_summary.get("node_count", 0) if graph_summary else 0,
+                "road_boundary_enhancement": road_boundary_enhancement,
+                "road_feature_count": len(road_geometries),
+                "road_source": road_source,
+                "landuse_boundary_enhancement": landuse_boundary_enhancement,
+                "landuse_feature_count": len(landuse_geometries),
+                "landuse_source": landuse_source,
+                "semantic_anchor_hint_count": len(semantic_anchor_hints),
             },
         }
 
-        # Graph reasoning does not need expensive region modeling chain.
-        # Return early to keep Python graph analysis responsive under large candidate sets.
+        # 图推理不需要进入高开销的片区建模链路。
+        # 提前返回以保证大规模候选下图分析响应速度。
         if query_type == "graph_reasoning":
             final_results = {
                 "mode": "graph_reasoning",
                 "pois": pois[:500],
                 "boundary": None,
                 "spatial_clusters": {"hotspots": []},
+                "regions": [],
                 "vernacular_regions": [],
                 "fuzzy_regions": [],
                 "fuzzy_summary": {"core": 0, "transition": 0, "periphery": 0},
                 "graph_reasoning": graph_summary or _empty_graph_summary(),
                 "stats": {
+                    **query_filter_stats,
                     "total_candidates": len(pois),
                     "cluster_count": 0,
                     "cluster_engine": "skipped_graph_only",
@@ -1311,6 +1828,12 @@ class SpatialPipeline:
                     "graph_max_nodes": graph_max_nodes,
                     "graph_distance_threshold_m": graph_distance_threshold_m,
                     "graph_fetch_limit": fetch_limit,
+                    "road_boundary_enhancement": road_boundary_enhancement,
+                    "road_feature_count": len(road_geometries),
+                    "road_source": road_source,
+                    "landuse_boundary_enhancement": landuse_boundary_enhancement,
+                    "landuse_feature_count": len(landuse_geometries),
+                    "landuse_source": landuse_source,
                 },
             }
 
@@ -1328,6 +1851,10 @@ class SpatialPipeline:
                         "direction_applied": direction_applied,
                         "graph_enabled": need_graph_reasoning,
                         "graph_fast_path": True,
+                        "road_source": road_source,
+                        "road_feature_count": len(road_geometries),
+                        "landuse_source": landuse_source,
+                        "landuse_feature_count": len(landuse_geometries),
                     },
                 },
             }
@@ -1339,11 +1866,13 @@ class SpatialPipeline:
                 "pois": pois[:fetch_limit],
                 "boundary": None,
                 "spatial_clusters": {"hotspots": []},
+                "regions": [],
                 "vernacular_regions": [],
                 "fuzzy_regions": [],
                 "fuzzy_summary": {"core": 0, "transition": 0, "periphery": 0},
                 "graph_reasoning": _empty_graph_summary(),
                 "stats": {
+                    **query_filter_stats,
                     "total_candidates": len(pois),
                     "query_type": query_type,
                     "candidate_source": candidate_source,
@@ -1368,8 +1897,7 @@ class SpatialPipeline:
                 },
             }
             return
-
-        # 鏃犵粨鏋滄椂浠嶈繑鍥?FINAL锛屼繚鎸佸崗璁ǔ瀹氥€?
+        # 过滤后无候选点，返回合法的空结果负载。
         if not pois:
             yield {
                 "type": "FINAL",
@@ -1380,10 +1908,12 @@ class SpatialPipeline:
                         "pois": [],
                         "boundary": None,
                         "spatial_clusters": {"hotspots": []},
+                        "regions": [],
                         "vernacular_regions": [],
                         "fuzzy_regions": [],
                         "graph_reasoning": graph_summary or _empty_graph_summary(),
                         "stats": {
+                            **query_filter_stats,
                             "total_candidates": 0,
                             "cluster_count": 0,
                             "cluster_engine": "none",
@@ -1405,10 +1935,9 @@ class SpatialPipeline:
         coords: List[Tuple[float, float]] = [
             (float(poi["lon"]), float(poi["lat"])) for poi in pois if poi.get("lon") is not None and poi.get("lat") is not None
         ]
-
-        # 鍏堢粰鍓嶇涓€涓€滆崏鍥捐竟鐣屸€濆仛娓愯繘浣撻獙銆?
+        # 在昂贵的下游建模前先输出一个快速预览边界。
         if len(coords) >= 3:
-            # ??????????????????????????????????
+            # 下采样以保持预览边界生成稳定且快速。
             preview_coords = _sample_coordinates(coords, 3000)
             sketch_polygon = mapping(MultiPoint(preview_coords).convex_hull)
             yield {
@@ -1474,13 +2003,10 @@ class SpatialPipeline:
             },
         }
 
-        vernacular_regions = []
-        fuzzy_regions = []
-        hotspots = []
         boundary_methods: List[str] = []
         cluster_entries: List[Dict[str, Any]] = []
 
-        # Build cluster-level surfaces and scores.
+        # 构建聚类级面边界与评分结果。
         for cluster_id, indices in grouped_indices.items():
             cluster_points_list = [coords[idx] for idx in indices]
             cluster_pois = [pois[idx] for idx in indices]
@@ -1490,6 +2016,12 @@ class SpatialPipeline:
 
             categories_counter = Counter(_category_of(poi) for poi in cluster_pois)
             top_category, top_count = categories_counter.most_common(1)[0]
+            poi_quality = _cluster_poi_quality(cluster_pois)
+            semantic_anchor = _infer_semantic_anchor(
+                cluster_pois=cluster_pois,
+                dominant_category=top_category,
+                llm_anchor_candidates=semantic_anchor_hints,
+            )
 
             bbox_area_m2 = _calc_bbox_area(cluster_points_list)
             density = 0.0 if bbox_area_m2 <= 0 else min(1.0, (len(cluster_points_list) / (bbox_area_m2 / 10_000.0 + 1e-6)) / 20.0)
@@ -1511,25 +2043,124 @@ class SpatialPipeline:
                 bbox_area_m2=bbox_area_m2,
                 density=density,
                 alpha_max_input_points=alpha_max_input_points,
+                road_index=road_index,
+                road_geometries=road_geometries,
+                landuse_index=landuse_index,
+                landuse_geometries=landuse_geometries,
+                landuse_weights=landuse_weights,
             )
             boundary_geojson = boundary_selection["boundary_geojson"]
             boundary_method = boundary_selection["boundary_method"]
             boundary_quality = boundary_selection["boundary_quality"]
             boundary_generation = boundary_selection["boundary_generation"]
 
+            clip_result = _clip_boundary_geojson_to_constraint(
+                boundary_geojson=boundary_geojson,
+                cluster_points=cluster_points_list,
+                constraint_polygon=spatial_constraint_polygon,
+            )
+            boundary_geojson = clip_result["boundary_geojson"]
+            clip_meta = clip_result.get("clip") or {"applied": False}
+            boundary_generation = dict(boundary_generation or {})
+            boundary_generation["constraint_clip"] = clip_meta
+            if clip_meta.get("applied"):
+                clipped_road_alignment = _compute_road_alignment_score(
+                    boundary_geojson=boundary_geojson,
+                    cluster_points=cluster_points_list,
+                    road_index=road_index,
+                    road_geometries=road_geometries,
+                )
+                clipped_landuse_alignment = _compute_landuse_alignment_score(
+                    boundary_geojson=boundary_geojson,
+                    cluster_points=cluster_points_list,
+                    landuse_index=landuse_index,
+                    landuse_geometries=landuse_geometries,
+                    landuse_weights=landuse_weights,
+                )
+                boundary_quality = _score_boundary_quality(
+                    cluster_points=cluster_points_list,
+                    boundary_geojson=boundary_geojson,
+                    road_alignment_score=clipped_road_alignment,
+                    landuse_alignment_score=clipped_landuse_alignment,
+                )
+                boundary_method = f"{boundary_method}_clip_v1"
+
             boundary_methods.append(boundary_method)
+            landuse_semantic_context = _cluster_landuse_semantic_context(
+                boundary_geojson=boundary_geojson,
+                cluster_points=cluster_points_list,
+                semantic_features=landuse_semantic_features,
+            )
+            semantic_anchor = _recover_waterbody_anchor(
+                cluster_pois=cluster_pois,
+                semantic_anchor=semantic_anchor,
+                landuse_context=landuse_semantic_context,
+            )
+            niche_profile = _build_niche_profile(
+                cluster_pois=cluster_pois,
+                dominant_category=top_category,
+                semantic_anchor=semantic_anchor,
+                landuse_context=landuse_semantic_context,
+            )
+            boundary_quality = _apply_water_overlap_penalty(
+                boundary_quality=boundary_quality,
+                niche_profile=niche_profile,
+                landuse_context=landuse_semantic_context,
+            )
+            semantic_reasoning = _build_semantic_reasoning_payload(
+                semantic_anchor=semantic_anchor,
+                niche_profile=niche_profile,
+                landuse_context=landuse_semantic_context,
+            )
+            cluster_display_name = (
+                f"{semantic_anchor.get('name')}\u7247\u533a"
+                if str(semantic_anchor.get("name") or "").strip()
+                else f"{top_category}\u7247\u533a"
+            )
+            semantic_anchor_conf_for_conf = (
+                semantic_anchor.get("confidence")
+                if str(semantic_anchor.get("name") or "").strip()
+                else None
+            )
+            niche_consistency_for_conf = (
+                niche_profile.get("consistency")
+                if semantic_anchor_conf_for_conf is not None
+                and str(niche_profile.get("niche_type") or "") != "mixed"
+                else None
+            )
 
             layer_bundle = _build_region_layers(
                 cluster_points=cluster_points_list,
                 base_boundary_geojson=boundary_geojson,
                 density=density,
                 membership_score=float(membership.score),
+                constraint_polygon=spatial_constraint_polygon,
+            )
+            visual_review = None
+            if visual_review_enabled:
+                visual_review = _review_cluster_morphology(
+                    spatial_context=spatial_context,
+                    boundary_geojson=layer_bundle["representative_geojson"] or boundary_geojson,
+                    boundary_quality=boundary_quality,
+                    poi_count=len(cluster_points_list),
+                    model_name=visual_model_name,
+                    endpoint=visual_endpoint,
+                    image_data_url=visual_image_data_url,
+                    enable_remote=visual_remote_enabled,
+                    timeout_ms=visual_timeout_ms,
+                )
+            visual_morphology_conf_for_conf = (
+                visual_review.get("score") if isinstance(visual_review, dict) else None
             )
             boundary_conf = _build_boundary_confidence(
                 layer_bundle=layer_bundle,
                 membership_score=float(membership.score),
                 boundary_method=boundary_method,
                 boundary_quality_score=boundary_quality.get("quality_score"),
+                poi_quality_score=poi_quality.get("score"),
+                semantic_anchor_confidence=semantic_anchor_conf_for_conf,
+                niche_consistency_score=niche_consistency_for_conf,
+                visual_morphology_confidence=visual_morphology_conf_for_conf,
             )
 
             vitality_score = _calc_vitality_score(
@@ -1548,7 +2179,7 @@ class SpatialPipeline:
             cluster_entries.append(
                 {
                     "id": int(cluster_id),
-                    "name": f"{top_category}片区",
+                    "name": cluster_display_name,
                     "theme": top_category,
                     "poi_count": len(cluster_points_list),
                     "center": {"lon": center_lon, "lat": center_lat},
@@ -1564,12 +2195,18 @@ class SpatialPipeline:
                     "membership": asdict(membership),
                     "density": round(density, 4),
                     "purity": round(purity, 4),
+                    "poi_quality": poi_quality,
                     "vitality_score": vitality_score,
                     "boundary_method": boundary_method,
                     "boundary_quality": boundary_quality,
                     "boundary_generation": boundary_generation,
                     "boundary_confidence": boundary_conf["score"],
                     "confidence_explain": boundary_conf["explain"],
+                    "semantic_anchor": semantic_anchor,
+                    "niche_profile": niche_profile,
+                    "landuse_semantic": landuse_semantic_context,
+                    "semantic_reasoning": semantic_reasoning,
+                    "visual_morphology": visual_review,
                     "score_breakdown": {
                         "density": membership.density,
                         "purity": membership.purity,
@@ -1582,74 +2219,112 @@ class SpatialPipeline:
                 }
             )
 
+        self_validation_result = {
+            "cluster_scores": {},
+            "cluster_reports": [],
+            "summary": {
+                "model": "self_validation_v1",
+                "avg_score": 0.0,
+                "min_score": 0.0,
+                "max_score": 0.0,
+                "low_score_count": 0,
+                "issue_counts": {},
+            },
+        }
+        if self_validation_enabled:
+            self_validation_result = _validate_cluster_entries(cluster_entries)
+
+        skg_result = {
+            "cluster_scores": {},
+            "cluster_reports": [],
+            "graph": {
+                "model": "skg_consistency_v1",
+                "node_count": 0,
+                "edge_count": 0,
+                "cluster_count": 0,
+                "token_profile": "low_token_summary_v1",
+            },
+            "summary": {
+                "avg_score": 0.0,
+                "min_score": 0.0,
+                "max_score": 0.0,
+            },
+        }
+        if skg_enabled:
+            skg_result = _build_spatial_knowledge_graph(cluster_entries)
+
+        self_report_by_id = {
+            int(report.get("id", 0)): report
+            for report in (self_validation_result.get("cluster_reports") or [])
+        }
+        skg_report_by_id = {
+            int(report.get("id", 0)): report
+            for report in (skg_result.get("cluster_reports") or [])
+        }
+
+        # 当启用 composite_v4 工作流时，叠加视觉/自校验/SKG 信号并回写最终置信度。
+        if force_composite_v4 or visual_review_enabled or self_validation_enabled or skg_enabled:
+            for entry in cluster_entries:
+                cluster_id = int(entry.get("id", 0))
+                semantic_anchor = entry.get("semantic_anchor") or {}
+                niche_profile = entry.get("niche_profile") or {}
+                semantic_anchor_name = str(semantic_anchor.get("name") or "").strip()
+                semantic_anchor_conf = semantic_anchor.get("confidence") if semantic_anchor_name else None
+                niche_consistency = (
+                    niche_profile.get("consistency")
+                    if semantic_anchor_conf is not None
+                    and str(niche_profile.get("niche_type") or "") != "mixed"
+                    else None
+                )
+
+                layers = entry.get("layers") or {}
+                layer_bundle = {
+                    "outer": layers.get("outer") or {},
+                    "transition": layers.get("transition") or {},
+                    "core": layers.get("core") or {},
+                }
+
+                visual_conf = (
+                    (entry.get("visual_morphology") or {}).get("score")
+                    if (force_composite_v4 or visual_review_enabled)
+                    else None
+                )
+                self_conf = (
+                    (self_validation_result.get("cluster_scores") or {}).get(cluster_id)
+                    if self_validation_enabled
+                    else None
+                )
+                skg_conf = (
+                    (skg_result.get("cluster_scores") or {}).get(cluster_id)
+                    if skg_enabled
+                    else None
+                )
+
+                rescored = _build_boundary_confidence(
+                    layer_bundle=layer_bundle,
+                    membership_score=float((entry.get("membership") or {}).get("score", 0.0)),
+                    boundary_method=str(entry.get("boundary_method") or ""),
+                    boundary_quality_score=(entry.get("boundary_quality") or {}).get("quality_score"),
+                    poi_quality_score=(entry.get("poi_quality") or {}).get("score"),
+                    semantic_anchor_confidence=semantic_anchor_conf,
+                    niche_consistency_score=niche_consistency,
+                    visual_morphology_confidence=visual_conf,
+                    self_validation_confidence=self_conf,
+                    skg_consistency_score=skg_conf,
+                )
+                entry["boundary_confidence"] = rescored["score"]
+                entry["confidence_explain"] = rescored["explain"]
+                if self_conf is not None:
+                    entry["self_validation"] = self_report_by_id.get(cluster_id)
+                if skg_conf is not None:
+                    entry["skg_consistency"] = skg_report_by_id.get(cluster_id)
+
         cluster_entries.sort(key=lambda item: float(item.get("vitality_score", 0.0)), reverse=True)
-
-        for entry in cluster_entries:
-            vernacular_regions.append(
-                {
-                    "id": entry["id"],
-                    "name": entry["name"],
-                    "theme": entry["theme"],
-                    "poi_count": entry["poi_count"],
-                    "center": entry["center"],
-                    "boundary": entry["boundary_geojson"],
-                    "boundary_ring": entry["boundary"],
-                    "layers": entry["layers"],
-                    "dominant_category": entry["dominant_category"],
-                    "dominant_categories": entry["dominant_categories"],
-                    "membership": entry["membership"],
-                    "vitality_score": entry["vitality_score"],
-                    "boundary_method": entry["boundary_method"],
-                    "boundary_quality": entry["boundary_quality"],
-                    "boundary_generation": entry["boundary_generation"],
-                    "boundary_confidence": entry["boundary_confidence"],
-                    "confidence_explain": entry["confidence_explain"],
-                }
-            )
-
-            fuzzy_regions.append(
-                {
-                    "id": entry["id"],
-                    "name": entry["name"],
-                    "theme": entry["theme"],
-                    "score": entry["membership"].get("score", 0.0),
-                    "level": entry["membership"].get("level", "transition"),
-                    "boundary": entry["boundary_geojson"],
-                    "boundary_ring": entry["boundary"],
-                    "center": entry["center"],
-                    "layers": entry["layers"],
-                    "pointCount": entry["poi_count"],
-                    "dominantCategories": entry["dominant_categories"],
-                    "vitalityScore": entry["vitality_score"],
-                    "boundary_method": entry["boundary_method"],
-                    "boundary_quality": entry["boundary_quality"],
-                    "boundary_generation": entry["boundary_generation"],
-                    "boundary_confidence": entry["boundary_confidence"],
-                    "confidence_explain": entry["confidence_explain"],
-                    "score_breakdown": entry["score_breakdown"],
-                    "drivers": entry["drivers"],
-                }
-            )
-
-            hotspots.append(
-                {
-                    "id": entry["id"],
-                    "name": entry["name"],
-                    "center": entry["center"],
-                    "poiCount": entry["poi_count"],
-                    "density": entry["density"],
-                    "vitalityScore": entry["vitality_score"],
-                    "boundary": entry["boundary"],
-                    "boundary_geojson": entry["boundary_geojson"],
-                    "layers": entry["layers"],
-                    "dominantCategories": entry["dominant_categories"],
-                    "boundary_method": entry["boundary_method"],
-                    "boundary_quality": entry["boundary_quality"],
-                    "boundary_generation": entry["boundary_generation"],
-                    "boundary_confidence": entry["boundary_confidence"],
-                    "confidence_explain": entry["confidence_explain"],
-                }
-            )
+        region_views = _build_region_views(cluster_entries=cluster_entries)
+        regions = region_views["regions"]
+        vernacular_regions = region_views["vernacular_regions"]
+        fuzzy_regions = region_views["fuzzy_regions"]
+        hotspots = region_views["hotspots"]
 
         noise_pois = [
             pois[idx]
@@ -1679,56 +2354,30 @@ class SpatialPipeline:
             },
         }
 
-        fuzzy_summary = {
-            "core": len([region for region in fuzzy_regions if region.get("level") == "core"]),
-            "transition": len([region for region in fuzzy_regions if region.get("level") == "transition"]),
-            "periphery": len([region for region in fuzzy_regions if region.get("level") == "periphery"]),
-        }
-        boundary_conf_values = [
-            float(entry.get("boundary_confidence", 0.0))
+        cluster_summary = _summarize_cluster_entries(
+            cluster_entries=cluster_entries,
+            fuzzy_regions=fuzzy_regions,
+        )
+        fuzzy_summary = cluster_summary["fuzzy_summary"]
+        visual_scores = [
+            float((entry.get("visual_morphology") or {}).get("score"))
             for entry in cluster_entries
-            if entry.get("boundary_confidence") is not None
+            if (entry.get("visual_morphology") or {}).get("score") is not None
         ]
-        boundary_quality_values = [
-            float((entry.get("boundary_quality") or {}).get("quality_score", 0.0))
-            for entry in cluster_entries
-            if (entry.get("boundary_quality") or {}).get("quality_score") is not None
-        ]
-        boundary_coverage_values = [
-            float((entry.get("boundary_quality") or {}).get("coverage_ratio", 0.0))
-            for entry in cluster_entries
-            if (entry.get("boundary_quality") or {}).get("coverage_ratio") is not None
-        ]
-        boundary_quality_pass_count = sum(
-            1
-            for entry in cluster_entries
-            if bool((entry.get("boundary_quality") or {}).get("pass"))
+        avg_visual_morphology_confidence = (
+            round(sum(visual_scores) / len(visual_scores), 4) if visual_scores else 0.0
         )
-        boundary_iteration_values = [
-            int((entry.get("boundary_generation") or {}).get("attempts", 1))
-            for entry in cluster_entries
-        ]
-        avg_boundary_conf = round(sum(boundary_conf_values) / len(boundary_conf_values), 4) if boundary_conf_values else 0.0
-        avg_boundary_quality_score = (
-            round(sum(boundary_quality_values) / len(boundary_quality_values), 4)
-            if boundary_quality_values
-            else 0.0
+        visual_modes = sorted(
+            {
+                str((entry.get("visual_morphology") or {}).get("mode"))
+                for entry in cluster_entries
+                if (entry.get("visual_morphology") or {}).get("mode")
+            }
         )
-        avg_boundary_coverage = (
-            round(sum(boundary_coverage_values) / len(boundary_coverage_values), 4)
-            if boundary_coverage_values
-            else 0.0
-        )
-        boundary_quality_pass_rate = (
-            round(boundary_quality_pass_count / len(cluster_entries), 4)
-            if cluster_entries
-            else 0.0
-        )
-        avg_boundary_iterations = (
-            round(sum(boundary_iteration_values) / len(boundary_iteration_values), 3)
-            if boundary_iteration_values
-            else 0.0
-        )
+
+        self_validation_summary = (self_validation_result.get("summary") or {}).copy()
+        skg_summary = (skg_result.get("summary") or {}).copy()
+        skg_graph = (skg_result.get("graph") or {}).copy()
 
         final_results = {
             "mode": "python-spatial",
@@ -1738,11 +2387,18 @@ class SpatialPipeline:
                 "hotspots": hotspots[:5],
                 "h3_summary": h3_summary.get("cells", [])[:20],
             },
+            "regions": regions[:10],
             "vernacular_regions": vernacular_regions[:10],
             "fuzzy_regions": fuzzy_regions[:10],
             "fuzzy_summary": fuzzy_summary,
             "graph_reasoning": graph_summary or _empty_graph_summary(),
+            "self_validation": self_validation_summary,
+            "spatial_knowledge_graph": {
+                **skg_graph,
+                "summary": skg_summary,
+            },
             "stats": {
+                **query_filter_stats,
                 "total_candidates": len(pois),
                 "cluster_count": len(vernacular_regions),
                 "cluster_engine": cluster_result.engine,
@@ -1758,16 +2414,41 @@ class SpatialPipeline:
                 "direction": direction_hint,
                 "direction_applied": direction_applied,
                 "boundary_method": boundary_methods[0] if len(set(boundary_methods)) == 1 and boundary_methods else "mixed",
-                "boundary_confidence_model": "composite_v1",
-                "avg_boundary_confidence": avg_boundary_conf,
-                "min_boundary_confidence": round(min(boundary_conf_values), 4) if boundary_conf_values else 0.0,
-                "max_boundary_confidence": round(max(boundary_conf_values), 4) if boundary_conf_values else 0.0,
-                "boundary_quality_model": "coverage_area_compactness_v1",
-                "avg_boundary_quality_score": avg_boundary_quality_score,
-                "avg_boundary_coverage": avg_boundary_coverage,
-                "boundary_quality_pass_rate": boundary_quality_pass_rate,
-                "avg_boundary_iterations": avg_boundary_iterations,
+                "boundary_confidence_model": cluster_summary["boundary_conf_model"],
+                "avg_boundary_confidence": cluster_summary["avg_boundary_confidence"],
+                "min_boundary_confidence": cluster_summary["min_boundary_confidence"],
+                "max_boundary_confidence": cluster_summary["max_boundary_confidence"],
+                "avg_poi_quality_score": cluster_summary["avg_poi_quality_score"],
+                "boundary_quality_model": cluster_summary["boundary_quality_model"],
+                "avg_boundary_quality_score": cluster_summary["avg_boundary_quality_score"],
+                "avg_boundary_coverage": cluster_summary["avg_boundary_coverage"],
+                "avg_landuse_alignment_score": cluster_summary["avg_landuse_alignment_score"],
+                "avg_water_overlap_ratio": cluster_summary["avg_water_overlap_ratio"],
+                "avg_water_penalty": cluster_summary["avg_water_penalty"],
+                "semantic_anchor_model": "rule_hint_v1",
+                "avg_semantic_anchor_confidence": cluster_summary["avg_semantic_anchor_confidence"],
+                "semantic_anchor_coverage": cluster_summary["semantic_anchor_coverage"],
+                "niche_type_counts": cluster_summary["niche_type_counts"],
+                "dominant_niche_type": cluster_summary["dominant_niche_type"],
+                "avg_visual_morphology_confidence": avg_visual_morphology_confidence,
+                "visual_review_mode": visual_modes[0] if len(visual_modes) == 1 else ("mixed" if visual_modes else "disabled"),
+                "visual_review_modes": visual_modes,
+                "visual_review_model": visual_model_name if visual_review_enabled else None,
+                "avg_self_validation_confidence": float(self_validation_summary.get("avg_score", 0.0)),
+                "self_validation_model": self_validation_summary.get("model"),
+                "avg_skg_consistency_score": float(skg_summary.get("avg_score", 0.0)),
+                "skg_model": skg_graph.get("model"),
+                "skg_node_count": int(skg_graph.get("node_count", 0)),
+                "skg_edge_count": int(skg_graph.get("edge_count", 0)),
+                "boundary_quality_pass_rate": cluster_summary["boundary_quality_pass_rate"],
+                "avg_boundary_iterations": cluster_summary["avg_boundary_iterations"],
                 "alpha_max_input_points": alpha_max_input_points,
+                "road_boundary_enhancement": road_boundary_enhancement,
+                "road_feature_count": len(road_geometries),
+                "road_source": road_source,
+                "landuse_boundary_enhancement": landuse_boundary_enhancement,
+                "landuse_feature_count": len(landuse_geometries),
+                "landuse_source": landuse_source,
                 "graph_component_count": graph_summary.get("component_count", 0) if graph_summary else 0,
                 "graph_edge_count": graph_summary.get("edge_count", 0) if graph_summary else 0,
                 "fuzzy_core_count": fuzzy_summary["core"],
@@ -1791,9 +2472,27 @@ class SpatialPipeline:
                     "direction": direction_hint,
                     "direction_applied": direction_applied,
                     "boundary_methods": boundary_methods,
+                    "road_source": road_source,
+                    "road_feature_count": len(road_geometries),
+                    "landuse_source": landuse_source,
+                    "landuse_feature_count": len(landuse_geometries),
+                    "semantic_anchor_model": "rule_hint_v1",
+                    "semantic_anchor_hint_count": len(semantic_anchor_hints),
+                    "confidence_model": requested_confidence_model or cluster_summary["boundary_conf_model"],
+                    "visual_review_enabled": visual_review_enabled,
+                    "visual_remote_enabled": visual_remote_enabled,
+                    "visual_review_model": visual_model_name if visual_review_enabled else None,
+                    "self_validation_enabled": self_validation_enabled,
+                    "skg_enabled": skg_enabled,
+                    "self_validation_model": self_validation_summary.get("model"),
+                    "skg_model": skg_graph.get("model"),
+                    "skg_node_count": int(skg_graph.get("node_count", 0)),
+                    "skg_edge_count": int(skg_graph.get("edge_count", 0)),
                     "graph_enabled": need_graph_reasoning,
                     "graph_component_count": graph_summary.get("component_count", 0) if graph_summary else 0,
                 },
             },
         }
+
+
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 
@@ -43,13 +44,17 @@ def compute_membership(
     scale = clamp(scale)
 
     # 首版固定权重（对应 MVP 方案）。
-    score = (
+    base_score = (
         0.30 * density
         + 0.25 * purity
         + 0.20 * centrality
         + 0.15 * compactness
         + 0.10 * scale
     )
+    purity_compactness_synergy = 0.08 * math.sqrt(max(0.0, purity * compactness))
+    small_cluster_compensation = 0.06 * purity * (1.0 - density) * (1.0 - scale)
+    instability_penalty = 0.05 * max(0.0, 0.35 - compactness)
+    score = clamp(base_score + purity_compactness_synergy + small_cluster_compensation - instability_penalty)
 
     if score >= 0.72:
         level = "core"

@@ -107,7 +107,7 @@ export async function computeSpatialStream(requestPayload, onEvent) {
       try {
         call.cancel()
       } catch {
-        // ???????????
+        // 取消调用时的二次异常直接忽略
       }
       reject(err instanceof Error ? err : new Error(String(err)))
     }
@@ -129,13 +129,13 @@ export async function computeSpatialStream(requestPayload, onEvent) {
           try {
             parsedPayload = JSON.parse(event.payload)
           } catch {
-            // payload ?? JSON ????????????????
+            // payload 不是 JSON 时，按原始字符串透传
             parsedPayload = { raw: event.payload }
           }
         }
 
         if (typeof onEvent === 'function') {
-          // ?? async ?????????????? Promise ??????
+          // 允许 async 回调，串行等待 Promise 完成
           await onEvent({
             type: eventType,
             payload: parsedPayload,
@@ -162,7 +162,7 @@ export async function computeSpatialStream(requestPayload, onEvent) {
 }
 
 /**
- * ????????? client????? channel?
+ * 主动关闭 gRPC client，释放底层 channel 连接
  */
 export function closeGrpcClient() {
   if (client) {

@@ -1,9 +1,9 @@
-"""????????
+"""空间图推理工具。
 
-?????
-1) ????? Node ???????????
-2) ??????? O(n^2) ??????
-3) ??????????????????
+目标：
+1) 与 Node 端既有图推理口径保持一致；
+2) 避免全量 O(n^2) 两两连边；
+3) 为空间语义模块提供轻量图结构特征。
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Set, Tuple
 
 
 def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """????????????"""
+    """计算两点间球面距离（米）。"""
     radius_m = 6_371_000.0
     dlat = math.radians(lat2 - lat1)
     dlon = math.radians(lon2 - lon1)
@@ -24,7 +24,7 @@ def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 
 
 def _empty_result(distance_threshold_m: float) -> Dict[str, Any]:
-    """?????????? API ???"""
+    """返回与 API 契约一致的空图结果。"""
     return {
         "node_count": 0,
         "edge_count": 0,
@@ -37,10 +37,10 @@ def _empty_result(distance_threshold_m: float) -> Dict[str, Any]:
 
 
 def _grid_steps(distance_threshold_m: float, lat_ref: float) -> Tuple[float, float]:
-    """?????????????????"""
+    """按阈值距离估算经纬度网格步长。"""
     meters_per_degree_lat = 111_320.0
     cos_lat = abs(math.cos(math.radians(lat_ref)))
-    # ????????????????????????????????
+    # 在高纬度地区设置经度缩放下限，避免步长异常放大
     meters_per_degree_lon = meters_per_degree_lat * max(0.2, cos_lat)
 
     lat_step = max(distance_threshold_m / meters_per_degree_lat, 1e-6)
@@ -49,7 +49,7 @@ def _grid_steps(distance_threshold_m: float, lat_ref: float) -> Tuple[float, flo
 
 
 def _cell_key(lon: float, lat: float, lon_step: float, lat_step: float) -> Tuple[int, int]:
-    """?????????????"""
+    """将坐标映射到离散网格索引。"""
     return (int(math.floor(lon / lon_step)), int(math.floor(lat / lat_step)))
 
 
@@ -59,12 +59,12 @@ def analyze_spatial_graph(
     distance_threshold_m: float = 280.0,
     max_nodes: int = 450,
 ) -> Dict[str, Any]:
-    """????????????????
+    """构建 POI 邻接图并输出图统计指标。
 
-    ?????
-    - ??????????
-    - ???????????
-    - ??? haversine ?????????
+    过程：
+    - 先进行节点清洗与数量上限控制；
+    - 再用网格分桶缩小候选邻居集合；
+    - 最后用 haversine 精确距离判断是否连边。
     """
     if distance_threshold_m <= 0:
         return _empty_result(distance_threshold_m)
@@ -108,10 +108,10 @@ def analyze_spatial_graph(
     lat_ref = sum(lats) / node_count
     lon_step, lat_step = _grid_steps(float(distance_threshold_m), lat_ref)
 
-    # ????????? cell key????????? floor ???
+    # 预计算每个点的 cell key，后续可复用索引并减少重复 floor 运算
     cell_keys: List[Tuple[int, int]] = [_cell_key(lons[idx], lats[idx], lon_step, lat_step) for idx in range(node_count)]
 
-    # ?????????????????
+    # 网格桶索引：cell -> 该格中的节点下标列表
     grid: Dict[Tuple[int, int], List[int]] = {}
     for idx, key in enumerate(cell_keys):
         bucket = grid.get(key)
@@ -133,7 +133,7 @@ def analyze_spatial_graph(
         (1, 1),
     )
 
-    # ????????????????????? O(n * k)?k ??????
+    # 仅遍历本格与 8 邻格候选点，复杂度近似 O(n * k)，k 为局部密度
     for i in range(node_count):
         lon_i = lons[i]
         lat_i = lats[i]
@@ -148,7 +148,7 @@ def analyze_spatial_graph(
                 if j <= i:
                     continue
 
-                # ?????????????????? haversine ???
+                # 先做经纬度快速裁剪，再用 haversine 做精确判定
                 if abs(lats[j] - lat_i) > lat_step:
                     continue
                 if abs(lons[j] - lon_i) > lon_step:

@@ -56,10 +56,10 @@ def _resolve_cluster_params(
     area = max(lon_span * lat_span, 1e-8)
     density = point_count / area
 
-    # ?????????????? min_cluster_size??????????????
+    # 基于样本规模自适应放大 min_cluster_size，避免碎片化聚类
     adaptive_cluster = int(max(min_cluster_size, min(220, math.sqrt(point_count) * 1.15)))
 
-    # ????????????? min_samples??????? min_samples ???
+    # 基于点密度自适应 min_samples，并保证不低于传入下限
     if density > 800_000:
         adaptive_samples = max(min_samples, 8)
     elif density > 250_000:
@@ -110,7 +110,7 @@ def cluster_points(
             input_point_count=point_count,
         )
 
-    # ???????????? DBSCAN ????? HDBSCAN ???????????
+    # 点数过大或缺少依赖时，使用 DBSCAN 作为 HDBSCAN 的回退方案
     use_hdbscan = hdbscan is not None and point_count <= max_hdbscan_points
 
     if use_hdbscan:
@@ -124,7 +124,7 @@ def cluster_points(
         )
         labels = model.fit_predict(points)
     else:
-        # ????????? eps ???????????????????
+        # 大样本场景适度放宽 eps，降低过度噪声标记
         eps = 0.0018 if point_count <= 20000 else 0.0022
         engine = "dbscan_large" if point_count > max_hdbscan_points else "dbscan_fallback"
         model = DBSCAN(eps=eps, min_samples=max(2, effective_samples))

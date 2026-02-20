@@ -81,7 +81,7 @@ const start = async () => {
     console.log('Initializing job queue...')
     await initQueueServices()
 
-    // ?????memory ????????????????? API ???????
+    // 使用 memory 队列时必须启用内联 worker，否则 API 侧无法完成消费
     const queueMode = getQueueMode()
     const inlineWorkerEnabledByConfig = process.env.ENABLE_INLINE_SPATIAL_WORKER !== 'false'
     const mustUseInlineWorker = queueMode === 'memory'

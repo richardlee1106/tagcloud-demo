@@ -7,6 +7,8 @@ from typing import Iterable, Optional, Sequence
 from shapely.geometry import MultiPoint, Polygon, mapping
 from shapely.ops import unary_union
 
+from algorithms.geo_metrics import polygon_area_m2
+
 try:
     import alphashape  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
@@ -37,11 +39,11 @@ def _downsample_points(points: Sequence[tuple[float, float]], max_points: int) -
     if max_points <= 0 or len(points) <= max_points:
         return list(points), 1
 
-    # ?????????????????????????????
+    # 按固定步长抽样，保证下采样结果可复现
     step = max(1, len(points) // max_points)
     sampled = list(points[::step])
 
-    # ???????????????????????
+    # 兜底补上末尾点，避免边界尾段缺失
     if sampled and sampled[-1] != points[-1]:
         sampled.append(points[-1])
 
@@ -56,7 +58,7 @@ def _simplify_tolerance(polygon: Polygon) -> float:
     min_x, min_y, max_x, max_y = polygon.bounds
     span = max(max_x - min_x, max_y - min_y)
 
-    # ?????????????? 2m~35m ???????????????
+    # 简化容差做上下限约束，约等于 2m~35m 的尺度区间
     return max(0.00002, min(0.00035, span * 0.015))
 
 
@@ -92,7 +94,7 @@ def build_alpha_shape(
     if polygon is None:
         return None
 
-    # ??????????????????? boundary ????????????
+    # 对边界做一次拓扑保持简化，减少毛刺与噪声折线
     tolerance = _simplify_tolerance(polygon)
     simplified = polygon.simplify(tolerance, preserve_topology=True)
     simplified_polygon = _as_polygon(simplified)
@@ -100,7 +102,7 @@ def build_alpha_shape(
         polygon = simplified_polygon
         method = f"{method}_simplified"
 
-    approx_area_m2 = float(polygon.area) * (111_320.0 ** 2)
+    approx_area_m2 = polygon_area_m2(polygon)
     if approx_area_m2 < min_polygon_area_m2:
         return None
 

@@ -84,8 +84,8 @@ class POIRepository:
 
     @classmethod
     def _boundary_wkt(cls, boundary: Iterable[Any] | None) -> Optional[str]:
-        """?????????? WKT?"""
-        # ????? boundary=null??????? NoneType ?????
+        """将边界坐标序列规范化并转换为 Polygon WKT。"""
+        # 防御式判断：boundary 为空或类型不符时直接返回，避免 NoneType 异常
         if not isinstance(boundary, (list, tuple)):
             return None
 
@@ -206,7 +206,7 @@ class POIRepository:
         limit: int = 5000,
         order_by_distance: bool = True,
     ) -> List[Dict[str, Any]]:
-        """????? + ??/?????? POI?"""
+        """按空间约束与类目/关键词条件检索 POI。"""
         # Debug: log entry with spatial_context info
         import sys
         print(f"[POSTGIS_DEBUG] fetch_pois called", flush=True, file=sys.stderr)
@@ -214,7 +214,7 @@ class POIRepository:
         print(f"[POSTGIS_DEBUG] spatial_context: {spatial_context}", flush=True, file=sys.stderr)
         print(f"[POSTGIS_DEBUG] categories: {categories}", flush=True, file=sys.stderr)
         print(f"[POSTGIS_DEBUG] terms: {terms}", flush=True, file=sys.stderr)
-        # ???????????????? null / ?????????????
+        # 兜底保护：spatial_context 非字典时重置，避免后续 .get 调用异常
         if not isinstance(spatial_context, dict):
             print(f"[POSTGIS_DEBUG] Warning: spatial_context is not dict, resetting to {{}}", flush=True, file=sys.stderr)
             spatial_context = {}
@@ -230,24 +230,24 @@ class POIRepository:
         params: List[Any] = []
         order_sql = "ORDER BY p.id ASC" if order_by_distance else ""
 
-        # ??????????????????????
+        # 空间条件按优先级互斥：regions > boundary > viewport > center/radius
         if region_clauses:
-            # ???????????? OR ???????????????????????
+            # 多 region 子句用 OR 连接，允许命中任一候选片区
             where_parts.append("(" + " OR ".join(region_clauses) + ")")
             params.extend(region_params)
             if order_by_distance:
                 order_sql = "ORDER BY p.id ASC"
         elif boundary_wkt:
-            # ??????? && ????????? ST_Within ????????????? CPU ???
+            # 先走 bbox 预过滤（&&），再用 ST_Within 精确过滤以降低 CPU 开销
             where_parts.append("p.geom && ST_GeomFromText(%s, 4326)")
             params.append(boundary_wkt)
             where_parts.append("ST_Within(p.geom, ST_GeomFromText(%s, 4326))")
             params.append(boundary_wkt)
-            # ????????????????? KNN?????????????????
+            # 距离排序使用 KNN + 边界质心，尽量减少排序扫描范围
             if order_by_distance:
                 order_sql = "ORDER BY p.geom <-> ST_Centroid(ST_GeomFromText(%s, 4326)) ASC"
         elif viewport_wkt:
-            # ????????????????? + ????????????????
+            # 视口检索同样采用 bbox 预过滤 + ST_Within 精确过滤
             where_parts.append("p.geom && ST_GeomFromText(%s, 4326)")
             params.append(viewport_wkt)
             where_parts.append("ST_Within(p.geom, ST_GeomFromText(%s, 4326))")
@@ -259,7 +259,7 @@ class POIRepository:
                 "ST_DWithin(p.geom::geography, ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography, %s)"
             )
             params.extend([center[0], center[1], radius])
-            # ?????????????????????????????
+            # 半径检索改用地理坐标距离；排序仍用几何 KNN 近似
             if order_by_distance:
                 order_sql = "ORDER BY p.geom <-> ST_SetSRID(ST_MakePoint(%s, %s), 4326) ASC"
         else:
@@ -289,7 +289,7 @@ class POIRepository:
                 params.extend([wildcard, wildcard, wildcard, wildcard])
             where_parts.append("(" + " OR ".join(term_parts) + ")")
 
-        # ?????????????????????????????????
+        # 为 ORDER BY 中的参数占位补齐与 where 同顺序的 SQL 参数
         if order_by_distance and order_sql.startswith("ORDER BY p.geom <-> ST_Centroid"):
             params.append(boundary_wkt or viewport_wkt)
         elif order_by_distance and order_sql.startswith("ORDER BY p.geom <-> ST_SetSRID") and center:
@@ -326,6 +326,141 @@ class POIRepository:
         return [dict(row) for row in rows]
 
 
+    def fetch_roads(
+        self,
+        *,
+        spatial_context: Dict[str, Any],
+        limit: int = 12000,
+    ) -> List[Dict[str, Any]]:
+        """Query road geometries in current spatial context."""
+        import sys
+
+        if not isinstance(spatial_context, dict):
+            spatial_context = {}
+
+        boundary_wkt = self._boundary_wkt(spatial_context.get("boundary"))
+        viewport_wkt = self._viewport_wkt(spatial_context.get("viewport"))
+        region_clauses, region_params = self._region_spatial_clauses(spatial_context.get("regions"))
+
+        center = self._normalize_point(spatial_context.get("center"))
+        radius = float(spatial_context.get("radius", 0) or 0)
+
+        where_parts: List[str] = []
+        params: List[Any] = []
+        order_sql = "ORDER BY r.id ASC"
+
+        if region_clauses:
+            road_region_clauses = [clause.replace("p.", "r.") for clause in region_clauses]
+            where_parts.append("(" + " OR ".join(road_region_clauses) + ")")
+            params.extend(region_params)
+        elif boundary_wkt:
+            where_parts.append("r.geom && ST_GeomFromText(%s, 4326)")
+            params.append(boundary_wkt)
+            where_parts.append("ST_Intersects(r.geom, ST_GeomFromText(%s, 4326))")
+            params.append(boundary_wkt)
+        elif viewport_wkt:
+            where_parts.append("r.geom && ST_GeomFromText(%s, 4326)")
+            params.append(viewport_wkt)
+            where_parts.append("ST_Intersects(r.geom, ST_GeomFromText(%s, 4326))")
+            params.append(viewport_wkt)
+        elif center and radius > 0:
+            where_parts.append(
+                "ST_DWithin(r.geom::geography, ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography, %s)"
+            )
+            params.extend([center[0], center[1], radius])
+        else:
+            return []
+
+        sql = """
+            SELECT
+                r.id,
+                ST_AsGeoJSON(r.geom) AS geometry_geojson
+            FROM wuhan_roads r
+            WHERE
+        """ + " AND ".join(where_parts) + f" {order_sql} LIMIT %s"
+
+        params.append(int(limit))
+
+        try:
+            with self._connect() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute(sql, params)
+                    rows = cursor.fetchall()
+        except Exception as err:
+            print(f"[POSTGIS_DEBUG] fetch_roads failed: {err}", flush=True, file=sys.stderr)
+            return []
+
+        return [dict(row) for row in rows]
+
+
+    def fetch_landuse(
+        self,
+        *,
+        spatial_context: Dict[str, Any],
+        limit: int = 15000,
+    ) -> List[Dict[str, Any]]:
+        """Query land-use polygon geometries in current spatial context."""
+        import sys
+
+        if not isinstance(spatial_context, dict):
+            spatial_context = {}
+
+        boundary_wkt = self._boundary_wkt(spatial_context.get("boundary"))
+        viewport_wkt = self._viewport_wkt(spatial_context.get("viewport"))
+        region_clauses, region_params = self._region_spatial_clauses(spatial_context.get("regions"))
+
+        center = self._normalize_point(spatial_context.get("center"))
+        radius = float(spatial_context.get("radius", 0) or 0)
+
+        where_parts: List[str] = []
+        params: List[Any] = []
+        order_sql = "ORDER BY l.id ASC"
+
+        if region_clauses:
+            land_region_clauses = [clause.replace("p.", "l.") for clause in region_clauses]
+            where_parts.append("(" + " OR ".join(land_region_clauses) + ")")
+            params.extend(region_params)
+        elif boundary_wkt:
+            where_parts.append("l.geom && ST_GeomFromText(%s, 4326)")
+            params.append(boundary_wkt)
+            where_parts.append("ST_Intersects(l.geom, ST_GeomFromText(%s, 4326))")
+            params.append(boundary_wkt)
+        elif viewport_wkt:
+            where_parts.append("l.geom && ST_GeomFromText(%s, 4326)")
+            params.append(viewport_wkt)
+            where_parts.append("ST_Intersects(l.geom, ST_GeomFromText(%s, 4326))")
+            params.append(viewport_wkt)
+        elif center and radius > 0:
+            where_parts.append(
+                "ST_DWithin(l.geom::geography, ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography, %s)"
+            )
+            params.extend([center[0], center[1], radius])
+        else:
+            return []
+
+        sql = """
+            SELECT
+                l.id,
+                l.properties,
+                ST_AsGeoJSON(l.geom) AS geometry_geojson
+            FROM wuhan_landuse l
+            WHERE
+        """ + " AND ".join(where_parts) + f" {order_sql} LIMIT %s"
+
+        params.append(int(limit))
+
+        try:
+            with self._connect() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute(sql, params)
+                    rows = cursor.fetchall()
+        except Exception as err:
+            print(f"[POSTGIS_DEBUG] fetch_landuse failed: {err}", flush=True, file=sys.stderr)
+            return []
+
+        return [dict(row) for row in rows]
+
+
     def fetch_pois_by_wkt(
         self,
         *,
@@ -338,7 +473,7 @@ class POIRepository:
         if not isinstance(boundary_wkt, str) or not boundary_wkt.strip():
             return []
 
-        # ??????? && ?????? within???????????????????
+        # 与主查询一致：先 bbox 预过滤，再 within 精确过滤，保证可用索引
         where_parts: List[str] = [
             "p.geom && ST_GeomFromText(%s, 4326)",
             "ST_Within(p.geom, ST_GeomFromText(%s, 4326))",
@@ -374,7 +509,7 @@ class POIRepository:
             WHERE
         """ + " AND ".join(where_parts) + f" {order_sql} LIMIT %s"
 
-        # ????????????????? centroid ????????? SQL ????????
+        # 若启用距离排序，补充 centroid 参数，保持 SQL 占位完整
         if order_by_distance:
             params.append(boundary_wkt.strip())
         params.append(int(limit))
