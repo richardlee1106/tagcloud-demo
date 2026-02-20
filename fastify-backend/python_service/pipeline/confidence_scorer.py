@@ -24,6 +24,15 @@ def _clamp01(value: float) -> float:
 def boundary_method_confidence(boundary_method: str) -> float:
     """Method reliability prior for boundary geometry quality."""
     method = str(boundary_method or "").lower()
+    # Composite V5: 路网地块边界置信度最高
+    if method == "road_block_union_v5":
+        return 0.93
+    if method == "aoi_fallback_v5":
+        return 0.85
+    if method == "euluc_fallback_v5":
+        return 0.80
+    if method == "convex_hull_last_resort_v5":
+        return 0.52
     if method in {"alpha_shape", "alpha_shape_simplified"}:
         return 0.86
     if method in {"buffered_hull_degenerate", "buffered_hull_small_cluster"}:

@@ -33,6 +33,7 @@ from algorithms.membership import compute_membership
 from algorithms.region_comparison import analyze_region_set, compute_region_comparison
 from db.repository import POIRepository
 from pipeline import (
+    block_assembler,
     boundary_builder,
     confidence_scorer,
     context_loader,
@@ -1446,17 +1447,18 @@ class SpatialPipeline:
             hints_options.get("confidenceModel") or hints_options.get("confidence_model") or ""
         ).strip().lower()
         force_composite_v4 = requested_confidence_model == "composite_v4"
+        force_composite_v5 = requested_confidence_model == "composite_v5"
 
-        visual_review_enabled = force_composite_v4 or _option_enabled(
+        visual_review_enabled = force_composite_v4 or force_composite_v5 or _option_enabled(
             hints_options.get("visualReviewEnabled"), default_value=False
         )
         visual_remote_enabled = visual_review_enabled and _option_enabled(
             hints_options.get("visualRemoteEnabled"), default_value=False
         )
-        self_validation_enabled = force_composite_v4 or _option_enabled(
+        self_validation_enabled = force_composite_v4 or force_composite_v5 or _option_enabled(
             hints_options.get("selfValidationEnabled"), default_value=False
         )
-        skg_enabled = force_composite_v4 or _option_enabled(
+        skg_enabled = force_composite_v4 or force_composite_v5 or _option_enabled(
             hints_options.get("skgEnabled"), default_value=False
         )
         visual_model_name = str(hints_options.get("visualModel") or "qwen3-vl-4b")
@@ -2000,224 +2002,399 @@ class SpatialPipeline:
                 "noise_count": cluster_result.noise_count,
                 "cluster_effective_min_cluster_size": cluster_result.effective_min_cluster_size,
                 "cluster_effective_min_samples": cluster_result.effective_min_samples,
+                "v5_enabled": force_composite_v5,
             },
         }
 
         boundary_methods: List[str] = []
         cluster_entries: List[Dict[str, Any]] = []
 
-        # 构建聚类级面边界与评分结果。
-        for cluster_id, indices in grouped_indices.items():
-            cluster_points_list = [coords[idx] for idx in indices]
-            cluster_pois = [pois[idx] for idx in indices]
+        # ──────────────────────────────────────────────────────────────────
+        # Composite V5: 路网地块边界组装链路
+        # 当启用 composite_v5 时，走全新的地块 union 边界生成链路，
+        # 替代传统的 alpha-shape / 凸包边界。
+        # ──────────────────────────────────────────────────────────────────
+        if force_composite_v5 and hasattr(self.repository, "spatial_join_pois"):
+            print("[PIPELINE_V5] composite_v5 链路激活", flush=True, file=sys.stderr)
 
-            center_lon = sum(lon for lon, _ in cluster_points_list) / len(cluster_points_list)
-            center_lat = sum(lat for _, lat in cluster_points_list) / len(cluster_points_list)
+            # 构建 BBOX WKT 用于三层面查询
+            v5_bbox_wkt = None
+            if spatial_context.get("viewport"):
+                vp = spatial_context["viewport"]
+                if isinstance(vp, (list, tuple)) and len(vp) >= 4:
+                    v5_bbox_wkt = (
+                        f"POLYGON(({vp[0]} {vp[1]}, {vp[2]} {vp[1]}, "
+                        f"{vp[2]} {vp[3]}, {vp[0]} {vp[3]}, {vp[0]} {vp[1]}))"
+                    )
+            if v5_bbox_wkt is None and spatial_context.get("boundary"):
+                v5_bbox_wkt = POIRepository._boundary_wkt(spatial_context["boundary"])
 
-            categories_counter = Counter(_category_of(poi) for poi in cluster_pois)
-            top_category, top_count = categories_counter.most_common(1)[0]
-            poi_quality = _cluster_poi_quality(cluster_pois)
-            semantic_anchor = _infer_semantic_anchor(
-                cluster_pois=cluster_pois,
-                dominant_category=top_category,
-                llm_anchor_candidates=semantic_anchor_hints,
-            )
+            if v5_bbox_wkt:
+                # 获取三层面数据
+                v5_road_blocks = self.repository.fetch_road_blocks(bbox_wkt=v5_bbox_wkt, limit=5000)
+                v5_osm_aoi = self.repository.fetch_osm_aoi(bbox_wkt=v5_bbox_wkt, limit=3000)
+                v5_euluc = self.repository.fetch_euluc(bbox_wkt=v5_bbox_wkt, limit=3000)
+                print(
+                    f"[PIPELINE_V5] 三层面: blocks={len(v5_road_blocks)} aoi={len(v5_osm_aoi)} euluc={len(v5_euluc)}",
+                    flush=True, file=sys.stderr,
+                )
 
-            bbox_area_m2 = _calc_bbox_area(cluster_points_list)
-            density = 0.0 if bbox_area_m2 <= 0 else min(1.0, (len(cluster_points_list) / (bbox_area_m2 / 10_000.0 + 1e-6)) / 20.0)
-            purity = top_count / max(1, len(cluster_points_list))
-            compactness = min(1.0, 1.0 / (1.0 + bbox_area_m2 / 200_000.0))
-            centrality = min(1.0, len(cluster_points_list) / max(1.0, len(pois)))
-            scale = min(1.0, math.log1p(len(cluster_points_list)) / math.log1p(max(2, len(pois))))
+                # 空间连接 POI（如果 POI 还没有 block_id，则重新获取）
+                if pois and pois[0].get("block_id") is None:
+                    v5_pois = self.repository.spatial_join_pois(
+                        clip_wkt=v5_bbox_wkt,
+                        categories=categories,
+                        terms=effective_terms if not term_filter_relaxed else [],
+                        limit=fetch_limit,
+                    )
+                    if v5_pois:
+                        pois = v5_pois
+                        coords = [
+                            (float(poi["lon"]), float(poi["lat"]))
+                            for poi in pois
+                            if poi.get("lon") is not None and poi.get("lat") is not None
+                        ]
+                        # 用新 POI 重新聚类
+                        cluster_result = cluster_points(
+                            coords,
+                            min_cluster_size=cluster_min_cluster_size,
+                            min_samples=cluster_min_samples,
+                            adaptive=cluster_adaptive,
+                            max_hdbscan_points=cluster_max_hdbscan_points,
+                        )
+                        labels = cluster_result.labels
+                        grouped_indices = defaultdict(list)
+                        for idx, label in enumerate(labels):
+                            if label >= 0:
+                                grouped_indices[label].append(idx)
 
-            membership = compute_membership(
-                density=density,
-                purity=purity,
-                centrality=centrality,
-                compactness=compactness,
-                scale=scale,
-            )
+                # V5 地块边界组装
+                v5_districts = block_assembler.assemble_block_boundaries(
+                    cluster_labels=labels,
+                    pois=pois,
+                    road_blocks=v5_road_blocks,
+                    osm_aoi_features=v5_osm_aoi,
+                    euluc_features=v5_euluc,
+                )
+                print(f"[PIPELINE_V5] 生成 {len(v5_districts)} 个片区", flush=True, file=sys.stderr)
 
-            boundary_selection = _build_cluster_boundary(
-                cluster_points=cluster_points_list,
-                bbox_area_m2=bbox_area_m2,
-                density=density,
-                alpha_max_input_points=alpha_max_input_points,
-                road_index=road_index,
-                road_geometries=road_geometries,
-                landuse_index=landuse_index,
-                landuse_geometries=landuse_geometries,
-                landuse_weights=landuse_weights,
-            )
-            boundary_geojson = boundary_selection["boundary_geojson"]
-            boundary_method = boundary_selection["boundary_method"]
-            boundary_quality = boundary_selection["boundary_quality"]
-            boundary_generation = boundary_selection["boundary_generation"]
+                # 将 V5 片区转换为 cluster_entries 格式（兼容下游结果组装）
+                for district in v5_districts:
+                    d_pois = district.pois
+                    d_coords = [(float(p["lon"]), float(p["lat"])) for p in d_pois if p.get("lon") and p.get("lat")]
 
-            clip_result = _clip_boundary_geojson_to_constraint(
-                boundary_geojson=boundary_geojson,
-                cluster_points=cluster_points_list,
-                constraint_polygon=spatial_constraint_polygon,
-            )
-            boundary_geojson = clip_result["boundary_geojson"]
-            clip_meta = clip_result.get("clip") or {"applied": False}
-            boundary_generation = dict(boundary_generation or {})
-            boundary_generation["constraint_clip"] = clip_meta
-            if clip_meta.get("applied"):
-                clipped_road_alignment = _compute_road_alignment_score(
-                    boundary_geojson=boundary_geojson,
+                    categories_counter = Counter(_category_of(poi) for poi in d_pois)
+                    top_category = categories_counter.most_common(1)[0][0] if categories_counter else "未分类"
+                    top_count = categories_counter.most_common(1)[0][1] if categories_counter else 0
+                    poi_quality = _cluster_poi_quality(d_pois)
+
+                    d_bbox_area_m2 = _calc_bbox_area(d_coords) if len(d_coords) >= 2 else 0.0
+                    density = 0.0 if d_bbox_area_m2 <= 0 else min(1.0, (len(d_coords) / (d_bbox_area_m2 / 10_000.0 + 1e-6)) / 20.0)
+                    purity = top_count / max(1, len(d_pois))
+                    compactness = min(1.0, 1.0 / (1.0 + d_bbox_area_m2 / 200_000.0))
+                    centrality = min(1.0, len(d_pois) / max(1.0, len(pois)))
+                    scale = min(1.0, math.log1p(len(d_pois)) / math.log1p(max(2, len(pois))))
+
+                    membership = compute_membership(
+                        density=density, purity=purity, centrality=centrality,
+                        compactness=compactness, scale=scale, niche_type="mixed",
+                    )
+
+                    boundary_method = district.boundary_method
+                    boundary_methods.append(boundary_method)
+                    boundary_quality = {"quality_score": 0.85 if "road_block" in boundary_method else 0.65, "method": "v5_block"}
+
+                    # V5 片区的置信度构建
+                    # 由于地块边界本身就贴合路网，method_confidence 先验值更高
+                    layer_bundle = {"outer": {}, "transition": {"confidence": district.name_confidence}, "core": {}}
+                    boundary_conf = _build_boundary_confidence(
+                        layer_bundle=layer_bundle,
+                        membership_score=float(membership.score),
+                        boundary_method=boundary_method,
+                        boundary_quality_score=boundary_quality.get("quality_score"),
+                        poi_quality_score=poi_quality.get("score"),
+                        semantic_anchor_confidence=district.name_confidence if district.name_source != "fallback" else None,
+                        niche_consistency_score=None,
+                    )
+
+                    vitality_score = _calc_vitality_score(
+                        density=density, membership_score=float(membership.score),
+                        purity=purity, cluster_size=len(d_pois), total_size=len(pois),
+                    )
+
+                    dominant_categories = [
+                        {"category": cat, "count": int(cnt)}
+                        for cat, cnt in categories_counter.most_common(3)
+                    ]
+
+                    cluster_entries.append({
+                        "id": int(district.cluster_id),
+                        "name": district.name,
+                        "theme": top_category,
+                        "poi_count": district.poi_count,
+                        "center": {"lon": district.center[0], "lat": district.center[1]},
+                        "boundary_geojson": district.boundary_geojson,
+                        "boundary": [list(c) for c in (district.boundary_geojson.get("coordinates") or [[]])[0]],
+                        "layers": {"outer": {}, "transition": {"confidence": district.name_confidence}, "core": {}},
+                        "dominant_category": top_category,
+                        "dominant_categories": dominant_categories,
+                        "membership": asdict(membership),
+                        "density": round(density, 4),
+                        "purity": round(purity, 4),
+                        "poi_quality": poi_quality,
+                        "vitality_score": vitality_score,
+                        "boundary_method": boundary_method,
+                        "boundary_quality": boundary_quality,
+                        "boundary_generation": {"method": boundary_method, "v5_block_ids": district.block_ids[:20]},
+                        "boundary_confidence": boundary_conf["score"],
+                        "confidence_explain": boundary_conf["explain"],
+                        "semantic_anchor": {
+                            "name": district.dominant_aoi_name or district.name.replace("片区", ""),
+                            "confidence": district.name_confidence,
+                            "source": district.name_source,
+                        },
+                        "niche_profile": {
+                            "niche_type": district.dominant_land_type or "mixed",
+                            "consistency": district.name_confidence,
+                            "dominant_aoi_type": district.dominant_aoi_type,
+                        },
+                        "landuse_semantic": {"dominant_land_type": district.dominant_land_type},
+                        "semantic_reasoning": {
+                            "name_source": district.name_source,
+                            "name_confidence": district.name_confidence,
+                        },
+                        "visual_morphology": None,
+                        "score_breakdown": {
+                            "density": membership.density,
+                            "purity": membership.purity,
+                            "centrality": membership.centrality,
+                            "compactness": membership.compactness,
+                            "scale": membership.scale,
+                        },
+                        "drivers": _top_membership_drivers(membership),
+                        "cluster_pois": d_pois,
+                    })
+
+        # ──────────────────────────────────────────────────────────────────
+        # 传统 (V1-V4) 边界构建链路
+        # ──────────────────────────────────────────────────────────────────
+        if not cluster_entries:
+            # 走传统链路（V5 未启用或未产出结果）
+            for cluster_id, indices in grouped_indices.items():
+                cluster_points_list = [coords[idx] for idx in indices]
+                cluster_pois = [pois[idx] for idx in indices]
+
+                center_lon = sum(lon for lon, _ in cluster_points_list) / len(cluster_points_list)
+                center_lat = sum(lat for _, lat in cluster_points_list) / len(cluster_points_list)
+
+                categories_counter = Counter(_category_of(poi) for poi in cluster_pois)
+                top_category, top_count = categories_counter.most_common(1)[0]
+                poi_quality = _cluster_poi_quality(cluster_pois)
+                semantic_anchor = _infer_semantic_anchor(
+                    cluster_pois=cluster_pois,
+                    dominant_category=top_category,
+                    llm_anchor_candidates=semantic_anchor_hints,
+                )
+
+                bbox_area_m2 = _calc_bbox_area(cluster_points_list)
+                density = 0.0 if bbox_area_m2 <= 0 else min(1.0, (len(cluster_points_list) / (bbox_area_m2 / 10_000.0 + 1e-6)) / 20.0)
+                purity = top_count / max(1, len(cluster_points_list))
+                compactness = min(1.0, 1.0 / (1.0 + bbox_area_m2 / 200_000.0))
+                centrality = min(1.0, len(cluster_points_list) / max(1.0, len(pois)))
+                scale = min(1.0, math.log1p(len(cluster_points_list)) / math.log1p(max(2, len(pois))))
+
+                prelim_niche_name = f"{top_category} {semantic_anchor.get('name', '')}"
+                prelim_niche, _, _ = semantic_reasoner.infer_niche_type_from_text(prelim_niche_name)
+
+                membership = compute_membership(
+                    density=density,
+                    purity=purity,
+                    centrality=centrality,
+                    compactness=compactness,
+                    scale=scale,
+                    niche_type=prelim_niche or "mixed",
+                )
+
+                boundary_selection = _build_cluster_boundary(
                     cluster_points=cluster_points_list,
+                    bbox_area_m2=bbox_area_m2,
+                    density=density,
+                    alpha_max_input_points=alpha_max_input_points,
                     road_index=road_index,
                     road_geometries=road_geometries,
-                )
-                clipped_landuse_alignment = _compute_landuse_alignment_score(
-                    boundary_geojson=boundary_geojson,
-                    cluster_points=cluster_points_list,
                     landuse_index=landuse_index,
                     landuse_geometries=landuse_geometries,
                     landuse_weights=landuse_weights,
                 )
-                boundary_quality = _score_boundary_quality(
-                    cluster_points=cluster_points_list,
+                boundary_geojson = boundary_selection["boundary_geojson"]
+                boundary_method = boundary_selection["boundary_method"]
+                boundary_quality = boundary_selection["boundary_quality"]
+                boundary_generation = boundary_selection["boundary_generation"]
+
+                clip_result = _clip_boundary_geojson_to_constraint(
                     boundary_geojson=boundary_geojson,
-                    road_alignment_score=clipped_road_alignment,
-                    landuse_alignment_score=clipped_landuse_alignment,
+                    cluster_points=cluster_points_list,
+                    constraint_polygon=spatial_constraint_polygon,
                 )
-                boundary_method = f"{boundary_method}_clip_v1"
+                boundary_geojson = clip_result["boundary_geojson"]
+                clip_meta = clip_result.get("clip") or {"applied": False}
+                boundary_generation = dict(boundary_generation or {})
+                boundary_generation["constraint_clip"] = clip_meta
+                if clip_meta.get("applied"):
+                    clipped_road_alignment = _compute_road_alignment_score(
+                        boundary_geojson=boundary_geojson,
+                        cluster_points=cluster_points_list,
+                        road_index=road_index,
+                        road_geometries=road_geometries,
+                    )
+                    clipped_landuse_alignment = _compute_landuse_alignment_score(
+                        boundary_geojson=boundary_geojson,
+                        cluster_points=cluster_points_list,
+                        landuse_index=landuse_index,
+                        landuse_geometries=landuse_geometries,
+                        landuse_weights=landuse_weights,
+                    )
+                    boundary_quality = _score_boundary_quality(
+                        cluster_points=cluster_points_list,
+                        boundary_geojson=boundary_geojson,
+                        road_alignment_score=clipped_road_alignment,
+                        landuse_alignment_score=clipped_landuse_alignment,
+                    )
+                    boundary_method = f"{boundary_method}_clip_v1"
 
-            boundary_methods.append(boundary_method)
-            landuse_semantic_context = _cluster_landuse_semantic_context(
-                boundary_geojson=boundary_geojson,
-                cluster_points=cluster_points_list,
-                semantic_features=landuse_semantic_features,
-            )
-            semantic_anchor = _recover_waterbody_anchor(
-                cluster_pois=cluster_pois,
-                semantic_anchor=semantic_anchor,
-                landuse_context=landuse_semantic_context,
-            )
-            niche_profile = _build_niche_profile(
-                cluster_pois=cluster_pois,
-                dominant_category=top_category,
-                semantic_anchor=semantic_anchor,
-                landuse_context=landuse_semantic_context,
-            )
-            boundary_quality = _apply_water_overlap_penalty(
-                boundary_quality=boundary_quality,
-                niche_profile=niche_profile,
-                landuse_context=landuse_semantic_context,
-            )
-            semantic_reasoning = _build_semantic_reasoning_payload(
-                semantic_anchor=semantic_anchor,
-                niche_profile=niche_profile,
-                landuse_context=landuse_semantic_context,
-            )
-            cluster_display_name = (
-                f"{semantic_anchor.get('name')}\u7247\u533a"
-                if str(semantic_anchor.get("name") or "").strip()
-                else f"{top_category}\u7247\u533a"
-            )
-            semantic_anchor_conf_for_conf = (
-                semantic_anchor.get("confidence")
-                if str(semantic_anchor.get("name") or "").strip()
-                else None
-            )
-            niche_consistency_for_conf = (
-                niche_profile.get("consistency")
-                if semantic_anchor_conf_for_conf is not None
-                and str(niche_profile.get("niche_type") or "") != "mixed"
-                else None
-            )
-
-            layer_bundle = _build_region_layers(
-                cluster_points=cluster_points_list,
-                base_boundary_geojson=boundary_geojson,
-                density=density,
-                membership_score=float(membership.score),
-                constraint_polygon=spatial_constraint_polygon,
-            )
-            visual_review = None
-            if visual_review_enabled:
-                visual_review = _review_cluster_morphology(
-                    spatial_context=spatial_context,
-                    boundary_geojson=layer_bundle["representative_geojson"] or boundary_geojson,
+                boundary_methods.append(boundary_method)
+                landuse_semantic_context = _cluster_landuse_semantic_context(
+                    boundary_geojson=boundary_geojson,
+                    cluster_points=cluster_points_list,
+                    semantic_features=landuse_semantic_features,
+                )
+                semantic_anchor = _recover_waterbody_anchor(
+                    cluster_pois=cluster_pois,
+                    semantic_anchor=semantic_anchor,
+                    landuse_context=landuse_semantic_context,
+                )
+                niche_profile = _build_niche_profile(
+                    cluster_pois=cluster_pois,
+                    dominant_category=top_category,
+                    semantic_anchor=semantic_anchor,
+                    landuse_context=landuse_semantic_context,
+                )
+                boundary_quality = _apply_water_overlap_penalty(
                     boundary_quality=boundary_quality,
-                    poi_count=len(cluster_points_list),
-                    model_name=visual_model_name,
-                    endpoint=visual_endpoint,
-                    image_data_url=visual_image_data_url,
-                    enable_remote=visual_remote_enabled,
-                    timeout_ms=visual_timeout_ms,
+                    niche_profile=niche_profile,
+                    landuse_context=landuse_semantic_context,
                 )
-            visual_morphology_conf_for_conf = (
-                visual_review.get("score") if isinstance(visual_review, dict) else None
-            )
-            boundary_conf = _build_boundary_confidence(
-                layer_bundle=layer_bundle,
-                membership_score=float(membership.score),
-                boundary_method=boundary_method,
-                boundary_quality_score=boundary_quality.get("quality_score"),
-                poi_quality_score=poi_quality.get("score"),
-                semantic_anchor_confidence=semantic_anchor_conf_for_conf,
-                niche_consistency_score=niche_consistency_for_conf,
-                visual_morphology_confidence=visual_morphology_conf_for_conf,
-            )
+                semantic_reasoning = _build_semantic_reasoning_payload(
+                    semantic_anchor=semantic_anchor,
+                    niche_profile=niche_profile,
+                    landuse_context=landuse_semantic_context,
+                )
+                cluster_display_name = (
+                    f"{semantic_anchor.get('name')}\u7247\u533a"
+                    if str(semantic_anchor.get("name") or "").strip()
+                    else f"{top_category}\u7247\u533a"
+                )
+                semantic_anchor_conf_for_conf = (
+                    semantic_anchor.get("confidence")
+                    if str(semantic_anchor.get("name") or "").strip()
+                    else None
+                )
+                niche_consistency_for_conf = (
+                    niche_profile.get("consistency")
+                    if semantic_anchor_conf_for_conf is not None
+                    and str(niche_profile.get("niche_type") or "") != "mixed"
+                    else None
+                )
 
-            vitality_score = _calc_vitality_score(
-                density=density,
-                membership_score=float(membership.score),
-                purity=purity,
-                cluster_size=len(cluster_points_list),
-                total_size=len(pois),
-            )
+                layer_bundle = _build_region_layers(
+                    cluster_points=cluster_points_list,
+                    base_boundary_geojson=boundary_geojson,
+                    density=density,
+                    membership_score=float(membership.score),
+                    constraint_polygon=spatial_constraint_polygon,
+                )
+                visual_review = None
+                if visual_review_enabled:
+                    visual_review = _review_cluster_morphology(
+                        spatial_context=spatial_context,
+                        boundary_geojson=layer_bundle["representative_geojson"] or boundary_geojson,
+                        boundary_quality=boundary_quality,
+                        poi_count=len(cluster_points_list),
+                        model_name=visual_model_name,
+                        endpoint=visual_endpoint,
+                        image_data_url=visual_image_data_url,
+                        enable_remote=visual_remote_enabled,
+                        timeout_ms=visual_timeout_ms,
+                    )
+                visual_morphology_conf_for_conf = (
+                    visual_review.get("score") if isinstance(visual_review, dict) else None
+                )
+                boundary_conf = _build_boundary_confidence(
+                    layer_bundle=layer_bundle,
+                    membership_score=float(membership.score),
+                    boundary_method=boundary_method,
+                    boundary_quality_score=boundary_quality.get("quality_score"),
+                    poi_quality_score=poi_quality.get("score"),
+                    semantic_anchor_confidence=semantic_anchor_conf_for_conf,
+                    niche_consistency_score=niche_consistency_for_conf,
+                    visual_morphology_confidence=visual_morphology_conf_for_conf,
+                )
 
-            dominant_categories = [
-                {"category": category, "count": int(count)}
-                for category, count in categories_counter.most_common(3)
-            ]
+                vitality_score = _calc_vitality_score(
+                    density=density,
+                    membership_score=float(membership.score),
+                    purity=purity,
+                    cluster_size=len(cluster_points_list),
+                    total_size=len(pois),
+                )
 
-            cluster_entries.append(
-                {
-                    "id": int(cluster_id),
-                    "name": cluster_display_name,
-                    "theme": top_category,
-                    "poi_count": len(cluster_points_list),
-                    "center": {"lon": center_lon, "lat": center_lat},
-                    "boundary_geojson": layer_bundle["representative_geojson"] or boundary_geojson,
-                    "boundary": layer_bundle["representative_boundary"],
-                    "layers": {
-                        "outer": layer_bundle["outer"],
-                        "transition": layer_bundle["transition"],
-                        "core": layer_bundle["core"],
-                    },
-                    "dominant_category": top_category,
-                    "dominant_categories": dominant_categories,
-                    "membership": asdict(membership),
-                    "density": round(density, 4),
-                    "purity": round(purity, 4),
-                    "poi_quality": poi_quality,
-                    "vitality_score": vitality_score,
-                    "boundary_method": boundary_method,
-                    "boundary_quality": boundary_quality,
-                    "boundary_generation": boundary_generation,
-                    "boundary_confidence": boundary_conf["score"],
-                    "confidence_explain": boundary_conf["explain"],
-                    "semantic_anchor": semantic_anchor,
-                    "niche_profile": niche_profile,
-                    "landuse_semantic": landuse_semantic_context,
-                    "semantic_reasoning": semantic_reasoning,
-                    "visual_morphology": visual_review,
-                    "score_breakdown": {
-                        "density": membership.density,
-                        "purity": membership.purity,
-                        "centrality": membership.centrality,
-                        "compactness": membership.compactness,
-                        "scale": membership.scale,
-                    },
-                    "drivers": _top_membership_drivers(membership),
-                    "cluster_pois": cluster_pois,
-                }
-            )
+                dominant_categories = [
+                    {"category": category, "count": int(count)}
+                    for category, count in categories_counter.most_common(3)
+                ]
+
+                cluster_entries.append(
+                    {
+                        "id": int(cluster_id),
+                        "name": cluster_display_name,
+                        "theme": top_category,
+                        "poi_count": len(cluster_points_list),
+                        "center": {"lon": center_lon, "lat": center_lat},
+                        "boundary_geojson": layer_bundle["representative_geojson"] or boundary_geojson,
+                        "boundary": layer_bundle["representative_boundary"],
+                        "layers": {
+                            "outer": layer_bundle["outer"],
+                            "transition": layer_bundle["transition"],
+                            "core": layer_bundle["core"],
+                        },
+                        "dominant_category": top_category,
+                        "dominant_categories": dominant_categories,
+                        "membership": asdict(membership),
+                        "density": round(density, 4),
+                        "purity": round(purity, 4),
+                        "poi_quality": poi_quality,
+                        "vitality_score": vitality_score,
+                        "boundary_method": boundary_method,
+                        "boundary_quality": boundary_quality,
+                        "boundary_generation": boundary_generation,
+                        "boundary_confidence": boundary_conf["score"],
+                        "confidence_explain": boundary_conf["explain"],
+                        "semantic_anchor": semantic_anchor,
+                        "niche_profile": niche_profile,
+                        "landuse_semantic": landuse_semantic_context,
+                        "semantic_reasoning": semantic_reasoning,
+                        "visual_morphology": visual_review,
+                        "score_breakdown": {
+                            "density": membership.density,
+                            "purity": membership.purity,
+                            "centrality": membership.centrality,
+                            "compactness": membership.compactness,
+                            "scale": membership.scale,
+                        },
+                        "drivers": _top_membership_drivers(membership),
+                        "cluster_pois": cluster_pois,
+                    }
+                )
 
         self_validation_result = {
             "cluster_scores": {},

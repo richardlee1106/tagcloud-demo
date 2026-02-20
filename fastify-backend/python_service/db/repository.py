@@ -520,3 +520,228 @@ class POIRepository:
                 rows = cursor.fetchall()
 
         return [dict(row) for row in rows]
+
+    # ────────────────────────────────────────────────────────────
+    # Composite V5: 三层面查询 + POI 空间连接
+    # ────────────────────────────────────────────────────────────
+
+    def fetch_road_blocks(
+        self,
+        *,
+        bbox_wkt: str,
+        limit: int = 8000,
+    ) -> List[Dict[str, Any]]:
+        """按 BBOX 相交查询路网闭合地块（不裁剪，保留完整边界）。"""
+        import sys
+        if not isinstance(bbox_wkt, str) or not bbox_wkt.strip():
+            return []
+
+        sql = """
+            SELECT
+                rb.id,
+                rb.block_id,
+                rb.shape_area,
+                ST_AsGeoJSON(rb.geom) AS geometry_geojson
+            FROM wuhan_road_blocks rb
+            WHERE rb.geom && ST_GeomFromText(%s, 4326)
+              AND ST_Intersects(rb.geom, ST_GeomFromText(%s, 4326))
+            ORDER BY rb.shape_area DESC
+            LIMIT %s
+        """
+        params = [bbox_wkt.strip(), bbox_wkt.strip(), int(limit)]
+
+        try:
+            with self._connect() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute(sql, params)
+                    rows = cursor.fetchall()
+        except Exception as err:
+            print(f"[POSTGIS_DEBUG] fetch_road_blocks failed: {err}", flush=True, file=sys.stderr)
+            return []
+
+        return [dict(row) for row in rows]
+
+    def fetch_osm_aoi(
+        self,
+        *,
+        bbox_wkt: str,
+        limit: int = 6000,
+    ) -> List[Dict[str, Any]]:
+        """按 BBOX 相交查询 OSM AOI 合并面（保留完整边界）。"""
+        import sys
+        if not isinstance(bbox_wkt, str) or not bbox_wkt.strip():
+            return []
+
+        sql = """
+            SELECT
+                a.id,
+                a.aoi_id,
+                a.name,
+                a.type,
+                ST_AsGeoJSON(a.geom) AS geometry_geojson
+            FROM wuhan_osm_aoi a
+            WHERE a.geom && ST_GeomFromText(%s, 4326)
+              AND ST_Intersects(a.geom, ST_GeomFromText(%s, 4326))
+            ORDER BY ST_Area(a.geom) DESC
+            LIMIT %s
+        """
+        params = [bbox_wkt.strip(), bbox_wkt.strip(), int(limit)]
+
+        try:
+            with self._connect() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute(sql, params)
+                    rows = cursor.fetchall()
+        except Exception as err:
+            print(f"[POSTGIS_DEBUG] fetch_osm_aoi failed: {err}", flush=True, file=sys.stderr)
+            return []
+
+        return [dict(row) for row in rows]
+
+    def fetch_euluc(
+        self,
+        *,
+        bbox_wkt: str,
+        limit: int = 6000,
+    ) -> List[Dict[str, Any]]:
+        """按 BBOX 相交查询 EULUC 用地面（保留完整边界）。"""
+        import sys
+        if not isinstance(bbox_wkt, str) or not bbox_wkt.strip():
+            return []
+
+        sql = """
+            SELECT
+                e.id,
+                e.euluc_id,
+                e.land_type,
+                ST_AsGeoJSON(e.geom) AS geometry_geojson
+            FROM wuhan_euluc e
+            WHERE e.geom && ST_GeomFromText(%s, 4326)
+              AND ST_Intersects(e.geom, ST_GeomFromText(%s, 4326))
+            ORDER BY ST_Area(e.geom) DESC
+            LIMIT %s
+        """
+        params = [bbox_wkt.strip(), bbox_wkt.strip(), int(limit)]
+
+        try:
+            with self._connect() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute(sql, params)
+                    rows = cursor.fetchall()
+        except Exception as err:
+            print(f"[POSTGIS_DEBUG] fetch_euluc failed: {err}", flush=True, file=sys.stderr)
+            return []
+
+        return [dict(row) for row in rows]
+
+    def spatial_join_pois(
+        self,
+        *,
+        clip_wkt: str,
+        categories: List[str] | None = None,
+        terms: List[str] | None = None,
+        limit: int = 8000,
+    ) -> List[Dict[str, Any]]:
+        """在数据库侧完成 POI ⋈ 三层面（地块/AOI/EULUC）的空间连接。
+
+        返回的每条 POI 记录额外携带：
+          - block_id:  所在路网闭合地块 ID
+          - aoi_name:  所在 OSM AOI 名称
+          - aoi_type:  所在 OSM AOI 中文类别
+          - land_type: 所在 EULUC 用地类型
+        """
+        import sys
+        if not isinstance(clip_wkt, str) or not clip_wkt.strip():
+            return []
+
+        where_parts: List[str] = [
+            "p.geom && ST_GeomFromText(%s, 4326)",
+            "ST_Within(p.geom, ST_GeomFromText(%s, 4326))",
+        ]
+        params: List[Any] = [clip_wkt.strip(), clip_wkt.strip()]
+
+        # 可选类别过滤
+        normalized_categories = [c.strip() for c in (categories or []) if isinstance(c, str) and c.strip()]
+        if normalized_categories:
+            cat_parts = []
+            for cat in normalized_categories:
+                cat_parts.append(
+                    "(p.category_big ILIKE %s OR p.category_mid ILIKE %s OR p.category_small ILIKE %s OR p.type ILIKE %s)"
+                )
+                wildcard = f"%{cat}%"
+                params.extend([wildcard, wildcard, wildcard, wildcard])
+            where_parts.append("(" + " OR ".join(cat_parts) + ")")
+
+        # 可选关键词过滤
+        normalized_terms = [t.strip() for t in (terms or []) if isinstance(t, str) and t.strip()]
+        if normalized_terms:
+            term_parts = []
+            for term in normalized_terms:
+                term_parts.append(
+                    "(p.name ILIKE %s OR p.address ILIKE %s OR p.category_small ILIKE %s OR p.type ILIKE %s)"
+                )
+                wildcard = f"%{term}%"
+                params.extend([wildcard, wildcard, wildcard, wildcard])
+            where_parts.append("(" + " OR ".join(term_parts) + ")")
+
+        # 注意：三层面使用 LEFT JOIN LATERAL + LIMIT 1 确保每个 POI 只
+        # 匹配一个最佳面（面积最小的包含面 = 语义最精确的面）。
+        sql = """
+            SELECT
+                p.id,
+                p.name,
+                p.address,
+                p.type,
+                p.category_big,
+                p.category_mid,
+                p.category_small,
+                NULL::double precision AS rating,
+                ST_X(p.geom) AS lon,
+                ST_Y(p.geom) AS lat,
+                rb_match.block_id,
+                aoi_match.name  AS aoi_name,
+                aoi_match.type  AS aoi_type,
+                eu_match.land_type
+            FROM pois p
+            LEFT JOIN LATERAL (
+                SELECT rb.block_id
+                FROM wuhan_road_blocks rb
+                WHERE rb.geom && p.geom
+                  AND ST_Contains(rb.geom, p.geom)
+                ORDER BY rb.shape_area ASC
+                LIMIT 1
+            ) rb_match ON true
+            LEFT JOIN LATERAL (
+                SELECT a.name, a.type
+                FROM wuhan_osm_aoi a
+                WHERE a.geom && p.geom
+                  AND ST_Contains(a.geom, p.geom)
+                ORDER BY ST_Area(a.geom) ASC
+                LIMIT 1
+            ) aoi_match ON true
+            LEFT JOIN LATERAL (
+                SELECT e.land_type
+                FROM wuhan_euluc e
+                WHERE e.geom && p.geom
+                  AND ST_Contains(e.geom, p.geom)
+                ORDER BY ST_Area(e.geom) ASC
+                LIMIT 1
+            ) eu_match ON true
+            WHERE
+        """ + " AND ".join(where_parts) + """
+            ORDER BY p.id ASC
+            LIMIT %s
+        """
+        params.append(int(limit))
+
+        try:
+            with self._connect() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute(sql, params)
+                    rows = cursor.fetchall()
+            print(f"[POSTGIS_DEBUG] spatial_join_pois returned {len(rows)} rows", flush=True, file=sys.stderr)
+        except Exception as err:
+            print(f"[POSTGIS_DEBUG] spatial_join_pois failed: {err}", flush=True, file=sys.stderr)
+            return []
+
+        return [dict(row) for row in rows]
