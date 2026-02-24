@@ -4,7 +4,7 @@
 设计目标：
 1. 默认采用低开销启发式评分，保证稳定与低延迟；
 2. 当提供视口截图（data URL）时，可调用本地 qwen3-vl-4b 做视觉复核；
-3. 输出统一结构，供 composite_v4 置信度融合。
+3. 输出统一结构，供 composite_v5 置信度融合。
 """
 
 from __future__ import annotations
@@ -240,73 +240,4 @@ def review_cluster_morphology(
         "summary": str(remote.get("summary") or "视觉审查完成。"),
         "remote": remote,
     }
-
-
-def extract_map_text(
-    *,
-    image_data_url: str,
-    model_name: str = "qwen3-vl-4b",
-    endpoint: str = "http://localhost:1234/v1/chat/completions",
-    timeout_ms: int = 5000,
-) -> list[str]:
-    """提取地图截图中的所有地名或标志物名称。"""
-    if not image_data_url:
-        return []
-
-    prompt_text = (
-        "你是一个地图阅读助手。请仔细观察提供的地图截图，"
-        "提取地图上标注的**所有重要地名、标志物名称、街道名、小区名或机构名**。"
-        "必须严格以JSON数组的格式输出，例如：[\"A大厦\", \"B小区\", \"C路\"]。"
-        "不要输出任何其他解释性文字。"
-    )
-    
-    payload = {
-        "model": model_name,
-        "temperature": 0.1,
-        "max_tokens": 500,
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt_text},
-                    {"type": "image_url", "image_url": {"url": image_data_url}},
-                ],
-            },
-        ],
-    }
-
-    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    request = urllib.request.Request(
-        endpoint,
-        data=body,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    timeout_s = max(1.0, float(timeout_ms) / 1000.0)
-    try:
-        with urllib.request.urlopen(request, timeout=timeout_s) as response:
-            raw = response.read().decode("utf-8", errors="ignore")
-    except Exception:
-        return []
-
-    try:
-        parsed = json.loads(raw)
-        content = (
-            (((parsed.get("choices") or [{}])[0]).get("message") or {}).get("content")
-            if isinstance(parsed, dict)
-            else None
-        )
-        if not content:
-            return []
-            
-        # Parse JSON array from content
-        match = re.search(r"\[[\s\S]*\]", content)
-        if match:
-            extracted = json.loads(match.group(0))
-            if isinstance(extracted, list):
-                return [str(x) for x in extracted if x]
-    except Exception:
-        pass
-        
-    return []
 

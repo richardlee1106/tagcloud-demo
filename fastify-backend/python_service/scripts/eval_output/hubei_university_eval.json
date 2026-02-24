@@ -1,0 +1,319 @@
+{
+  "run_id": "hubei_university_20260221_221340_0c804d",
+  "case_name": "hubei_university",
+  "input": {
+    "bbox_file": "D:\\AAA_Edu\\TagCloud\\vite-project\\用于比较数据\\湖北大学外接矩形面.shp",
+    "bbox_file_resolved": "D:\\AAA_Edu\\TagCloud\\vite-project\\用于比较数据\\湖北大学外接矩形面.shp",
+    "bbox_feature_index": 0,
+    "truth_file": "D:\\AAA_Edu\\TagCloud\\vite-project\\用于比较数据\\湖北大学矢量面要素.shp",
+    "truth_file_resolved": "D:\\AAA_Edu\\TagCloud\\vite-project\\用于比较数据\\湖北大学矢量面要素.shp",
+    "truth_feature_index": -1,
+    "viewport": [
+      114.32328760062694,
+      30.576123516982705,
+      114.33424947750996,
+      30.585528732777846
+    ],
+    "strict_bbox": false,
+    "query_type": "area_analysis",
+    "categories": [],
+    "semantic_query": "",
+    "semantic_anchor_hints": [
+      "湖北大学"
+    ],
+    "cluster_min_cluster_size": null,
+    "cluster_min_samples": null,
+    "allow_single_cluster_fallback": false,
+    "road_boundary_enhancement": true,
+    "landuse_boundary_enhancement": true,
+    "anchor_mask_block_overlap_ratio": null,
+    "anchor_mask_support_edge_ratio": null,
+    "anchor_mask_outlier_area_factor": null,
+    "anchor_mask_outlier_overlap_ratio": null,
+    "anchor_mask_use_centroid": true,
+    "anchor_mask_use_unfiltered_poi_support": true,
+    "water_semantic_mask_enabled": true,
+    "note": "V5重构后湖北大学验证",
+    "target_iou": 0.9
+  },
+  "pipeline_stats": {
+    "total_candidates": 1406,
+    "cluster_count": 13,
+    "avg_boundary_confidence": 0.6928,
+    "avg_boundary_quality_score": 0.7423,
+    "boundary_method": "mixed",
+    "boundary_confidence_model": "composite_v4",
+    "boundary_quality_model": "coverage_area_compactness_v1"
+  },
+  "pipeline_stage_events": [
+    {
+      "type": "STAGE",
+      "payload": {
+        "stage": "fetch_candidates",
+        "query_type": "area_analysis",
+        "fetch_limit": 8000
+      }
+    },
+    {
+      "type": "PROGRESS",
+      "payload": {
+        "stage": "fetch_candidates",
+        "progress": 0.25,
+        "poi_count": 1406,
+        "candidate_source": "db",
+        "direction": null,
+        "direction_applied": false,
+        "graph_enabled": false,
+        "graph_nodes": 0,
+        "road_boundary_enhancement": true,
+        "road_feature_count": 156,
+        "road_source": "wuhan_roads",
+        "landuse_boundary_enhancement": true,
+        "landuse_feature_count": 84,
+        "landuse_source": "wuhan_landuse",
+        "semantic_anchor_hint_count": 1
+      }
+    },
+    {
+      "type": "STAGE",
+      "payload": {
+        "stage": "cluster"
+      }
+    },
+    {
+      "type": "PROGRESS",
+      "payload": {
+        "stage": "cluster",
+        "progress": 0.55,
+        "cluster_count": 13,
+        "cluster_engine": "hdbscan",
+        "noise_count": 376,
+        "cluster_effective_min_cluster_size": 22,
+        "cluster_effective_min_samples": 8,
+        "v5_enabled": true,
+        "single_cluster_fallback_applied": false
+      }
+    },
+    {
+      "type": "PROGRESS",
+      "payload": {
+        "stage": "region_modeling",
+        "progress": 0.85,
+        "vernacular_count": 13
+      }
+    }
+  ],
+  "bbox_vs_truth": {
+    "pred_area": 0.00010309881760453257,
+    "truth_area": 6.122696739884983e-05,
+    "intersection_area": 5.8694956057540364e-05,
+    "union_area": 0.00010563082894584223,
+    "iou": 0.5556612273452264,
+    "precision": 0.5693077517405004,
+    "recall": 0.958645488272917,
+    "dice": 0.7143730493218969
+  },
+  "best_match": {
+    "id": 0,
+    "name": "湖北大学科教片区",
+    "boundary_confidence": 0.7352,
+    "vitality_score": 0.62792,
+    "metrics": {
+      "pred_area": 5.6785847122708765e-05,
+      "truth_area": 6.122696739884983e-05,
+      "intersection_area": 4.861651829681532e-05,
+      "union_area": 6.939629622473605e-05,
+      "iou": 0.7005635882839255,
+      "precision": 0.8561379421136343,
+      "recall": 0.794037666117179,
+      "dice": 0.8239193089990079
+    }
+  },
+  "union_all_predictions_vs_truth": {
+    "pred_area": 9.514217050238577e-05,
+    "truth_area": 6.122696739884983e-05,
+    "intersection_area": 4.861651829681532e-05,
+    "union_area": 0.00010775261960441305,
+    "iou": 0.4511864163980308,
+    "precision": 0.5109881143146321,
+    "recall": 0.794037666117179,
+    "dice": 0.6218173093404407
+  },
+  "top_matches": [
+    {
+      "rank": 1,
+      "id": 0,
+      "name": "湖北大学科教片区",
+      "boundary_confidence": 0.7352,
+      "vitality_score": 0.62792,
+      "metrics": {
+        "pred_area": 5.6785847122708765e-05,
+        "truth_area": 6.122696739884983e-05,
+        "intersection_area": 4.861651829681532e-05,
+        "union_area": 6.939629622473605e-05,
+        "iou": 0.7005635882839255,
+        "precision": 0.8561379421136343,
+        "recall": 0.794037666117179,
+        "dice": 0.8239193089990079
+      }
+    },
+    {
+      "rank": 2,
+      "id": 2,
+      "name": "湖北大学科教片区",
+      "boundary_confidence": 0.7352,
+      "vitality_score": 0.59076,
+      "metrics": {
+        "pred_area": 5.6785847122708765e-05,
+        "truth_area": 6.122696739884983e-05,
+        "intersection_area": 4.861651829681532e-05,
+        "union_area": 6.939629622473605e-05,
+        "iou": 0.7005635882839255,
+        "precision": 0.8561379421136343,
+        "recall": 0.794037666117179,
+        "dice": 0.8239193089990079
+      }
+    },
+    {
+      "rank": 3,
+      "id": 3,
+      "name": "湖北大学科教片区",
+      "boundary_confidence": 0.7238,
+      "vitality_score": 0.47579,
+      "metrics": {
+        "pred_area": 5.6785847122708765e-05,
+        "truth_area": 6.122696739884983e-05,
+        "intersection_area": 4.861651829681532e-05,
+        "union_area": 6.939629622473605e-05,
+        "iou": 0.7005635882839255,
+        "precision": 0.8561379421136343,
+        "recall": 0.794037666117179,
+        "dice": 0.8239193089990079
+      }
+    },
+    {
+      "rank": 4,
+      "id": 4,
+      "name": "湖北大学科教片区",
+      "boundary_confidence": 0.7204,
+      "vitality_score": 0.38837,
+      "metrics": {
+        "pred_area": 5.6785847122708765e-05,
+        "truth_area": 6.122696739884983e-05,
+        "intersection_area": 4.861651829681532e-05,
+        "union_area": 6.939629622473605e-05,
+        "iou": 0.7005635882839255,
+        "precision": 0.8561379421136343,
+        "recall": 0.794037666117179,
+        "dice": 0.8239193089990079
+      }
+    },
+    {
+      "rank": 5,
+      "id": 8,
+      "name": "武车片区",
+      "boundary_confidence": 0.6737,
+      "vitality_score": 0.64343,
+      "metrics": {
+        "pred_area": 9.317256600004027e-06,
+        "truth_area": 6.122696739884983e-05,
+        "intersection_area": 0.0,
+        "union_area": 7.054422399885384e-05,
+        "iou": 0.0,
+        "precision": 0.0,
+        "recall": 0.0,
+        "dice": 0.0
+      }
+    },
+    {
+      "rank": 6,
+      "id": 12,
+      "name": "湖北商业片区",
+      "boundary_confidence": 0.6436,
+      "vitality_score": 0.62527,
+      "metrics": {
+        "pred_area": 4.954412329091566e-06,
+        "truth_area": 6.122696739884983e-05,
+        "intersection_area": 0.0,
+        "union_area": 6.618137972794139e-05,
+        "iou": 0.0,
+        "precision": 0.0,
+        "recall": 0.0,
+        "dice": 0.0
+      }
+    },
+    {
+      "rank": 7,
+      "id": 11,
+      "name": "三角花园刘家河小区商业片区",
+      "boundary_confidence": 0.7358,
+      "vitality_score": 0.62353,
+      "metrics": {
+        "pred_area": 2.89925182521081e-06,
+        "truth_area": 6.122696739884983e-05,
+        "intersection_area": 0.0,
+        "union_area": 6.412621922406062e-05,
+        "iou": 0.0,
+        "precision": 0.0,
+        "recall": 0.0,
+        "dice": 0.0
+      }
+    },
+    {
+      "rank": 8,
+      "id": 1,
+      "name": "七星绿色花园片区",
+      "boundary_confidence": 0.7423,
+      "vitality_score": 0.62177,
+      "metrics": {
+        "pred_area": 3.843044105798916e-06,
+        "truth_area": 6.122696739884983e-05,
+        "intersection_area": 0.0,
+        "union_area": 6.507001150464873e-05,
+        "iou": 0.0,
+        "precision": 0.0,
+        "recall": 0.0,
+        "dice": 0.0
+      }
+    },
+    {
+      "rank": 9,
+      "id": 9,
+      "name": "三角商务片区",
+      "boundary_confidence": 0.6364,
+      "vitality_score": 0.61498,
+      "metrics": {
+        "pred_area": 4.315776925001086e-06,
+        "truth_area": 6.122696739884983e-05,
+        "intersection_area": 0.0,
+        "union_area": 6.55427443238509e-05,
+        "iou": 0.0,
+        "precision": 0.0,
+        "recall": 0.0,
+        "dice": 0.0
+      }
+    },
+    {
+      "rank": 10,
+      "id": 10,
+      "name": "武汉商业片区",
+      "boundary_confidence": 0.6438,
+      "vitality_score": 0.60209,
+      "metrics": {
+        "pred_area": 4.954412329091566e-06,
+        "truth_area": 6.122696739884983e-05,
+        "intersection_area": 0.0,
+        "union_area": 6.618137972794139e-05,
+        "iou": 0.0,
+        "precision": 0.0,
+        "recall": 0.0,
+        "dice": 0.0
+      }
+    }
+  ],
+  "target": {
+    "target_iou": 0.9,
+    "is_pass": false,
+    "best_iou": 0.7005635882839255
+  }
+}

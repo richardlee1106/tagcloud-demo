@@ -231,13 +231,13 @@
 </template>
 
 <script setup>
-import { ref, shallowRef, onMounted, nextTick, computed, watch } from 'vue';
+import { ref, shallowRef, onMounted, nextTick, computed, watch, defineAsyncComponent } from 'vue';
 import { useRouter } from 'vue-router';
 import { ElNotification } from 'element-plus';
 import ControlPanel from './components/ControlPanel.vue';
 import TagCloud from './components/TagCloud.vue';
 import MapContainer from './components/MapContainer.vue';
-import AiChat from './components/AiChat.vue';
+const AiChat = defineAsyncComponent(() => import('./components/AiChat.vue'));
 import { semanticSearch } from './utils/aiService';
 import { normalizeAiEvidencePayload } from './utils/aiEvidencePayload';
 import { API_BASE_URL } from './config';

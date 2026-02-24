@@ -47,6 +47,214 @@ class _TermFallbackRepository(_StubRepository):
         return list(self._pois)
 
 
+class _CategoryCaptureRepository(_StubRepository):
+    def __init__(self, pois=None):
+        super().__init__(pois=pois)
+        self.fetch_calls = []
+
+    def fetch_pois(self, **kwargs):
+        self.fetch_calls.append(
+            {
+                "categories": list(kwargs.get("categories") or []),
+                "terms": list(kwargs.get("terms") or []),
+            }
+        )
+        return list(self._pois)
+
+
+def _rect(min_lon, min_lat, max_lon, max_lat):
+    return {
+        "type": "Polygon",
+        "coordinates": [
+            [
+                [min_lon, min_lat],
+                [max_lon, min_lat],
+                [max_lon, max_lat],
+                [min_lon, max_lat],
+                [min_lon, min_lat],
+            ]
+        ],
+    }
+
+
+class _V5AnchorBypassRepository(_StubRepository):
+    def __init__(self):
+        super().__init__(pois=[])
+        self.fetch_calls = []
+        self.spatial_join_calls = []
+        self.base_pois = self._build_base_pois()
+        self.anchor_pois = self._build_anchor_pois()
+
+    @staticmethod
+    def _build_base_pois():
+        rows = []
+        for idx in range(24):
+            rows.append(
+                {
+                    "id": idx + 1,
+                    "name": f"store-{idx + 1}",
+                    "address": f"base-{idx + 1}",
+                    "type": "渚垮埄搴?",
+                    "category_big": "鍟嗕笟",
+                    "category_mid": "闆跺敭",
+                    "category_small": "渚垮埄搴?",
+                    "rating": 4.0,
+                    "lon": 114.335 + (idx % 6) * 0.00035,
+                    "lat": 30.582 + (idx // 6) * 0.00035,
+                    "block_id": 11,
+                    "aoi_name": "婕椂鍖哄晢鍔″尯",
+                    "aoi_type": "鍟嗗姟鍖?",
+                    "land_type": "鍟嗕笟鏈嶅姟鐢ㄥ湴",
+                }
+            )
+        return rows
+
+    @staticmethod
+    def _build_anchor_pois():
+        rows = []
+        for idx in range(12):
+            rows.append(
+                {
+                    "id": 1000 + idx + 1,
+                    "name": f"hbu-teaching-{idx + 1}",
+                    "address": f"hbu-{idx + 1}",
+                    "type": "澶у",
+                    "category_big": "绉戞暀",
+                    "category_mid": "楂樻牎",
+                    "category_small": "澶у",
+                    "rating": 4.2,
+                    "lon": 114.318 + (idx % 4) * 0.00035,
+                    "lat": 30.589 + (idx // 4) * 0.00035,
+                    "block_id": 22,
+                    "aoi_name": "婀栧寳澶у",
+                    "aoi_type": "瀛︽牎",
+                    "land_type": "鏁欒偛鐢ㄥ湴",
+                }
+            )
+        return rows
+
+    def fetch_pois(self, **kwargs):
+        self.fetch_calls.append(
+            {
+                "categories": list(kwargs.get("categories") or []),
+                "terms": list(kwargs.get("terms") or []),
+            }
+        )
+        categories = [str(item).strip() for item in (kwargs.get("categories") or []) if str(item).strip()]
+        if categories:
+            return list(self.base_pois)
+        return list(self.base_pois + self.anchor_pois)
+
+    def fetch_road_blocks(self, **_kwargs):
+        return [
+            {
+                "block_id": 11,
+                "shape_area": 120000.0,
+                "area_m2": 120000.0,
+                "geometry_geojson": _rect(114.3345, 30.5815, 114.3385, 30.5855),
+            },
+            {
+                "block_id": 22,
+                "shape_area": 240000.0,
+                "area_m2": 240000.0,
+                "geometry_geojson": _rect(114.3165, 30.5875, 114.3235, 30.5945),
+            },
+        ]
+
+    def fetch_osm_aoi(self, **_kwargs):
+        return [
+            {
+                "aoi_id": 1,
+                "name": "婀栧寳澶у",
+                "type": "瀛︽牎",
+                "area_m2": 300000.0,
+                "geometry_geojson": _rect(114.3160, 30.5870, 114.3240, 30.5950),
+            }
+        ]
+
+    def fetch_euluc(self, **_kwargs):
+        return [
+            {
+                "euluc_id": 1,
+                "land_type": "鏁欒偛鐢ㄥ湴",
+                "area_m2": 280000.0,
+                "geometry_geojson": _rect(114.3160, 30.5870, 114.3240, 30.5950),
+            }
+        ]
+
+    def spatial_join_pois(self, **kwargs):
+        categories = [str(item).strip() for item in (kwargs.get("categories") or []) if str(item).strip()]
+        terms = [str(item).strip() for item in (kwargs.get("terms") or []) if str(item).strip()]
+        self.spatial_join_calls.append({"categories": categories, "terms": terms})
+
+        if categories:
+            return list(self.base_pois)
+
+        joined_terms = " ".join(terms)
+        if "婀栧寳澶у" in joined_terms:
+            return list(self.anchor_pois)
+
+        return list(self.base_pois + self.anchor_pois)
+
+
+class _V5ForwardingRepository(_StubRepository):
+    def __init__(self):
+        pois = []
+        for idx in range(18):
+            pois.append(
+                {
+                    "id": idx + 1,
+                    "name": f"forward-{idx + 1}",
+                    "address": f"forward-{idx + 1}",
+                    "type": "test",
+                    "category_big": "test",
+                    "category_mid": "test",
+                    "category_small": "test",
+                    "rating": 4.0,
+                    "lon": 114.3200 + (idx % 6) * 0.0003,
+                    "lat": 30.5800 + (idx // 6) * 0.0003,
+                    "block_id": 10,
+                    "aoi_name": "婀栧寳澶у",
+                    "aoi_type": "瀛︽牎",
+                    "land_type": "鏁欒偛鐢ㄥ湴",
+                }
+            )
+        super().__init__(pois=pois, roads=[], landuse=[])
+
+    def fetch_road_blocks(self, **_kwargs):
+        return [
+            {
+                "block_id": 10,
+                "shape_area": 120000.0,
+                "area_m2": 120000.0,
+                "geometry_geojson": _rect(114.3190, 30.5790, 114.3230, 30.5830),
+            }
+        ]
+
+    def fetch_osm_aoi(self, **_kwargs):
+        return [
+            {
+                "aoi_id": 1,
+                "name": "婀栧寳澶у",
+                "type": "瀛︽牎",
+                "area_m2": 200000.0,
+                "geometry_geojson": _rect(114.3180, 30.5780, 114.3240, 30.5840),
+            }
+        ]
+
+    def fetch_euluc(self, **_kwargs):
+        return [
+            {
+                "euluc_id": 1,
+                "land_type": "鏁欒偛鐢ㄥ湴",
+                "area_m2": 180000.0,
+                "geometry_geojson": _rect(114.3180, 30.5780, 114.3240, 30.5840),
+            }
+        ]
+
+    def spatial_join_pois(self, **_kwargs):
+        return list(self._pois)
+
 def _build_clustered_pois():
     centers = [
         (114.020, 30.520, "餐饮"),
@@ -569,7 +777,7 @@ class SpatialPipelineTest(unittest.TestCase):
             self.assertIn("quality_score", quality)
 
         stats = results.get("stats", {})
-        self.assertEqual(stats.get("boundary_confidence_model"), "composite_v2")
+        self.assertEqual(stats.get("boundary_confidence_model"), "composite_v5")
         self.assertEqual(stats.get("boundary_quality_model"), "coverage_area_compactness_v1")
         self.assertGreaterEqual(float(stats.get("avg_boundary_quality_score", -1)), 0.0)
         self.assertLessEqual(float(stats.get("avg_boundary_quality_score", 2)), 1.0)
@@ -638,7 +846,7 @@ class SpatialPipelineTest(unittest.TestCase):
         results = final_payload["results"]
         stats = results.get("stats", {})
 
-        self.assertEqual(stats.get("boundary_confidence_model"), "composite_v2")
+        self.assertEqual(stats.get("boundary_confidence_model"), "composite_v5")
         self.assertIn("avg_poi_quality_score", stats)
         self.assertGreaterEqual(float(stats.get("avg_poi_quality_score", -1)), 0.0)
         self.assertLessEqual(float(stats.get("avg_poi_quality_score", 2)), 1.0)
@@ -647,7 +855,7 @@ class SpatialPipelineTest(unittest.TestCase):
         self.assertGreater(len(hotspots), 0)
         for hotspot in hotspots:
             explain = hotspot.get("confidence_explain") or {}
-            self.assertEqual(explain.get("model"), "composite_v2")
+            self.assertEqual(explain.get("model"), "composite_v5")
             self.assertIn("poi_quality_confidence", explain)
 
     def test_boundary_quality_uses_road_v2_when_roads_available(self):
@@ -758,7 +966,7 @@ class SpatialPipelineTest(unittest.TestCase):
         self.assertGreaterEqual(int(niche_counts.get("commerce", 0)), 1)
         self.assertGreaterEqual(int(niche_counts.get("education", 0)), 1)
 
-    def test_boundary_confidence_uses_composite_v3_when_semantic_anchor_available(self):
+    def test_boundary_confidence_uses_composite_v5_when_semantic_anchor_available(self):
         pipeline = SpatialPipeline(
             repository=_StubRepository(
                 _build_semantic_niche_pois(),
@@ -771,12 +979,12 @@ class SpatialPipelineTest(unittest.TestCase):
         results = final_payload["results"]
         stats = results.get("stats", {})
 
-        self.assertEqual(stats.get("boundary_confidence_model"), "composite_v3")
+        self.assertEqual(stats.get("boundary_confidence_model"), "composite_v5")
         hotspots = results.get("spatial_clusters", {}).get("hotspots", [])
         self.assertGreater(len(hotspots), 0)
         for hotspot in hotspots:
             explain = hotspot.get("confidence_explain") or {}
-            self.assertEqual(explain.get("model"), "composite_v3")
+            self.assertEqual(explain.get("model"), "composite_v5")
             self.assertIn("semantic_anchor_confidence", explain)
             self.assertIn("niche_consistency_confidence", explain)
 
@@ -1076,7 +1284,7 @@ class SpatialPipelineTest(unittest.TestCase):
             delta=0.0005,
         )
 
-    def test_boundary_confidence_switches_to_composite_v4_with_visual_and_validation_signals(self):
+    def test_boundary_confidence_switches_to_composite_v5_with_visual_and_validation_signals(self):
         layer_bundle = {
             "outer": {"confidence": 0.62},
             "transition": {"confidence": 0.70},
@@ -1096,18 +1304,18 @@ class SpatialPipelineTest(unittest.TestCase):
         )
 
         explain = scored.get("explain") or {}
-        self.assertEqual(explain.get("model"), "composite_v4")
+        self.assertEqual(explain.get("model"), "composite_v5")
         self.assertIn("visual_morphology_confidence", explain)
         self.assertIn("self_validation_confidence", explain)
         self.assertIn("skg_consistency_confidence", explain)
 
-    def test_pipeline_composite_v4_includes_visual_self_validation_and_skg_outputs(self):
+    def test_pipeline_composite_v5_includes_visual_self_validation_and_skg_outputs(self):
         pipeline = SpatialPipeline(repository=_StubRepository(_build_clustered_pois()))
         request = _build_area_request(
             options={
                 "limit": 1000,
                 "maxFetchLimit": 1000,
-                "confidenceModel": "composite_v4",
+                "confidenceModel": "composite_v5",
                 "visualReviewEnabled": True,
                 "visualRemoteEnabled": False,
                 "selfValidationEnabled": True,
@@ -1121,7 +1329,7 @@ class SpatialPipelineTest(unittest.TestCase):
         results = final_payload["results"]
         stats = results.get("stats", {})
 
-        self.assertEqual(stats.get("boundary_confidence_model"), "composite_v4")
+        self.assertEqual(stats.get("boundary_confidence_model"), "composite_v5")
         self.assertIn("self_validation", results)
         self.assertIn("spatial_knowledge_graph", results)
         self.assertGreaterEqual(float(stats.get("avg_visual_morphology_confidence", 0.0)), 0.0)
@@ -1130,7 +1338,7 @@ class SpatialPipelineTest(unittest.TestCase):
 
         first_region = (results.get("vernacular_regions") or [{}])[0]
         explain = first_region.get("confidence_explain") or {}
-        self.assertEqual(explain.get("model"), "composite_v4")
+        self.assertEqual(explain.get("model"), "composite_v5")
         self.assertIn("visual_morphology_confidence", explain)
         self.assertIn("self_validation_confidence", explain)
         self.assertIn("skg_consistency_confidence", explain)
@@ -1197,6 +1405,139 @@ class SpatialPipelineTest(unittest.TestCase):
         self.assertGreaterEqual(len(repo.fetch_calls), 2)
         self.assertGreater(len(repo.fetch_calls[0].get("terms") or []), 0)
         self.assertEqual(repo.fetch_calls[1].get("terms"), [])
+
+    def test_macro_area_analysis_without_ui_filter_uses_all_categories_for_fetch(self):
+        repo = _CategoryCaptureRepository(_build_clustered_pois())
+        pipeline = SpatialPipeline(repository=repo)
+        request = _build_area_request(
+            options={
+                "sourcePolicy": {
+                    "has_category_filter": False,
+                    "selected_categories": [],
+                }
+            }
+        )
+        request["categories"] = ["鍟嗗満", "渚垮埄搴?", "鍜栧暋鍘?"]
+
+        hints = json.loads(request["hints"])
+        hints["query_plan"] = {
+            "query_type": "area_analysis",
+            "intent_mode": "macro_overview",
+            "anchor": {"type": "unknown", "name": None},
+        }
+        request["hints"] = json.dumps(hints, ensure_ascii=False)
+
+        events = list(pipeline.run(request))
+        final_payload = next(event["payload"] for event in events if event.get("type") == "FINAL")
+        stats = final_payload["results"].get("stats", {})
+
+        self.assertGreaterEqual(len(repo.fetch_calls), 1)
+        self.assertEqual(repo.fetch_calls[0].get("categories"), [])
+        self.assertTrue(bool(stats.get("fetch_categories_relaxed_macro")))
+        self.assertEqual(int(stats.get("requested_categories_count", 0)), 3)
+        self.assertEqual(int(stats.get("effective_fetch_categories_count", -1)), 0)
+
+    def test_macro_area_analysis_keeps_categories_when_ui_filter_is_on(self):
+        repo = _CategoryCaptureRepository(_build_clustered_pois())
+        pipeline = SpatialPipeline(repository=repo)
+        request = _build_area_request(
+            options={
+                "sourcePolicy": {
+                    "has_category_filter": True,
+                    "selected_categories": ["鍟嗗満", "渚垮埄搴?"],
+                }
+            }
+        )
+        request["categories"] = ["鍟嗗満", "渚垮埄搴?"]
+
+        hints = json.loads(request["hints"])
+        hints["query_plan"] = {
+            "query_type": "area_analysis",
+            "intent_mode": "macro_overview",
+            "anchor": {"type": "unknown", "name": None},
+        }
+        request["hints"] = json.dumps(hints, ensure_ascii=False)
+
+        events = list(pipeline.run(request))
+        final_payload = next(event["payload"] for event in events if event.get("type") == "FINAL")
+        stats = final_payload["results"].get("stats", {})
+
+        self.assertGreaterEqual(len(repo.fetch_calls), 1)
+        self.assertEqual(repo.fetch_calls[0].get("categories"), ["鍟嗗満", "渚垮埄搴?"])
+        self.assertFalse(bool(stats.get("fetch_categories_relaxed_macro")))
+        self.assertEqual(int(stats.get("effective_fetch_categories_count", -1)), 2)
+
+    def test_v5_anchor_bypass_injects_anchor_pois_under_ui_category_filter(self):
+        repo = _V5AnchorBypassRepository()
+        pipeline = SpatialPipeline(repository=repo)
+        request = _build_area_request(
+            options={
+                "sourcePolicy": {
+                    "has_category_filter": True,
+                    "selected_categories": ["渚垮埄搴?"],
+                },
+                "baseLayerAnchorBypass": True,
+                "baseLayerAnchorBypassPerHintLimit": 60,
+                "baseLayerAnchorBypassScanLimit": 400,
+                "baseLayerAnchorBypassMinInject": 1,
+            }
+        )
+        request["categories"] = ["渚垮埄搴?"]
+
+        hints = json.loads(request["hints"])
+        hints["query_plan"] = {
+            "query_type": "area_analysis",
+            "intent_mode": "macro_overview",
+            "anchor": {"type": "unknown", "name": None},
+        }
+        hints["vlm_extracted_texts"] = ["婀栧寳澶у", "婀栧寳澶у鍥句功棣?"]
+        request["hints"] = json.dumps(hints, ensure_ascii=False)
+
+        events = list(pipeline.run(request))
+        final_payload = next(event["payload"] for event in events if event.get("type") == "FINAL")
+        results = final_payload["results"]
+        stats = results.get("stats", {})
+
+        self.assertGreater(int(stats.get("anchor_bypass_injected_count", 0)), 0)
+        self.assertGreater(int(stats.get("total_candidates", 0)), len(repo.base_pois))
+        self.assertTrue(
+            any(
+                call.get("categories") == [] and "婀栧寳澶у" in " ".join(call.get("terms") or [])
+                for call in repo.spatial_join_calls
+            )
+        )
+
+    def test_vlm_anchor_texts_forwarded_to_block_assembler(self):
+        repo = _V5ForwardingRepository()
+        pipeline = SpatialPipeline(repository=repo)
+        request = _build_area_request(options={"confidenceModel": "composite_v5"})
+
+        hints = json.loads(request["hints"])
+        hints["query_plan"] = {
+            "query_type": "area_analysis",
+            "intent_mode": "macro_overview",
+            "anchor": {"type": "unknown", "name": None},
+        }
+        hints["vlm_extracted_texts"] = ["婀栧寳澶у", "婀栧寳澶у姝︽槍鏍″尯"]
+        request["hints"] = json.dumps(hints, ensure_ascii=False)
+
+        original_assemble = spatial_module.block_assembler.assemble_block_boundaries
+        captured = {}
+
+        def _capture_assemble(**kwargs):
+            captured.update(kwargs)
+            return []
+
+        spatial_module.block_assembler.assemble_block_boundaries = _capture_assemble
+        try:
+            events = list(pipeline.run(request))
+            final_payload = next(event["payload"] for event in events if event.get("type") == "FINAL")
+            self.assertTrue(final_payload.get("success"))
+        finally:
+            spatial_module.block_assembler.assemble_block_boundaries = original_assemble
+
+        self.assertIn("vlm_anchor_texts", captured)
+        self.assertTrue(any("婀栧寳澶у" in str(item) for item in (captured.get("vlm_anchor_texts") or [])))
 
     def test_results_include_canonical_regions(self):
         pipeline = SpatialPipeline(repository=_StubRepository(_build_clustered_pois()))
@@ -1431,7 +1772,7 @@ class SpatialPipelineTest(unittest.TestCase):
                 },
                 "boundary_generation": {"attempts": 2},
                 "boundary_confidence": 0.79,
-                "confidence_explain": {"model": "composite_v3"},
+                "confidence_explain": {"model": "composite_v5"},
                 "semantic_anchor": {"name": "\u6c99\u6e56", "confidence": 0.86},
                 "niche_profile": {"niche_type": "eco_park"},
                 "landuse_semantic": {"hit_count": 1},
@@ -1444,6 +1785,106 @@ class SpatialPipelineTest(unittest.TestCase):
         from_pipeline = spatial_module._build_region_views(cluster_entries=cluster_entries)
         from_module = result_assembler.build_region_views(cluster_entries=cluster_entries)
         self.assertEqual(from_pipeline, from_module)
+
+    def test_result_assembler_includes_fuzzy_hierarchy_and_ambiguity(self):
+        base_entry = {
+            "id": 7,
+            "name": "沙湖生态片区",
+            "theme": "生态",
+            "poi_count": 12,
+            "center": {"lon": 114.31, "lat": 30.58},
+            "boundary_geojson": {
+                "type": "Polygon",
+                "coordinates": [[[114.30, 30.57], [114.32, 30.57], [114.32, 30.59], [114.30, 30.59], [114.30, 30.57]]],
+            },
+            "boundary": [[114.30, 30.57], [114.32, 30.57], [114.32, 30.59], [114.30, 30.59], [114.30, 30.57]],
+            "layers": {"outer": {"confidence": 0.7}, "transition": {"confidence": 0.76}, "core": {"confidence": 0.8}},
+            "dominant_category": "生态",
+            "dominant_categories": [{"category": "生态", "count": 8}, {"category": "商业", "count": 7}],
+            "membership": {"score": 0.72, "level": "core"},
+            "density": 0.65,
+            "purity": 0.82,
+            "vitality_score": 0.74,
+            "poi_quality": {"score": 0.81},
+            "boundary_method": "alpha_shape_snap_road_v2",
+            "boundary_quality": {
+                "model": "coverage_area_compactness_v1",
+                "quality_score": 0.78,
+                "coverage_ratio": 0.76,
+                "landuse_alignment_score": 0.34,
+                "water_overlap_ratio": 0.08,
+                "water_penalty": 0.0,
+                "pass": True,
+            },
+            "boundary_generation": {"attempts": 2},
+            "boundary_confidence": 0.41,
+            "confidence_explain": {"model": "composite_v5"},
+            "semantic_anchor": {"name": "沙湖", "confidence": 0.86},
+            "niche_profile": {"niche_type": "mixed"},
+            "landuse_semantic": {"hit_count": 1},
+            "semantic_reasoning": {"anchor_verified": True},
+            "score_breakdown": {"density": 0.65, "purity": 0.82, "centrality": 0.52, "compactness": 0.74, "scale": 0.48},
+            "drivers": [{"metric": "purity", "value": 0.82}],
+        }
+        peer_entry = dict(base_entry)
+        peer_entry["id"] = 9
+        peer_entry["name"] = "沙湖商业片区"
+        peer_entry["theme"] = "商业"
+        peer_entry["vitality_score"] = 0.55
+        peer_entry["boundary_confidence"] = 0.62
+        peer_entry["membership"] = {"score": 0.63, "level": "transition"}
+        peer_entry["dominant_category"] = "商业"
+        peer_entry["dominant_categories"] = [{"category": "商业", "count": 10}, {"category": "生态", "count": 4}]
+        peer_entry["semantic_anchor"] = {"name": "沙湖", "confidence": 0.78}
+        peer_entry["niche_profile"] = {"niche_type": "commerce"}
+
+        views = result_assembler.build_region_views(cluster_entries=[base_entry, peer_entry])
+        fuzzy_by_id = {int(item["id"]): item for item in views["fuzzy_regions"]}
+
+        self.assertIn(7, fuzzy_by_id)
+        self.assertIn("hierarchy", fuzzy_by_id[7])
+        self.assertEqual(fuzzy_by_id[7]["hierarchy"]["macro_name"], "沙湖")
+        self.assertEqual(fuzzy_by_id[7]["hierarchy"]["rank_in_macro"], 1)
+        self.assertIn("ambiguity", fuzzy_by_id[7])
+        self.assertGreater(fuzzy_by_id[7]["ambiguity"]["score"], 0.5)
+        self.assertIn("weak_landuse_alignment", fuzzy_by_id[7]["ambiguity"]["flags"])
+        self.assertEqual(fuzzy_by_id[9]["hierarchy"]["rank_in_macro"], 2)
+
+    def test_govern_region_names_rewrites_duplicate_macro_names(self):
+        cluster_entries = [
+            {
+                "id": 1,
+                "name": "沙湖生态片区",
+                "poi_count": 40,
+                "vitality_score": 0.83,
+                "dominant_category": "生态",
+                "dominant_categories": [{"category": "生态", "count": 26}],
+                "semantic_anchor": {"name": "沙湖", "confidence": 0.9},
+                "semantic_reasoning": {},
+            },
+            {
+                "id": 2,
+                "name": "沙湖生态片区",
+                "poi_count": 18,
+                "vitality_score": 0.59,
+                "dominant_category": "商业",
+                "dominant_categories": [{"category": "商业", "count": 12}],
+                "semantic_anchor": {"name": "沙湖", "confidence": 0.72},
+                "semantic_reasoning": {},
+            },
+        ]
+
+        summary = spatial_module._govern_region_names(
+            cluster_entries=cluster_entries,
+            remote_enabled=False,
+            model_name="test",
+            endpoint="http://127.0.0.1",
+            timeout_ms=300,
+        )
+
+        self.assertEqual(summary["duplicate_rewritten"], 1)
+        self.assertNotEqual(cluster_entries[0]["name"], cluster_entries[1]["name"])
+        self.assertIn("组团", cluster_entries[1]["name"])
 
     def test_result_assembler_module_matches_cluster_summary_wrapper(self):
         cluster_entries = [
@@ -1462,7 +1903,7 @@ class SpatialPipelineTest(unittest.TestCase):
                 "semantic_anchor": {"name": "\u6c99\u6e56", "confidence": 0.86},
                 "niche_profile": {"niche_type": "eco_park"},
                 "boundary_generation": {"attempts": 2},
-                "confidence_explain": {"model": "composite_v3"},
+                "confidence_explain": {"model": "composite_v5"},
             },
             {
                 "boundary_confidence": 0.63,
@@ -1479,7 +1920,7 @@ class SpatialPipelineTest(unittest.TestCase):
                 "semantic_anchor": {"name": "", "confidence": 0.0},
                 "niche_profile": {"niche_type": "mixed"},
                 "boundary_generation": {"attempts": 1},
-                "confidence_explain": {"model": "composite_v3"},
+                "confidence_explain": {"model": "composite_v5"},
             },
         ]
         fuzzy_regions = [{"level": "core"}, {"level": "transition"}, {"level": "periphery"}]
@@ -1494,6 +1935,26 @@ class SpatialPipelineTest(unittest.TestCase):
         )
         self.assertEqual(from_pipeline, from_module)
 
+    def test_region_output_limit_defaults_for_area_analysis(self):
+        limit = spatial_module._resolve_region_output_limit(
+            hints_options={},
+            query_type="area_analysis",
+        )
+        self.assertEqual(limit, 60)
+
+    def test_region_output_limit_honors_options_and_cap(self):
+        explicit = spatial_module._resolve_region_output_limit(
+            hints_options={"maxRegionOutputs": 120},
+            query_type="area_analysis",
+        )
+        capped = spatial_module._resolve_region_output_limit(
+            hints_options={"maxRegionOutputs": 999},
+            query_type="area_analysis",
+        )
+        self.assertEqual(explicit, 120)
+        self.assertEqual(capped, 200)
+
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -68,7 +68,7 @@ function cloneForCache(payload) {
 function shouldUseSpatialResultCache(queryPlan = {}, options = {}) {
   if (options?.skipCache || options?.forceRefresh) return false
 
-  const cacheInDev = String(process.env.SPATIAL_CACHE_IN_DEV || 'false').trim().toLowerCase()
+  const cacheInDev = String(process.env.SPATIAL_CACHE_IN_DEV || 'true').trim().toLowerCase()
   const allowCacheInDev = ['1', 'true', 'yes', 'on'].includes(cacheInDev)
   if (process.env.NODE_ENV !== 'production' && !allowCacheInDev) {
     return false

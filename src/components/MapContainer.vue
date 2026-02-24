@@ -84,7 +84,7 @@
     <div v-if="aiBoundaryLegend.visible" class="ai-boundary-legend">
       <div class="legend-head">
         <span class="legend-title">边界可信度</span>
-        <span class="legend-model">模型：{{ aiBoundaryLegend.model || 'composite_v1' }}</span>
+        <span class="legend-model">模型：{{ aiBoundaryLegend.model || 'composite_v5' }}</span>
       </div>
       <div class="legend-stats">
         <span>均值 {{ formatLegendPercent(aiBoundaryLegend.avg) }}</span>
@@ -169,11 +169,6 @@ import Overlay from 'ol/Overlay';
 import { fromLonLat, toLonLat } from 'ol/proj';
 import { Style, Fill, Stroke, Circle as CircleStyle, RegularShape, Text as TextStyle } from 'ol/style';
 import { isEmpty as isEmptyExtent } from 'ol/extent';
-
-// deck.gl 相关说明
-import { Deck } from '@deck.gl/core';
-import { ScatterplotLayer } from '@deck.gl/layers';
-import { HeatmapLayer as DeckHeatmapLayer } from '@deck.gl/aggregation-layers';
 
 
 import { useRegions, REGION_COLORS, MAX_REGIONS } from '../composables/useRegions';
@@ -449,6 +444,11 @@ let deckInstance = null; // deck.gl 相关说明
 let deckContainer = null; // deck.gl 相关说明
 const highlightData = ref([]); // deck.gl 相关说明
 const heatmapData = ref([]); // deck.gl 相关说明
+let DeckClass = null;
+let ScatterplotLayerClass = null;
+let DeckHeatmapLayerClass = null;
+let deckRuntimePromise = null;
+let html2canvasModulePromise = null;
 
 // deck.gl 相关说明
 let currentLocatedPoi = null;
@@ -457,6 +457,76 @@ let currentLocatedPoi = null;
 let olPoiFeatures = [];
 // OpenLayers 相关说明
 let rawToOlMap = new Map();
+
+async function loadDeckRuntime() {
+  if (DeckClass && ScatterplotLayerClass && DeckHeatmapLayerClass) {
+    return true;
+  }
+
+  if (!deckRuntimePromise) {
+    deckRuntimePromise = Promise.all([
+      import('@deck.gl/core'),
+      import('@deck.gl/layers'),
+      import('@deck.gl/aggregation-layers')
+    ]).then(([core, layers, aggregation]) => {
+      DeckClass = core?.Deck || null;
+      ScatterplotLayerClass = layers?.ScatterplotLayer || null;
+      DeckHeatmapLayerClass = aggregation?.HeatmapLayer || null;
+      return Boolean(DeckClass && ScatterplotLayerClass && DeckHeatmapLayerClass);
+    }).catch((error) => {
+      console.warn('[MapContainer] deck.gl runtime load failed:', error);
+      DeckClass = null;
+      ScatterplotLayerClass = null;
+      DeckHeatmapLayerClass = null;
+      return false;
+    }).finally(() => {
+      deckRuntimePromise = null;
+    });
+  }
+
+  return deckRuntimePromise;
+}
+
+async function ensureDeckInitialized() {
+  if (deckInstance || !map.value || !mapContainer.value) return deckInstance;
+  const runtimeReady = await loadDeckRuntime();
+  if (!runtimeReady || !DeckClass) return null;
+
+  deckContainer = document.createElement('div');
+  deckContainer.style.cssText = `
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 1;
+  `;
+  mapContainer.value.appendChild(deckContainer);
+
+  deckInstance = new DeckClass({
+    parent: deckContainer,
+    style: { position: 'absolute', top: 0, left: 0, pointerEvents: 'none' },
+    initialViewState: getDeckViewState(),
+    controller: false,
+    layers: [],
+    getTooltip: null,
+    pickingRadius: 8,
+  });
+
+  const view = map.value.getView();
+  view.on('change:resolution', scheduleDeckSync);
+  view.on('change:center', scheduleDeckSync);
+  view.on('change:rotation', scheduleDeckSync);
+
+  nextTick(() => {
+    const canvas = deckContainer?.querySelector?.('canvas');
+    if (canvas) canvas.style.pointerEvents = 'none';
+  });
+
+  scheduleDeckSync();
+  return deckInstance;
+}
 
 /**
  * deck.gl 相关说明
@@ -512,7 +582,7 @@ function getColorByGroupIndex(groupIndex) {
  * deck.gl 相关说明
  */
 function updateDeckLayers() {
-  if (!deckInstance) return;
+  if (!deckInstance || !ScatterplotLayerClass || !DeckHeatmapLayerClass || !map.value) return;
   
   const zoom = map.value.getView().getZoom() || 13;
   
@@ -526,7 +596,7 @@ function updateDeckLayers() {
   const layers = [
     // 注释说明
     // OpenLayers 相关说明
-    new ScatterplotLayer({
+    new ScatterplotLayerClass({
       id: 'highlight-layer',
       data: highlightData.value.filter(d => {
         // POI 相关说明
@@ -557,7 +627,7 @@ function updateDeckLayers() {
     }),
     
     // POI 相关说明
-    new DeckHeatmapLayer({
+    new DeckHeatmapLayerClass({
       id: 'heatmap-layer',
       data: heatmapData.value,
       visible: heatmapEnabled.value,
@@ -626,52 +696,10 @@ onMounted(() => {
     }),
   });
 
-  // deck.gl 相关说明
-  deckContainer = document.createElement('div');
-  deckContainer.style.cssText = `
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    pointer-events: none;
-    z-index: 1;
-  `;
-  mapContainer.value.appendChild(deckContainer);
-
-  // deck.gl 相关说明
-  deckInstance = new Deck({
-    parent: deckContainer,
-    style: { position: 'absolute', top: 0, left: 0, pointerEvents: 'none' },
-    initialViewState: getDeckViewState(),
-    controller: false,
-    layers: [],
-    getTooltip: null,
-    pickingRadius: 8,
-  });
-  
-  // deck.gl 相关说明
-  nextTick(() => {
-    if (deckContainer) {
-      const canvas = deckContainer.querySelector('canvas');
-      if (canvas) {
-        canvas.style.pointerEvents = 'none';
-      }
-    }
-  });
-  
-  // 注释说明
-
   // OpenLayers 相关说明
   map.value.on('moveend', onMapMoveEnd);
   map.value.on('pointermove', onPointerMove);
   map.value.on('singleclick', onMapClick);
-  
-  // deck.gl 相关说明
-  map.value.getView().on('change:resolution', scheduleDeckSync);
-  map.value.getView().on('change:center', scheduleDeckSync);
-  map.value.getView().on('change:rotation', scheduleDeckSync);
-  scheduleDeckSync();
 
   // POI 相关说明
   rebuildPoiOlFeatures();
@@ -1601,6 +1629,9 @@ function removeRegionFromMap(regionId) {
 function clearHighlights() {
   highlightData.value = [];
   heatmapData.value = [];
+  if (deckInstance) {
+    updateDeckLayers();
+  }
 }
 
 function parseBoundaryPayload(boundary) {
@@ -1795,7 +1826,7 @@ function updateAiBoundaryLegend({ stats = null, confidenceValues = [], renderedC
 
   aiBoundaryLegend.value = {
     visible: true,
-    model: String(normalizedStats.boundary_confidence_model || 'composite_v1'),
+    model: String(normalizedStats.boundary_confidence_model || 'composite_v5'),
     avg,
     min,
     max,
@@ -1901,7 +1932,7 @@ function clearAiEvidenceBoundaries() {
 }
 
 function showAnalysisBoundary(boundary, options = {}) {
-  const { fitView = true, clear = true, clearLocate = true, label = '分析边界' } = options;
+  const { fitView = true, clear = true, clearLocate = true, label = '片区边界' } = options;
   if (clear) clearAiEvidenceBoundaries();
   if (clearLocate) locateLayerSource.clear();
   addAiBoundaryFeature(boundary, 'queryBoundary', { label });
@@ -2039,6 +2070,9 @@ function showHighlights(features, options = {}) {
   // deck.gl 相关说明
   if (!features || !features.length) {
     clearHighlights();
+    if (deckInstance) {
+      updateDeckLayers();
+    }
     return;
   }
   
@@ -2062,8 +2096,11 @@ function showHighlights(features, options = {}) {
 
   highlightData.value = deckData;
   heatmapData.value = deckData;
-  
-  console.log(`[MapContainer] deck.gl 鏁版嵁鏇存柊: ${deckData.length} 涓偣`);
+  ensureDeckInitialized().then((instance) => {
+    if (!instance) return;
+    updateDeckLayers();
+    scheduleDeckSync();
+  });
   
 
   if (options.fitView && map.value) {
@@ -2094,8 +2131,15 @@ function showHighlights(features, options = {}) {
 }
 
 
-watch(heatmapEnabled, () => {
-  // deck.gl 相关说明
+watch(heatmapEnabled, (enabled) => {
+  if (enabled) {
+    ensureDeckInitialized().then((instance) => {
+      if (!instance) return;
+      updateDeckLayers();
+      scheduleDeckSync();
+    });
+    return;
+  }
   updateDeckLayers();
 });
 
@@ -2351,8 +2395,6 @@ function transformLon(x, y) {
   return ret;
 }
 
-import html2canvas from 'html2canvas';
-
 /**
  * 捕获当前地图和叠加层的截图
  * 用于发给 VLM 进行视觉审查和地图文字/形态解析
@@ -2360,10 +2402,20 @@ import html2canvas from 'html2canvas';
 async function captureMapScreenshot() {
   if (!mapContainer.value) return null;
   try {
+    if (!html2canvasModulePromise) {
+      html2canvasModulePromise = import('html2canvas')
+        .then((mod) => mod.default || mod)
+        .catch((error) => {
+          html2canvasModulePromise = null;
+          throw error;
+        });
+    }
+    const html2canvas = await html2canvasModulePromise;
     const canvas = await html2canvas(mapContainer.value, {
       useCORS: true,
       allowTaint: true,
       backgroundColor: '#000000',
+      scale: 0.75,
     });
     return canvas.toDataURL('image/jpeg', 0.85);
   } catch (err) {

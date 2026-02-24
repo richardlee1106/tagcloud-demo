@@ -12,7 +12,7 @@ function createProps() {
           density: 12.3,
           center: [114.33, 30.58],
           boundary_confidence: 0.74,
-          confidence_explain: { model: 'composite_v3' },
+          confidence_explain: { model: 'composite_v5' },
           boundary_geojson: {
             type: 'Polygon',
             coordinates: [[[114.3, 30.5], [114.4, 30.5], [114.4, 30.6], [114.3, 30.6], [114.3, 30.5]]]
@@ -65,18 +65,16 @@ describe('SpatialEvidenceCard semantic rendering', () => {
     expect(text).toContain('约束 关键词')
     expect(text).toContain('边界 74%')
     expect(text).toContain('边界可信 66%')
-    expect(text).toContain('模型 composite_v3')
+    expect(text).toContain('模型 composite_v5')
   })
 
-  it('emits show-boundary when hotspot chip is clicked', async () => {
+  it('emits locate when hotspot chip is clicked', async () => {
     const wrapper = mount(SpatialEvidenceCard, { props: createProps() })
     const hotspotChip = wrapper.find('.hotspot-chip')
     await hotspotChip.trigger('click')
 
-    const events = wrapper.emitted('show-boundary')
+    const events = wrapper.emitted('locate')
     expect(events).toBeTruthy()
-    expect(events[0][0]).toMatchObject({
-      label: '生态活力带'
-    })
+    expect(events[0][0]).toEqual([114.33, 30.58])
   })
 })

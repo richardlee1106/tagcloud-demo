@@ -7,14 +7,194 @@ from collections import Counter
 from typing import Any, Dict, List
 
 
+_REGION_SUFFIXES = (
+    "生态片区",
+    "商业片区",
+    "科教片区",
+    "文旅片区",
+    "产业片区",
+    "片区",
+    "活力带",
+    "组团",
+)
+
+
+def _to_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _clamp01(value: float) -> float:
+    if value < 0.0:
+        return 0.0
+    if value > 1.0:
+        return 1.0
+    return float(value)
+
+
+def _strip_region_suffix(name: Any) -> str:
+    text = str(name or "").strip()
+    if not text:
+        return ""
+    for suffix in _REGION_SUFFIXES:
+        if text.endswith(suffix) and len(text) > len(suffix):
+            return text[: -len(suffix)].strip()
+    return text
+
+
+def _resolve_macro_name(entry: Dict[str, Any]) -> str:
+    semantic_anchor = entry.get("semantic_anchor") if isinstance(entry.get("semantic_anchor"), dict) else {}
+    anchor_name = _strip_region_suffix((semantic_anchor or {}).get("name"))
+    if anchor_name:
+        return anchor_name
+    fallback_name = _strip_region_suffix(entry.get("name"))
+    if fallback_name:
+        return fallback_name
+    dominant_category = str(entry.get("dominant_category") or "").strip()
+    return dominant_category or "未命名片区"
+
+
+def _resolve_micro_name(entry: Dict[str, Any]) -> str:
+    name = str(entry.get("name") or "").strip()
+    if name:
+        return name
+    dominant_category = str(entry.get("dominant_category") or "").strip()
+    if dominant_category:
+        return f"{dominant_category}片区"
+    return "未命名片区"
+
+
+def _resolve_layer_mode(entry: Dict[str, Any]) -> str:
+    layers = entry.get("layers") if isinstance(entry.get("layers"), dict) else {}
+    outer = (layers.get("outer") or {}).get("boundary")
+    transition = (layers.get("transition") or {}).get("boundary")
+    core = (layers.get("core") or {}).get("boundary")
+    if outer and transition and core and (outer != transition or transition != core):
+        return "multi_layer"
+    return "single_layer"
+
+
+def _build_hierarchy_index(cluster_entries: List[Dict[str, Any]]) -> Dict[int, Dict[str, Any]]:
+    groups: Dict[str, List[Dict[str, Any]]] = {}
+    for entry in cluster_entries:
+        macro = _resolve_macro_name(entry)
+        groups.setdefault(macro, []).append(entry)
+
+    hierarchy_by_id: Dict[int, Dict[str, Any]] = {}
+    for macro_name, entries in groups.items():
+        ranked_entries = sorted(
+            entries,
+            key=lambda item: (
+                _to_float(item.get("vitality_score")) or 0.0,
+                int(item.get("poi_count") or 0),
+            ),
+            reverse=True,
+        )
+        total = len(ranked_entries)
+        for rank, entry in enumerate(ranked_entries, start=1):
+            entry_id = int(entry.get("id") or 0)
+            if entry_id <= 0:
+                continue
+            membership = entry.get("membership") if isinstance(entry.get("membership"), dict) else {}
+            hierarchy_by_id[entry_id] = {
+                "macro_name": macro_name,
+                "micro_name": _resolve_micro_name(entry),
+                "level": str(membership.get("level") or "transition"),
+                "rank_in_macro": rank,
+                "macro_size": total,
+                "layer_mode": _resolve_layer_mode(entry),
+            }
+    return hierarchy_by_id
+
+
+def _has_competing_categories(entry: Dict[str, Any]) -> bool:
+    dominant_categories = entry.get("dominant_categories")
+    if not isinstance(dominant_categories, list) or len(dominant_categories) < 2:
+        return False
+    first = dominant_categories[0] if isinstance(dominant_categories[0], dict) else {}
+    second = dominant_categories[1] if isinstance(dominant_categories[1], dict) else {}
+    first_count = max(0.0, _to_float(first.get("count")) or 0.0)
+    second_count = max(0.0, _to_float(second.get("count")) or 0.0)
+    if first_count <= 0 or second_count <= 0:
+        return False
+    ratio = first_count / max(1.0, second_count)
+    return ratio < 1.35
+
+
+def _build_fuzzy_ambiguity(entry: Dict[str, Any]) -> Dict[str, Any]:
+    flags: List[str] = []
+    semantic_anchor = entry.get("semantic_anchor") if isinstance(entry.get("semantic_anchor"), dict) else {}
+    anchor_name = str((semantic_anchor or {}).get("name") or "").strip()
+    if not anchor_name:
+        flags.append("missing_anchor")
+
+    niche_profile = entry.get("niche_profile") if isinstance(entry.get("niche_profile"), dict) else {}
+    niche_type = str((niche_profile or {}).get("niche_type") or "").strip().lower()
+    if not niche_type or niche_type == "mixed":
+        flags.append("mixed_niche")
+
+    boundary_confidence = _to_float(entry.get("boundary_confidence"))
+    if boundary_confidence is None:
+        flags.append("missing_boundary_confidence")
+    elif boundary_confidence < 0.45:
+        flags.append("low_boundary_confidence")
+
+    boundary_quality = entry.get("boundary_quality") if isinstance(entry.get("boundary_quality"), dict) else {}
+    landuse_alignment = _to_float((boundary_quality or {}).get("landuse_alignment_score"))
+    if landuse_alignment is not None and landuse_alignment < 0.35:
+        flags.append("weak_landuse_alignment")
+
+    if _has_competing_categories(entry):
+        flags.append("category_competition")
+
+    score = 0.10 + 0.18 * len(flags)
+    if boundary_confidence is None:
+        score += 0.12
+    else:
+        score += max(0.0, 0.62 - boundary_confidence) * 0.38
+    return {
+        "score": round(_clamp01(score), 4),
+        "flags": flags,
+    }
+
+
+def _build_source_alignment(entry: Dict[str, Any]) -> Dict[str, float | None]:
+    semantic_anchor = entry.get("semantic_anchor") if isinstance(entry.get("semantic_anchor"), dict) else {}
+    boundary_quality = entry.get("boundary_quality") if isinstance(entry.get("boundary_quality"), dict) else {}
+    return {
+        "anchor_confidence": _to_float((semantic_anchor or {}).get("confidence")),
+        "boundary_confidence": _to_float(entry.get("boundary_confidence")),
+        "landuse_alignment_score": _to_float((boundary_quality or {}).get("landuse_alignment_score")),
+        "water_penalty": _to_float((boundary_quality or {}).get("water_penalty")),
+    }
+
+
 def build_region_views(*, cluster_entries: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
     """基于 cluster_entries 构建标准 regions 及兼容视图结构。"""
     regions: List[Dict[str, Any]] = []
     vernacular_regions: List[Dict[str, Any]] = []
     fuzzy_regions: List[Dict[str, Any]] = []
     hotspots: List[Dict[str, Any]] = []
+    hierarchy_by_id = _build_hierarchy_index(cluster_entries)
 
     for entry in cluster_entries:
+        entry_id = int(entry.get("id") or 0)
+        hierarchy = hierarchy_by_id.get(
+            entry_id,
+            {
+                "macro_name": _resolve_macro_name(entry),
+                "micro_name": _resolve_micro_name(entry),
+                "level": str((entry.get("membership") or {}).get("level") or "transition"),
+                "rank_in_macro": 1,
+                "macro_size": 1,
+                "layer_mode": _resolve_layer_mode(entry),
+            },
+        )
+        fuzzy_ambiguity = _build_fuzzy_ambiguity(entry)
+        source_alignment = _build_source_alignment(entry)
+
         canonical_region = {
             "id": entry["id"],
             "name": entry["name"],
@@ -45,6 +225,8 @@ def build_region_views(*, cluster_entries: List[Dict[str, Any]]) -> Dict[str, Li
             "skg_consistency": entry.get("skg_consistency"),
             "score_breakdown": entry["score_breakdown"],
             "drivers": entry["drivers"],
+            "hierarchy": hierarchy,
+            "source_alignment": source_alignment,
         }
         regions.append(canonical_region)
 
@@ -76,6 +258,8 @@ def build_region_views(*, cluster_entries: List[Dict[str, Any]]) -> Dict[str, Li
                 "visual_morphology": entry.get("visual_morphology"),
                 "self_validation": entry.get("self_validation"),
                 "skg_consistency": entry.get("skg_consistency"),
+                "hierarchy": hierarchy,
+                "source_alignment": source_alignment,
             }
         )
 
@@ -109,6 +293,9 @@ def build_region_views(*, cluster_entries: List[Dict[str, Any]]) -> Dict[str, Li
                 "skg_consistency": entry.get("skg_consistency"),
                 "score_breakdown": entry["score_breakdown"],
                 "drivers": entry["drivers"],
+                "hierarchy": hierarchy,
+                "ambiguity": fuzzy_ambiguity,
+                "source_alignment": source_alignment,
             }
         )
 
@@ -138,6 +325,8 @@ def build_region_views(*, cluster_entries: List[Dict[str, Any]]) -> Dict[str, Li
                 "visual_morphology": entry.get("visual_morphology"),
                 "self_validation": entry.get("self_validation"),
                 "skg_consistency": entry.get("skg_consistency"),
+                "hierarchy": hierarchy,
+                "source_alignment": source_alignment,
             }
         )
 
@@ -160,6 +349,12 @@ def summarize_cluster_entries(
         "transition": len([region for region in fuzzy_regions if region.get("level") == "transition"]),
         "periphery": len([region for region in fuzzy_regions if region.get("level") == "periphery"]),
     }
+    fuzzy_ambiguity_values = [
+        float((region.get("ambiguity") or {}).get("score", 0.0))
+        for region in fuzzy_regions
+        if (region.get("ambiguity") or {}).get("score") is not None
+    ]
+    high_ambiguity_count = len([value for value in fuzzy_ambiguity_values if value >= 0.6])
 
     boundary_conf_values = [
         float(entry.get("boundary_confidence", 0.0))
@@ -286,7 +481,7 @@ def summarize_cluster_entries(
     boundary_conf_model = (
         next(iter(boundary_conf_models))
         if len(boundary_conf_models) == 1
-        else ("mixed" if boundary_conf_models else "composite_v1")
+        else ("mixed" if boundary_conf_models else "composite_v5")
     )
     boundary_quality_model = (
         next(iter(boundary_quality_models))
@@ -301,6 +496,12 @@ def summarize_cluster_entries(
 
     return {
         "fuzzy_summary": fuzzy_summary,
+        "avg_fuzzy_ambiguity": (
+            round(sum(fuzzy_ambiguity_values) / len(fuzzy_ambiguity_values), 4)
+            if fuzzy_ambiguity_values
+            else 0.0
+        ),
+        "high_ambiguity_count": int(high_ambiguity_count),
         "boundary_conf_values": boundary_conf_values,
         "niche_type_counts": dict(niche_type_counts),
         "avg_boundary_confidence": avg_boundary_conf,

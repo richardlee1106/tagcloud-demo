@@ -57,6 +57,30 @@ _ADMIN_ANCHOR_SUFFIXES = (
     "\u8857\u9053",
 )
 
+_REPEATED_ANCHOR_PATTERN = re.compile(r"^(.{2,6})\1+$")
+_BUILDING_ANCHOR_PATTERN = re.compile(
+    r"(?:\d+|[a-z]\d*)(?:\u53f7\u697c|\u680b|\u5355\u5143|\u5c42|\u5ba4|\u53f7)$",
+    flags=re.IGNORECASE,
+)
+_RESIDENTIAL_ANCHOR_TOKENS = {
+    "\u5c0f\u533a",
+    "\u82b1\u56ed",
+    "\u661f\u57ce",
+    "\u56fd\u9645\u57ce",
+    "\u4f4f\u5b85",
+    "\u516c\u5bd3",
+    "\u5ead\u9662",
+    "\u82d1",
+}
+_AUTHORITY_ENTITY_TOKENS = (
+    "\u5927\u5b66",
+    "\u6821\u533a",
+    "\u533b\u9662",
+    "\u516c\u56ed",
+    "\u666f\u533a",
+    "\u4ea7\u4e1a\u56ed",
+)
+
 _NICHE_KEYWORDS: Dict[str, Tuple[Tuple[str, float], ...]] = {
     "ecology": (
         ("\u6c34\u57df", 1.0),
@@ -182,6 +206,26 @@ def _is_generic_anchor_token(token: str, *, dominant_category: str = "") -> bool
     if len(normalized) < 2:
         return True
 
+    compact = normalized
+    for suffix in ("\u7247\u533a", "\u751f\u6001\u7247\u533a", "\u5546\u4e1a\u7247\u533a", "\u6d3b\u529b\u5e26"):
+        if compact.endswith(suffix):
+            compact = compact[: -len(suffix)] or compact
+
+    repeated_match = _REPEATED_ANCHOR_PATTERN.match(compact)
+    if repeated_match:
+        repeated_unit = repeated_match.group(1)
+        if repeated_unit in _CITY_LEVEL_ANCHOR_TOKENS or len(repeated_unit) <= 3:
+            return True
+
+    if _BUILDING_ANCHOR_PATTERN.search(compact):
+        return True
+
+    if (
+        any(keyword in compact for keyword in _RESIDENTIAL_ANCHOR_TOKENS)
+        and not any(keyword in compact for keyword in _AUTHORITY_ENTITY_TOKENS)
+    ):
+        return True
+
     category_norm = normalize_semantic_text(dominant_category)
     if category_norm and normalized == category_norm:
         return True
@@ -191,6 +235,10 @@ def _is_generic_anchor_token(token: str, *, dominant_category: str = "") -> bool
 
     if len(normalized) <= 4 and any(normalized.endswith(suffix) for suffix in _ADMIN_ANCHOR_SUFFIXES):
         return True
+
+    for city_token in _CITY_LEVEL_ANCHOR_TOKENS:
+        if normalized in {city_token, f"{city_token}\u7247\u533a", f"{city_token}\u6d3b\u529b\u5e26"}:
+            return True
 
     return normalized in _GENERIC_ANCHOR_TOKENS
 

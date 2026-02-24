@@ -1,0 +1,159 @@
+{
+  "run_id": "hubu_after_anchor_mask_20260221_165549_f64e4c",
+  "case_name": "hubu_after_anchor_mask",
+  "input": {
+    "bbox_file": "D:\\AAA_Edu\\TagCloud\\vite-project\\用于比较数据\\湖北大学外接矩形面.shp",
+    "bbox_file_resolved": "D:\\AAA_Edu\\TagCloud\\vite-project\\用于比较数据\\湖北大学外接矩形面.shp",
+    "bbox_feature_index": 0,
+    "truth_file": "D:\\AAA_Edu\\TagCloud\\vite-project\\用于比较数据\\湖北大学矢量面要素.shp",
+    "truth_file_resolved": "D:\\AAA_Edu\\TagCloud\\vite-project\\用于比较数据\\湖北大学矢量面要素.shp",
+    "truth_feature_index": -1,
+    "viewport": [
+      114.32328760062694,
+      30.576123516982705,
+      114.33424947750996,
+      30.585528732777846
+    ],
+    "strict_bbox": false,
+    "query_type": "area_analysis",
+    "categories": [],
+    "semantic_query": "湖北大学 科教 文化 生态片区",
+    "semantic_anchor_hints": [
+      "湖北大学",
+      "湖北大学武昌校区"
+    ],
+    "cluster_min_cluster_size": null,
+    "cluster_min_samples": null,
+    "allow_single_cluster_fallback": false,
+    "road_boundary_enhancement": true,
+    "landuse_boundary_enhancement": true,
+    "note": "微调2-启用anchor mask地块覆盖",
+    "target_iou": 0.9
+  },
+  "pipeline_stats": {
+    "total_candidates": 658,
+    "cluster_count": 1,
+    "avg_boundary_confidence": 0.7819,
+    "avg_boundary_quality_score": 0.7337,
+    "boundary_method": "road_block_union_v5_anchor_mask_blocks_v1",
+    "boundary_confidence_model": "composite_v5",
+    "boundary_quality_model": "coverage_area_compactness_road_landuse_v3"
+  },
+  "pipeline_stage_events": [
+    {
+      "type": "STAGE",
+      "payload": {
+        "stage": "fetch_candidates",
+        "query_type": "area_analysis",
+        "fetch_limit": 8000
+      }
+    },
+    {
+      "type": "PROGRESS",
+      "payload": {
+        "stage": "fetch_candidates",
+        "progress": 0.25,
+        "poi_count": 1406,
+        "candidate_source": "db",
+        "direction": null,
+        "direction_applied": false,
+        "graph_enabled": false,
+        "graph_nodes": 0,
+        "road_boundary_enhancement": true,
+        "road_feature_count": 156,
+        "road_source": "wuhan_roads",
+        "landuse_boundary_enhancement": true,
+        "landuse_feature_count": 84,
+        "landuse_source": "wuhan_landuse",
+        "semantic_anchor_hint_count": 4
+      }
+    },
+    {
+      "type": "STAGE",
+      "payload": {
+        "stage": "cluster"
+      }
+    },
+    {
+      "type": "PROGRESS",
+      "payload": {
+        "stage": "cluster",
+        "progress": 0.55,
+        "cluster_count": 13,
+        "cluster_engine": "hdbscan",
+        "noise_count": 376,
+        "cluster_effective_min_cluster_size": 22,
+        "cluster_effective_min_samples": 8,
+        "v5_enabled": true
+      }
+    },
+    {
+      "type": "PROGRESS",
+      "payload": {
+        "stage": "region_modeling",
+        "progress": 0.85,
+        "vernacular_count": 1
+      }
+    }
+  ],
+  "bbox_vs_truth": {
+    "pred_area": 0.00010309881760453257,
+    "truth_area": 6.122696739884983e-05,
+    "intersection_area": 5.8694956057540364e-05,
+    "union_area": 0.00010563082894584223,
+    "iou": 0.5556612273452264,
+    "precision": 0.5693077517405004,
+    "recall": 0.958645488272917,
+    "dice": 0.7143730493218969
+  },
+  "best_match": {
+    "id": 0,
+    "name": "湖北大学科教片区",
+    "boundary_confidence": 0.7819,
+    "vitality_score": 0.34117,
+    "metrics": {
+      "pred_area": 7.99325072049373e-05,
+      "truth_area": 6.122696739884983e-05,
+      "intersection_area": 6.067250173593014e-05,
+      "union_area": 8.048697286788189e-05,
+      "iou": 0.7538176623380172,
+      "precision": 0.7590466489481328,
+      "recall": 0.9909440939756539,
+      "dice": 0.8596305973258755
+    }
+  },
+  "union_all_predictions_vs_truth": {
+    "pred_area": 7.99325072049373e-05,
+    "truth_area": 6.122696739884983e-05,
+    "intersection_area": 6.067250173593014e-05,
+    "union_area": 8.048697286788189e-05,
+    "iou": 0.7538176623380172,
+    "precision": 0.7590466489481328,
+    "recall": 0.9909440939756539,
+    "dice": 0.8596305973258755
+  },
+  "top_matches": [
+    {
+      "rank": 1,
+      "id": 0,
+      "name": "湖北大学科教片区",
+      "boundary_confidence": 0.7819,
+      "vitality_score": 0.34117,
+      "metrics": {
+        "pred_area": 7.99325072049373e-05,
+        "truth_area": 6.122696739884983e-05,
+        "intersection_area": 6.067250173593014e-05,
+        "union_area": 8.048697286788189e-05,
+        "iou": 0.7538176623380172,
+        "precision": 0.7590466489481328,
+        "recall": 0.9909440939756539,
+        "dice": 0.8596305973258755
+      }
+    }
+  ],
+  "target": {
+    "target_iou": 0.9,
+    "is_pass": false,
+    "best_iou": 0.7538176623380172
+  }
+}

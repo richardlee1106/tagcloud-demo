@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """Composite V5 地块级边界组装器。
 
 职责：
@@ -17,9 +17,10 @@ import math
 import re
 from collections import Counter
 from dataclasses import dataclass, field
+from numbers import Integral
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
-from shapely.geometry import MultiPoint, Point, Polygon, mapping, shape
+from shapely.geometry import MultiPoint, MultiPolygon, Point, Polygon, mapping, shape
 from shapely.ops import unary_union
 from shapely.strtree import STRtree
 
@@ -62,6 +63,37 @@ _LOW_CONFIDENCE_LAND_TYPES: frozenset = frozenset({
     "居住用地", "河流湖泊",
 })
 
+_REPEATED_NAME_PATTERN = re.compile(r"^(.{2,6})\1+$")
+_BUILDING_NAME_PATTERN = re.compile(
+    r"(?:\d+|[a-z]\d*)(?:\u53f7\u697c|\u680b|\u5355\u5143|\u5c42|\u5ba4|\u53f7)$",
+    flags=re.IGNORECASE,
+)
+_RESIDENTIAL_NAME_KEYWORDS: Tuple[str, ...] = (
+    "\u5c0f\u533a",
+    "\u82b1\u56ed",
+    "\u661f\u57ce",
+    "\u56fd\u9645\u57ce",
+    "\u516c\u5bd3",
+    "\u4f4f\u5b85",
+    "\u5ead\u9662",
+    "\u82d1",
+)
+_AUTHORITY_NAME_KEYWORDS: Tuple[str, ...] = (
+    "\u5927\u5b66",
+    "\u6821\u533a",
+    "\u533b\u9662",
+    "\u516c\u56ed",
+    "\u666f\u533a",
+    "\u4ea7\u4e1a\u56ed",
+    "\u5b66\u9662",
+)
+_GENERIC_REGION_SUFFIXES: Tuple[str, ...] = (
+    "\u7247\u533a",
+    "\u751f\u6001\u7247\u533a",
+    "\u5546\u4e1a\u7247\u533a",
+    "\u79d1\u6559\u7247\u533a",
+    "\u6d3b\u529b\u5e26",
+)
 
 @dataclass
 class ClusterDistrict:
@@ -85,7 +117,8 @@ def _is_low_confidence_name(name: str) -> bool:
     """判断名称是否命中低置信度黑名单（含宏观地名过滤）。"""
     if not name:
         return True
-    normalized = name.strip().lower()
+    stripped_name = str(name).strip()
+    normalized = stripped_name.lower()
     if len(normalized) < 2:
         return True
     # 过滤纯数字、'None'、'null' 等无效值
@@ -93,10 +126,40 @@ def _is_low_confidence_name(name: str) -> bool:
         return True
     if normalized.replace(".", "").replace("-", "").isdigit():
         return True
-    # 宏观地名过滤
-    stripped = name.strip()
-    if stripped in _MACRO_GEO_NAMES:
+
+    collapsed = re.sub(r"\s+", "", stripped_name)
+    collapsed_for_repeat = collapsed
+    for suffix in _GENERIC_REGION_SUFFIXES:
+        if collapsed_for_repeat.endswith(suffix):
+            collapsed_for_repeat = collapsed_for_repeat[: -len(suffix)] or collapsed_for_repeat
+
+    repeated_match = _REPEATED_NAME_PATTERN.match(collapsed_for_repeat)
+    if repeated_match:
+        repeated_unit = repeated_match.group(1)
+        if repeated_unit in _MACRO_GEO_NAMES or len(repeated_unit) <= 3:
+            return True
+
+    if _BUILDING_NAME_PATTERN.search(collapsed):
         return True
+
+    has_residential_hint = any(keyword in collapsed for keyword in _RESIDENTIAL_NAME_KEYWORDS)
+    has_authority_hint = any(keyword in collapsed for keyword in _AUTHORITY_NAME_KEYWORDS)
+    if has_residential_hint and not has_authority_hint:
+        return True
+
+    # 宏观地名过滤
+    if stripped_name in _MACRO_GEO_NAMES:
+        return True
+    for macro_name in _MACRO_GEO_NAMES:
+        if collapsed in {
+            macro_name,
+            f"{macro_name}片区",
+            f"{macro_name}活力带",
+            f"{macro_name}生态片区",
+            f"{macro_name}商业片区",
+        }:
+            return True
+
     # 关键词过滤
     return any(kw in normalized for kw in _LOW_CONFIDENCE_NAME_KEYWORDS)
 
@@ -207,6 +270,257 @@ def _resolve_district_name(
     return "未命名片区", "fallback", 0.10
 
 
+_HIGH_AUTHORITY_AOI_TYPES: frozenset[str] = frozenset(
+    {
+        "大学",
+        "学院",
+        "学校",
+        "医院",
+        "中学",
+        "小学",
+        "公园",
+        "景区",
+        "园区",
+        "产业园",
+        "校园",
+        "campus",
+        "university",
+        "college",
+        "hospital",
+        "park",
+    }
+)
+
+_LOW_CONFIDENCE_LAND_TYPE_KEYWORDS: Tuple[str, ...] = (
+    "居住",
+    "交通枢纽",
+    "河流",
+    "湖泊",
+)
+
+_BLOCK_LAND_COMPATIBILITY: Dict[str, Set[str]] = {
+    "教育用地": {"行政办公用地", "商业服务用地"},
+    "医疗卫生用地": {"行政办公用地"},
+    "公园与绿地用地": {"河流湖泊", "水域"},
+    "商业服务用地": {"商务办公用地"},
+    "商务办公用地": {"商业服务用地"},
+}
+
+
+def _normalize_text(value: Any) -> str:
+    return re.sub(r"\s+", "", str(value or "").strip().lower())
+
+
+def _name_like_match(left: str, right: str) -> bool:
+    l_norm = _normalize_text(left)
+    r_norm = _normalize_text(right)
+    if not l_norm or not r_norm:
+        return False
+    return l_norm in r_norm or r_norm in l_norm
+
+
+def _has_authority_hint(name: str, aoi_type: str) -> bool:
+    joined = f"{name} {aoi_type}"
+    if _is_low_confidence_name(joined):
+        return False
+    joined_norm = _normalize_text(joined)
+    return any(token in joined_norm for token in _HIGH_AUTHORITY_AOI_TYPES)
+
+
+def _text_anchor_match_count(text: str, tokens: List[str]) -> int:
+    text_norm = _normalize_text(text)
+    if not text_norm:
+        return 0
+    matched = 0
+    for token in tokens:
+        token_norm = _normalize_text(token)
+        if token_norm and token_norm in text_norm:
+            matched += 1
+    return matched
+
+
+def _is_conflicting_land_type(block_land_type: str, dominant_land_type: str) -> bool:
+    block_norm = str(block_land_type or "").strip()
+    dominant_norm = str(dominant_land_type or "").strip()
+    if not block_norm or not dominant_norm:
+        return False
+    if block_norm == dominant_norm:
+        return False
+    if block_norm in dominant_norm or dominant_norm in block_norm:
+        return False
+
+    allowed = _BLOCK_LAND_COMPATIBILITY.get(dominant_norm, set())
+    if block_norm in allowed:
+        return False
+
+    dominant_low_conf = any(keyword in dominant_norm for keyword in _LOW_CONFIDENCE_LAND_TYPE_KEYWORDS)
+    if dominant_low_conf:
+        return False
+
+    return True
+
+
+def _filter_supported_block_ids(
+    *,
+    cluster_pois: List[Dict[str, Any]],
+    dominant_land_type: str,
+) -> List[int]:
+    block_counter: Counter = Counter()
+    block_land_samples: Dict[int, List[str]] = {}
+
+    for poi in cluster_pois:
+        raw_block_id = poi.get("block_id")
+        if raw_block_id is None:
+            continue
+        try:
+            block_id = int(raw_block_id)
+        except Exception:
+            continue
+        block_counter[block_id] += 1
+        land = str(poi.get("land_type", "")).strip()
+        if land:
+            block_land_samples.setdefault(block_id, []).append(land)
+
+    if not block_counter:
+        return []
+
+    total = max(1, sum(block_counter.values()))
+    # Reject one-off outliers in medium/large clusters, while keeping small clusters stable.
+    min_support_count = 2 if total >= 8 else 1
+    min_support_ratio = 0.10 if total >= 12 else 0.0
+
+    selected: List[int] = []
+    for block_id, count in block_counter.items():
+        support_ratio = count / total
+        if count >= min_support_count or support_ratio >= min_support_ratio:
+            selected.append(block_id)
+
+    if not selected:
+        selected = [int(block_counter.most_common(1)[0][0])]
+
+    if dominant_land_type:
+        refined: List[int] = []
+        for block_id in selected:
+            block_land_type, _ = _extract_dominant(block_land_samples.get(block_id, []), blacklist=None)
+            if not _is_conflicting_land_type(block_land_type, dominant_land_type):
+                refined.append(block_id)
+        if refined:
+            selected = refined
+
+    return sorted(set(selected))
+
+
+def _merge_block_geometries(
+    *,
+    block_ids: List[int],
+    block_geom_map: Dict[int, Polygon | MultiPolygon],
+) -> Polygon | MultiPolygon | None:
+    if not block_ids:
+        return None
+    block_polys = [block_geom_map[bid] for bid in block_ids if bid in block_geom_map]
+    if not block_polys:
+        return None
+    try:
+        merged = unary_union(block_polys)
+    except Exception:
+        return None
+
+    if merged.is_empty or not merged.is_valid:
+        try:
+            merged = merged.buffer(0)
+        except Exception:
+            return None
+    if merged.is_empty:
+        return None
+    if merged.geom_type not in {"Polygon", "MultiPolygon"}:
+        return None
+    return merged
+
+
+def _pick_override_aoi_polygon(
+    *,
+    aoi_tree: STRtree | None,
+    aoi_polys: List[Polygon | MultiPolygon],
+    aoi_meta: List[Tuple[str, str]],
+    aoi_geom_id_map: Dict[int, int],
+    cluster_coords: List[Tuple[float, float]],
+    dominant_aoi_name: str,
+    vlm_anchor_texts: List[str],
+) -> Tuple[Polygon | MultiPolygon | None, str]:
+    if aoi_tree is None or not aoi_polys:
+        return None, ""
+    if not cluster_coords:
+        return None, ""
+
+    centroid = MultiPoint(cluster_coords).centroid
+    hull = MultiPoint(cluster_coords).convex_hull
+
+    try:
+        candidate_indices = list(aoi_tree.query(hull))
+    except Exception:
+        candidate_indices = []
+    if not candidate_indices:
+        try:
+            candidate_indices = list(aoi_tree.query(centroid))
+        except Exception:
+            candidate_indices = []
+    if not candidate_indices:
+        return None, ""
+
+    best_idx: int | None = None
+    best_key: Tuple[int, int, float, float] | None = None
+
+    for idx in candidate_indices:
+        if isinstance(idx, Integral):
+            i = int(idx)
+        else:
+            i = aoi_geom_id_map.get(id(idx), -1)
+        if i < 0 or i >= len(aoi_polys):
+            continue
+        geom = aoi_polys[i]
+        if geom.is_empty:
+            continue
+        name, aoi_type = aoi_meta[i]
+        if _is_low_confidence_name(name):
+            continue
+
+        contains_centroid = bool(geom.covers(centroid))
+        intersects_cluster = bool(geom.intersects(hull))
+        if not intersects_cluster and not contains_centroid:
+            continue
+
+        authority = _has_authority_hint(name, aoi_type)
+        dominant_match = int(_name_like_match(dominant_aoi_name, name))
+        anchor_match = _text_anchor_match_count(f"{name} {aoi_type}", vlm_anchor_texts)
+        override_rank = 0
+        if authority and dominant_match:
+            override_rank = 3
+        elif authority and anchor_match > 0:
+            override_rank = 2
+        elif anchor_match > 0:
+            # VLM anchor is allowed to promote AOI override even when AOI type encoding/noise
+            # weakens authority detection.
+            override_rank = 2
+        elif dominant_match:
+            override_rank = 1
+        if override_rank <= 0:
+            continue
+
+        key = (
+            override_rank,
+            anchor_match,
+            float(geom.area),
+            1.0 if contains_centroid else 0.0,
+        )
+        if best_key is None or key > best_key:
+            best_key = key
+            best_idx = i
+
+    if best_idx is None:
+        return None, ""
+    return aoi_polys[best_idx], "aoi_override_v5"
+
+
 def assemble_block_boundaries(
     *,
     cluster_labels: List[int],
@@ -214,20 +528,20 @@ def assemble_block_boundaries(
     road_blocks: List[Dict[str, Any]],
     osm_aoi_features: List[Dict[str, Any]],
     euluc_features: List[Dict[str, Any]],
+    vlm_anchor_texts: List[str] | None = None,
 ) -> List[ClusterDistrict]:
-    """从聚类结果 + 三层面数据组装贴合路网的片区边界。
-
-    核心算法：
-      1. 每个 cluster 的 POI → 提取 block_id 集合
-      2. 从 road_blocks 中找到这些地块 → ST_Union → 片区边界
-      3. 如果地块面覆盖不足，回退到 AOI 面 / EULUC 面
-      4. 确定片区名称
-    """
+    """Assemble cluster boundaries from road blocks + AOI/EULUC context."""
     if not pois or not cluster_labels:
         return []
 
-    # 预构建地块几何索引：block_id → Shapely Polygon
-    block_geom_map: Dict[int, Polygon] = {}
+    normalized_vlm_anchors = [
+        str(text).strip()
+        for text in (vlm_anchor_texts or [])
+        if isinstance(text, str) and str(text).strip()
+    ]
+
+    # Build road block geometry index: block_id -> Polygon/MultiPolygon.
+    block_geom_map: Dict[int, Polygon | MultiPolygon] = {}
     for rb in road_blocks:
         geojson_str = rb.get("geometry_geojson")
         block_id = rb.get("block_id")
@@ -236,14 +550,17 @@ def assemble_block_boundaries(
         try:
             geojson = json.loads(geojson_str) if isinstance(geojson_str, str) else geojson_str
             poly = shape(geojson)
-            if poly.is_valid and not poly.is_empty:
-                block_geom_map[int(block_id)] = poly
+            if not poly.is_empty:
+                if not poly.is_valid:
+                    poly = poly.buffer(0)
+                if poly.is_valid and not poly.is_empty and poly.geom_type in {"Polygon", "MultiPolygon"}:
+                    block_geom_map[int(block_id)] = poly
         except Exception:
             continue
 
-    # 预构建 AOI 几何索引（使用 STRtree 加速回退查询）
-    aoi_polys: List[Polygon] = []
-    aoi_meta: List[Tuple[str, str]] = []  # (name, type)
+    # Build AOI index.
+    aoi_polys: List[Polygon | MultiPolygon] = []
+    aoi_meta: List[Tuple[str, str]] = []
     for aoi in osm_aoi_features:
         geojson_str = aoi.get("geometry_geojson")
         if not geojson_str:
@@ -251,15 +568,19 @@ def assemble_block_boundaries(
         try:
             geojson = json.loads(geojson_str) if isinstance(geojson_str, str) else geojson_str
             poly = shape(geojson)
-            if poly.is_valid and not poly.is_empty:
-                aoi_polys.append(poly)
-                aoi_meta.append((str(aoi.get("name", "")), str(aoi.get("type", ""))))
+            if not poly.is_empty:
+                if not poly.is_valid:
+                    poly = poly.buffer(0)
+                if poly.is_valid and not poly.is_empty and poly.geom_type in {"Polygon", "MultiPolygon"}:
+                    aoi_polys.append(poly)
+                    aoi_meta.append((str(aoi.get("name", "")), str(aoi.get("type", ""))))
         except Exception:
             continue
     aoi_tree = STRtree(aoi_polys) if aoi_polys else None
+    aoi_geom_id_map = {id(geom): idx for idx, geom in enumerate(aoi_polys)}
 
-    # 预构建 EULUC 几何索引
-    euluc_polys: List[Polygon] = []
+    # Build EULUC index.
+    euluc_polys: List[Polygon | MultiPolygon] = []
     euluc_types: List[str] = []
     for eu in euluc_features:
         geojson_str = eu.get("geometry_geojson")
@@ -268,55 +589,28 @@ def assemble_block_boundaries(
         try:
             geojson = json.loads(geojson_str) if isinstance(geojson_str, str) else geojson_str
             poly = shape(geojson)
-            if poly.is_valid and not poly.is_empty:
-                euluc_polys.append(poly)
-                euluc_types.append(str(eu.get("land_type", "")))
+            if not poly.is_empty:
+                if not poly.is_valid:
+                    poly = poly.buffer(0)
+                if poly.is_valid and not poly.is_empty and poly.geom_type in {"Polygon", "MultiPolygon"}:
+                    euluc_polys.append(poly)
+                    euluc_types.append(str(eu.get("land_type", "")))
         except Exception:
             continue
     euluc_tree = STRtree(euluc_polys) if euluc_polys else None
+    euluc_geom_id_map = {id(geom): idx for idx, geom in enumerate(euluc_polys)}
 
-    # 按聚类分组
     unique_labels = sorted(set(lab for lab in cluster_labels if lab >= 0))
     districts: List[ClusterDistrict] = []
 
-    # 预处理：语义聚合（同一 AOI name 下的多聚类应当合并，解决跨地块大型机构如大学被拆分的问题）
-    cluster_pois_map = {
-        cid: [pois[i] for i, lab in enumerate(cluster_labels) if lab == cid and i < len(pois)]
-        for cid in unique_labels
-    }
-
-    aoi_merges = {}
-    for cid, c_pois in cluster_pois_map.items():
-        if len(c_pois) < 3:
-            continue
-        aoi_names = [p.get("aoi_name") for p in c_pois if p.get("aoi_name")]
-        if not aoi_names:
-            continue
-        most_common_aoi, count = Counter(aoi_names).most_common(1)[0]
-        # 如果该 AOI 占比 >= 40% 且不是泛称，则标记该聚类为此 AOI
-        if count / len(c_pois) >= 0.40 and not _is_low_confidence_name(most_common_aoi):
-            aoi_merges.setdefault(most_common_aoi, []).append(cid)
-
-    # 生成最终的聚合聚类库 (保存 cid 以便后续使用)
-    merged_cluster_data: List[Tuple[int, List[Dict[str, Any]]]] = []
-    processed_cids = set()
-    for aoi_name, cids in aoi_merges.items():
-        if len(cids) > 1:
-            merged_pois = []
-            for cid in cids:
-                merged_pois.extend(cluster_pois_map[cid])
-                processed_cids.add(cid)
-            merged_cluster_data.append((cids[0], merged_pois))  # 使用第一个cid作为代表
-
-    for cid, c_pois in cluster_pois_map.items():
-        if cid not in processed_cids:
-            merged_cluster_data.append((cid, c_pois))
-
-    for cluster_id, cluster_pois in merged_cluster_data:
+    for cluster_id in unique_labels:
+        cluster_pois = [
+            pois[i] for i, lab in enumerate(cluster_labels)
+            if lab == cluster_id and i < len(pois)
+        ]
         if len(cluster_pois) < 3:
             continue
 
-        # 提取坐标
         coords = [
             (float(p["lon"]), float(p["lat"]))
             for p in cluster_pois
@@ -325,57 +619,95 @@ def assemble_block_boundaries(
         if len(coords) < 3:
             continue
 
-        # 提取该聚类 POI 所属的 block_id 集合
-        block_ids = [
-            int(p["block_id"])
-            for p in cluster_pois
-            if p.get("block_id") is not None
-        ]
-        unique_block_ids = list(set(block_ids))
+        # Dominant semantic identity is calculated before boundary strategy,
+        # then used to decide AOI override / block filtering.
+        aoi_names = [str(p.get("aoi_name", "")).strip() for p in cluster_pois if str(p.get("aoi_name", "")).strip()]
+        aoi_types = [str(p.get("aoi_type", "")).strip() for p in cluster_pois if str(p.get("aoi_type", "")).strip()]
+        land_types = [str(p.get("land_type", "")).strip() for p in cluster_pois if str(p.get("land_type", "")).strip()]
 
-        # ─── 策略 1：路网地块面 union ───
-        boundary_polygon: Polygon | None = None
+        dominant_aoi_name, _ = _extract_dominant(aoi_names, blacklist=None)
+        dominant_aoi_type, _ = _extract_dominant(aoi_types, blacklist=_LOW_CONFIDENCE_AOI_TYPES)
+        dominant_land_type, _ = _extract_dominant(land_types, blacklist=_LOW_CONFIDENCE_LAND_TYPES)
+
+        candidate_block_ids = _filter_supported_block_ids(
+            cluster_pois=cluster_pois,
+            dominant_land_type=dominant_land_type,
+        )
+
+        boundary_polygon: Polygon | MultiPolygon | None = None
         boundary_method = "unknown"
 
-        if unique_block_ids:
-            block_polys = [
-                block_geom_map[bid]
-                for bid in unique_block_ids
-                if bid in block_geom_map
-            ]
-            if block_polys:
-                try:
-                    merged = unary_union(block_polys)
-                    if merged.geom_type == "MultiPolygon":
-                        # 取面积最大的连通部分
-                        merged = max(merged.geoms, key=lambda g: g.area)
-                    if merged.is_valid and not merged.is_empty and merged.geom_type == "Polygon":
-                        boundary_polygon = merged
-                        boundary_method = "road_block_union_v5"
-                except Exception:
-                    pass
+        # Strategy A (override): if we have high-authority AOI signal, use AOI polygon first.
+        override_polygon, override_method = _pick_override_aoi_polygon(
+            aoi_tree=aoi_tree,
+            aoi_polys=aoi_polys,
+            aoi_meta=aoi_meta,
+            aoi_geom_id_map=aoi_geom_id_map,
+            cluster_coords=coords,
+            dominant_aoi_name=dominant_aoi_name,
+            vlm_anchor_texts=normalized_vlm_anchors,
+        )
+        if override_polygon is not None:
+            boundary_polygon = override_polygon
+            boundary_method = override_method
 
-        # ─── 策略 2：AOI 面回退（使用 STRtree 空间索引加速）───
+        # Strategy B: union filtered road blocks.
+        if boundary_polygon is None:
+            merged = _merge_block_geometries(
+                block_ids=candidate_block_ids,
+                block_geom_map=block_geom_map,
+            )
+            if merged is not None:
+                boundary_polygon = merged
+                boundary_method = "road_block_union_v5"
+
+        # Strategy C: AOI fallback by centroid.
         if boundary_polygon is None and aoi_tree is not None:
             centroid = MultiPoint(coords).centroid
-            candidate_indices = aoi_tree.query(centroid)
+            try:
+                candidate_indices = list(aoi_tree.query(centroid))
+            except Exception:
+                candidate_indices = []
             for idx in candidate_indices:
-                if aoi_polys[idx].contains(centroid):
-                    boundary_polygon = aoi_polys[idx]
-                    boundary_method = "aoi_fallback_v5"
-                    break
+                if isinstance(idx, Integral):
+                    i = int(idx)
+                else:
+                    i = aoi_geom_id_map.get(id(idx), -1)
+                if i < 0 or i >= len(aoi_polys):
+                    continue
+                poly = aoi_polys[i]
+                try:
+                    if poly.covers(centroid):
+                        boundary_polygon = poly
+                        boundary_method = "aoi_fallback_v5"
+                        break
+                except Exception:
+                    continue
 
-        # ─── 策略 3：EULUC 面回退（使用 STRtree 空间索引加速）───
+        # Strategy D: EULUC fallback by centroid.
         if boundary_polygon is None and euluc_tree is not None:
-            centroid = MultiPoint(coords).centroid if not boundary_polygon else centroid
-            candidate_indices = euluc_tree.query(centroid)
+            centroid = MultiPoint(coords).centroid
+            try:
+                candidate_indices = list(euluc_tree.query(centroid))
+            except Exception:
+                candidate_indices = []
             for idx in candidate_indices:
-                if euluc_polys[idx].contains(centroid):
-                    boundary_polygon = euluc_polys[idx]
-                    boundary_method = "euluc_fallback_v5"
-                    break
+                if isinstance(idx, Integral):
+                    i = int(idx)
+                else:
+                    i = euluc_geom_id_map.get(id(idx), -1)
+                if i < 0 or i >= len(euluc_polys):
+                    continue
+                poly = euluc_polys[i]
+                try:
+                    if poly.covers(centroid):
+                        boundary_polygon = poly
+                        boundary_method = "euluc_fallback_v5"
+                        break
+                except Exception:
+                    continue
 
-        # ─── 策略 4：凸包兜底（最后手段）───
+        # Strategy E: convex hull last resort.
         if boundary_polygon is None:
             try:
                 hull = MultiPoint(coords).convex_hull
@@ -388,20 +720,9 @@ def assemble_block_boundaries(
         if boundary_polygon is None:
             continue
 
-        # 计算中心
         cx = sum(c[0] for c in coords) / len(coords)
         cy = sum(c[1] for c in coords) / len(coords)
 
-        # 提取主导语义信息
-        aoi_names = [str(p.get("aoi_name", "")).strip() for p in cluster_pois if str(p.get("aoi_name", "")).strip()]
-        aoi_types = [str(p.get("aoi_type", "")).strip() for p in cluster_pois if str(p.get("aoi_type", "")).strip()]
-        land_types = [str(p.get("land_type", "")).strip() for p in cluster_pois if str(p.get("land_type", "")).strip()]
-
-        dominant_aoi_name, _ = _extract_dominant(aoi_names, blacklist=None)
-        dominant_aoi_type, _ = _extract_dominant(aoi_types, blacklist=_LOW_CONFIDENCE_AOI_TYPES)
-        dominant_land_type, _ = _extract_dominant(land_types, blacklist=_LOW_CONFIDENCE_LAND_TYPES)
-
-        # 确定名称
         name, name_source, name_confidence = _resolve_district_name(
             cluster_pois=cluster_pois,
             dominant_aoi_name=dominant_aoi_name,
@@ -409,20 +730,24 @@ def assemble_block_boundaries(
             dominant_land_type=dominant_land_type,
         )
 
-        districts.append(ClusterDistrict(
-            cluster_id=cluster_id,
-            name=name,
-            name_source=name_source,
-            name_confidence=round(name_confidence, 4),
-            boundary_geojson=mapping(boundary_polygon),
-            boundary_method=boundary_method,
-            center=(round(cx, 6), round(cy, 6)),
-            poi_count=len(cluster_pois),
-            block_ids=unique_block_ids,
-            dominant_aoi_name=dominant_aoi_name,
-            dominant_aoi_type=dominant_aoi_type,
-            dominant_land_type=dominant_land_type,
-            pois=cluster_pois,
-        ))
+        districts.append(
+            ClusterDistrict(
+                cluster_id=cluster_id,
+                name=name,
+                name_source=name_source,
+                name_confidence=round(name_confidence, 4),
+                boundary_geojson=mapping(boundary_polygon),
+                boundary_method=boundary_method,
+                center=(round(cx, 6), round(cy, 6)),
+                poi_count=len(cluster_pois),
+                block_ids=candidate_block_ids,
+                dominant_aoi_name=dominant_aoi_name,
+                dominant_aoi_type=dominant_aoi_type,
+                dominant_land_type=dominant_land_type,
+                pois=cluster_pois,
+            )
+        )
 
     return districts
+
+

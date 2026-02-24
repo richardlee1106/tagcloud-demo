@@ -131,26 +131,39 @@
           <span class="fuzzy-confidence-badge" :class="confidenceClass(fuzzyBoundaryConfidence.avg)">
             边界可信 {{ formatConfidencePercent(fuzzyBoundaryConfidence.avg) }}
           </span>
-          <span class="confidence-model-note">模型 {{ confidenceModel || 'composite_v1' }}</span>
+          <span class="confidence-model-note">模型 {{ confidenceModel || 'composite_v5' }}</span>
         </div>
-      </div>
-    </section>
 
-    <section v-if="boundary" class="evidence-section boundary-section">
-      <div class="section-header static">
-        <span class="section-icon">{{ copy.boundary.icon }}</span>
-        <div class="section-title-group">
-          <span class="section-title">{{ copy.boundary.title }}</span>
-          <span class="section-subtitle">{{ copy.boundary.subtitle }}</span>
-          <span v-if="confidenceModel" class="section-subtitle boundary-model">
-            可信度模型：{{ confidenceModel }}
-          </span>
-        </div>
-        <button type="button" class="boundary-btn" @click="handleBoundarySectionClick">
-          {{ copy.boundary.action }}
+        <button
+          v-for="(region, i) in topFuzzyRegions"
+          :key="`fuzzy-${i}`"
+          type="button"
+          class="fuzzy-chip"
+          :style="{ '--stagger': i }"
+          @click="handleFuzzyClick(region)"
+        >
+          <div class="chip-top-line">
+            <span class="chip-rank">#{{ i + 1 }}</span>
+            <span class="chip-label">{{ formatFuzzyRegionTitle(region) }}</span>
+            <span class="chip-level">{{ levelLabel(resolveFuzzyLevel(region)) }}</span>
+            <span
+              v-if="resolveFuzzyAmbiguityScore(region) !== null"
+              class="chip-confidence"
+              :class="ambiguityClass(resolveFuzzyAmbiguityScore(region))"
+            >
+              歧义 {{ formatConfidencePercent(resolveFuzzyAmbiguityScore(region)) }}
+            </span>
+          </div>
+          <div class="chip-bottom-line">
+            <span class="chip-meta">{{ formatFuzzyHierarchyMeta(region) }}</span>
+            <span v-if="formatFuzzyAmbiguityFlags(region)" class="chip-semantic">
+              {{ formatFuzzyAmbiguityFlags(region) }}
+            </span>
+          </div>
         </button>
       </div>
     </section>
+
   </div>
 </template>
 
@@ -160,11 +173,10 @@ import { computed, reactive } from 'vue'
 const props = defineProps({
   clusters: { type: Object, default: null },
   vernacularRegions: { type: Array, default: null },
-  fuzzyRegions: { type: Array, default: null },
-  boundary: { type: [Object, Array], default: null }
+  fuzzyRegions: { type: Array, default: null }
 })
 
-const emit = defineEmits(['locate', 'show-boundary', 'ask-followup'])
+const emit = defineEmits(['locate', 'ask-followup'])
 
 const copy = {
   hotspots: {
@@ -189,12 +201,6 @@ const copy = {
     icon: '🌫️',
     title: '渐变边界',
     subtitle: '展示核心-过渡-边缘层级'
-  },
-  boundary: {
-    icon: '🗺️',
-    title: '分析边界',
-    subtitle: '查看本轮对话的空间约束范围',
-    action: '显示'
   }
 }
 
@@ -208,8 +214,7 @@ const hasEvidence = computed(() => {
   return (
     props.clusters?.hotspots?.length > 0 ||
     props.vernacularRegions?.length > 0 ||
-    props.fuzzyRegions?.length > 0 ||
-    !!props.boundary
+    props.fuzzyRegions?.length > 0
   )
 })
 
@@ -270,6 +275,13 @@ const fuzzyBoundaryConfidence = computed(() => {
     avg: Number(avg.toFixed(4)),
     count: values.length
   }
+})
+
+const topFuzzyRegions = computed(() => {
+  if (!Array.isArray(props.fuzzyRegions)) return []
+  return [...props.fuzzyRegions]
+    .sort((a, b) => Number(b?.score ?? b?.membership?.score ?? 0) - Number(a?.score ?? a?.membership?.score ?? 0))
+    .slice(0, 6)
 })
 
 function toggleSection(key) {
@@ -409,23 +421,61 @@ function confidenceClass(score) {
   return 'low'
 }
 
+function ambiguityClass(score) {
+  const value = Number(score)
+  if (!Number.isFinite(value)) return 'low'
+  if (value >= 0.65) return 'low'
+  if (value >= 0.4) return 'medium'
+  return 'high'
+}
+
 function levelLabel(level) {
   const map = { core: '核心', transition: '过渡', periphery: '边缘' }
   return map[level] || level
 }
 
-function resolveBoundaryPayload(entity) {
-  if (!entity) return null
-  return (
-    entity.boundary_geojson ||
-    entity.boundary ||
-    entity.boundary_ring ||
-    entity.layers?.transition?.geojson ||
-    entity.layers?.transition?.boundary ||
-    entity.layers?.outer?.geojson ||
-    entity.layers?.outer?.boundary ||
-    null
-  )
+function resolveFuzzyLevel(region) {
+  return region?.level || region?.membership?.level || 'transition'
+}
+
+function resolveFuzzyAmbiguityScore(region) {
+  const value = Number(region?.ambiguity?.score)
+  if (!Number.isFinite(value)) return null
+  if (value < 0) return 0
+  if (value > 1) return 1
+  return value
+}
+
+function formatFuzzyRegionTitle(region) {
+  const hierarchy = region?.hierarchy || {}
+  return hierarchy.micro_name || region?.name || region?.theme || '模糊片区'
+}
+
+function formatFuzzyHierarchyMeta(region) {
+  const hierarchy = region?.hierarchy || {}
+  const macroName = hierarchy.macro_name ? `母区 ${hierarchy.macro_name}` : ''
+  const rank = Number(hierarchy.rank_in_macro)
+  const macroSize = Number(hierarchy.macro_size)
+  const rankText = Number.isFinite(rank) && Number.isFinite(macroSize) && macroSize > 0
+    ? `层级 ${rank}/${macroSize}`
+    : ''
+  const layerMode = hierarchy.layer_mode === 'multi_layer' ? '多层边界' : '单层边界'
+  return [macroName, rankText, layerMode].filter(Boolean).join(' · ')
+}
+
+function formatFuzzyAmbiguityFlags(region) {
+  const flags = Array.isArray(region?.ambiguity?.flags) ? region.ambiguity.flags : []
+  if (!flags.length) return ''
+  const labels = flags.map((flag) => {
+    if (flag === 'missing_anchor') return '缺锚点'
+    if (flag === 'mixed_niche') return '生态位混合'
+    if (flag === 'low_boundary_confidence') return '边界低置信'
+    if (flag === 'missing_boundary_confidence') return '边界置信缺失'
+    if (flag === 'weak_landuse_alignment') return '多源对齐弱'
+    if (flag === 'category_competition') return '业态竞争强'
+    return flag
+  })
+  return `提示 ${labels.join(' / ')}`
 }
 
 function resolveBoundaryConfidence(entity) {
@@ -459,43 +509,21 @@ function formatConfidencePercent(score) {
 }
 
 function handleHotspotClick(hotspot) {
-  const boundary = resolveBoundaryPayload(hotspot)
-  if (boundary) {
-    emit('show-boundary', {
-      boundary,
-      center: hotspot?.center || null,
-      label: formatHotspotLabel(hotspot)
-    })
-    return
-  }
-
   if (hotspot?.center) {
     emit('locate', hotspot.center)
   }
 }
 
 function handleRegionClick(region) {
-  const boundary = resolveBoundaryPayload(region)
-  if (boundary) {
-    emit('show-boundary', {
-      boundary,
-      center: region?.center || null,
-      label: formatRegionLabel(region)
-    })
-    return
-  }
-
   if (region?.center) {
     emit('locate', region.center)
   }
 }
 
-function handleBoundarySectionClick() {
-  if (!props.boundary) return
-  emit('show-boundary', {
-    boundary: props.boundary,
-    label: copy.boundary.title
-  })
+function handleFuzzyClick(region) {
+  if (region?.center) {
+    emit('locate', region.center)
+  }
 }
 
 function emitFollowup(prompt) {
@@ -540,7 +568,7 @@ function askRegionStrategy() {
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.05);
   color: rgba(248, 250, 252, 0.95);
   overflow: hidden;
-  font-family: "Inter", "Outfit", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: "Manrope", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
   letter-spacing: 0.01em;
 }
 
@@ -660,7 +688,8 @@ function askRegionStrategy() {
 }
 
 .hotspot-chip,
-.region-chip {
+.region-chip,
+.fuzzy-chip {
   position: relative;
   width: 100%;
   border: 1px solid rgba(255, 255, 255, 0.05);
@@ -680,7 +709,8 @@ function askRegionStrategy() {
 }
 
 .hotspot-chip:hover,
-.region-chip:hover {
+.region-chip:hover,
+.fuzzy-chip:hover {
   transform: translateY(-2px);
   border-color: rgba(255, 255, 255, 0.15);
   background: rgba(255, 255, 255, 0.06);
@@ -789,7 +819,8 @@ function askRegionStrategy() {
 }
 
 .hotspot-chip:hover .chip-hover-panel,
-.region-chip:hover .chip-hover-panel {
+.region-chip:hover .chip-hover-panel,
+.fuzzy-chip:hover .chip-hover-panel {
   opacity: 1;
   transform: translateY(0);
 }

@@ -12,6 +12,27 @@ function pickArray(...values) {
   return []
 }
 
+function normalizeFuzzyRegion(item = {}) {
+  const region = item && typeof item === 'object' ? item : {}
+  const hierarchy = region.hierarchy && typeof region.hierarchy === 'object'
+    ? region.hierarchy
+    : {}
+  return {
+    ...region,
+    hierarchy: {
+      macro_name: hierarchy.macro_name || '',
+      micro_name: hierarchy.micro_name || region.name || '',
+      level: hierarchy.level || region.level || region.membership?.level || 'transition',
+      rank_in_macro: Number.isFinite(Number(hierarchy.rank_in_macro)) ? Number(hierarchy.rank_in_macro) : null,
+      macro_size: Number.isFinite(Number(hierarchy.macro_size)) ? Number(hierarchy.macro_size) : null,
+      layer_mode: hierarchy.layer_mode || (region.layers ? 'multi_layer' : 'single_layer')
+    },
+    ambiguity: region.ambiguity && typeof region.ambiguity === 'object'
+      ? region.ambiguity
+      : { score: null, flags: [] }
+  }
+}
+
 export function normalizeAiEvidencePayload(payload) {
   const root = pickObject(payload)
   const clusters = pickObject(root.clusters, root.spatialClusters, root.spatial_clusters)
@@ -27,7 +48,7 @@ export function normalizeAiEvidencePayload(payload) {
     stats: pickObject(root.stats),
     clusters: { ...clusters, hotspots },
     vernacularRegions: pickArray(root.vernacularRegions, root.vernacular_regions),
-    fuzzyRegions: pickArray(root.fuzzyRegions, root.fuzzy_regions)
+    fuzzyRegions: pickArray(root.fuzzyRegions, root.fuzzy_regions).map((item) => normalizeFuzzyRegion(item))
   }
 }
 
@@ -79,4 +100,3 @@ export function resolveFuzzyLayerBundle(region) {
     }
   }
 }
-

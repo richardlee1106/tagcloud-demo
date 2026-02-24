@@ -95,197 +95,124 @@ def build_boundary_confidence(
         else None
     )
 
-    semantic_available = semantic_anchor_conf is not None or niche_consistency_conf is not None
-
-    if semantic_available:
-        model_name = "composite_v3"
-        if poi_quality_conf is None:
-            if quality_conf is None:
-                base_weights = {
-                    "layer": 0.55,
-                    "membership": 0.25,
-                    "method": 0.20,
-                }
-            else:
-                base_weights = {
-                    "layer": 0.45,
-                    "membership": 0.20,
-                    "method": 0.15,
-                    "quality": 0.20,
-                }
-        else:
-            if quality_conf is None:
-                base_weights = {
-                    "layer": 0.42,
-                    "membership": 0.20,
-                    "method": 0.16,
-                    "poi_quality": 0.22,
-                }
-            else:
-                base_weights = {
-                    "layer": 0.36,
-                    "membership": 0.18,
-                    "method": 0.14,
-                    "quality": 0.18,
-                    "poi_quality": 0.14,
-                }
-
-        base_mass = 0.78
-        semantic_mass = max(0.0, 1.0 - base_mass)
-        weights: Dict[str, float] = {key: value * base_mass for key, value in base_weights.items()}
-
-        semantic_template = {
-            "semantic_anchor": 0.62,
-            "niche_consistency": 0.38,
+    if quality_conf is None and poi_quality_conf is None:
+        base_weights = {
+            "layer": 0.55,
+            "membership": 0.25,
+            "method": 0.20,
         }
-        semantic_allocated = 0.0
-        if semantic_anchor_conf is not None:
-            semantic_weight = semantic_mass * semantic_template["semantic_anchor"]
-            weights["semantic_anchor"] = semantic_weight
-            semantic_allocated += semantic_weight
-        if niche_consistency_conf is not None:
-            semantic_weight = semantic_mass * semantic_template["niche_consistency"]
-            weights["niche_consistency"] = semantic_weight
-            semantic_allocated += semantic_weight
-
-        rebalance_mass = max(0.0, semantic_mass - semantic_allocated)
-        if rebalance_mass > 0:
-            base_total = sum(base_weights.values()) or 1.0
-            for key, value in base_weights.items():
-                weights[key] += rebalance_mass * (value / base_total)
-
-        total_weight = sum(weights.values())
-        if total_weight > 0:
-            weights = {key: (value / total_weight) for key, value in weights.items()}
-
-        components = {
-            "layer": layer_conf,
-            "membership": membership_conf,
-            "method": method_conf,
-            "quality": quality_conf if quality_conf is not None else 0.0,
-            "poi_quality": poi_quality_conf if poi_quality_conf is not None else 0.0,
-            "semantic_anchor": semantic_anchor_conf if semantic_anchor_conf is not None else 0.0,
-            "niche_consistency": niche_consistency_conf if niche_consistency_conf is not None else 0.0,
+    elif quality_conf is not None and poi_quality_conf is None:
+        base_weights = {
+            "layer": 0.45,
+            "membership": 0.20,
+            "method": 0.15,
+            "quality": 0.20,
         }
-        score = _clamp01(
-            sum(float(weights.get(key, 0.0)) * float(components.get(key, 0.0)) for key in weights)
-        )
-    elif poi_quality_conf is None:
-        model_name = "composite_v1"
-        if quality_conf is None:
-            weights = {
-                "layer": 0.55,
-                "membership": 0.25,
-                "method": 0.20,
-            }
-            score = _clamp01(
-                weights["layer"] * layer_conf
-                + weights["membership"] * membership_conf
-                + weights["method"] * method_conf
-            )
-        else:
-            weights = {
-                "layer": 0.45,
-                "membership": 0.20,
-                "method": 0.15,
-                "quality": 0.20,
-            }
-            score = _clamp01(
-                weights["layer"] * layer_conf
-                + weights["membership"] * membership_conf
-                + weights["method"] * method_conf
-                + weights["quality"] * quality_conf
-            )
+    elif quality_conf is None and poi_quality_conf is not None:
+        base_weights = {
+            "layer": 0.42,
+            "membership": 0.20,
+            "method": 0.16,
+            "poi_quality": 0.22,
+        }
     else:
-        model_name = "composite_v2"
-        if quality_conf is None:
-            weights = {
-                "layer": 0.42,
-                "membership": 0.20,
-                "method": 0.16,
-                "poi_quality": 0.22,
-            }
-            score = _clamp01(
-                weights["layer"] * layer_conf
-                + weights["membership"] * membership_conf
-                + weights["method"] * method_conf
-                + weights["poi_quality"] * poi_quality_conf
-            )
-        else:
-            weights = {
-                "layer": 0.36,
-                "membership": 0.18,
-                "method": 0.14,
-                "quality": 0.18,
-                "poi_quality": 0.14,
-            }
-            score = _clamp01(
-                weights["layer"] * layer_conf
-                + weights["membership"] * membership_conf
-                + weights["method"] * method_conf
-                + weights["quality"] * quality_conf
-                + weights["poi_quality"] * poi_quality_conf
-            )
+        base_weights = {
+            "layer": 0.36,
+            "membership": 0.18,
+            "method": 0.14,
+            "quality": 0.18,
+            "poi_quality": 0.14,
+        }
 
-    extra_signals = {
-        "visual_morphology": visual_morphology_conf,
-        "self_validation": self_validation_conf,
-        "skg_consistency": skg_consistency_conf,
-    }
-    available_extra_signals = {
-        key: value for key, value in extra_signals.items() if value is not None
-    }
-    legacy_model_name = model_name
-    if available_extra_signals:
-        model_name = "composite_v4"
-        v4_extra_mass = 0.26
-        base_mass = max(0.0, 1.0 - v4_extra_mass)
-        v4_weights: Dict[str, float] = {
-            key: float(value) * base_mass for key, value in weights.items()
-        }
-        extra_template = {
-            "visual_morphology": 0.46,
-            "self_validation": 0.34,
-            "skg_consistency": 0.20,
-        }
-        extra_total = sum(
-            float(extra_template.get(key, 0.0)) for key in available_extra_signals.keys()
-        ) or 1.0
-        for key in available_extra_signals.keys():
-            share = float(extra_template.get(key, 0.0)) / extra_total
-            v4_weights[key] = v4_extra_mass * share
+    # Composite V5: one model with dynamic signal mass rebalancing.
+    base_mass = 0.62
+    semantic_signal_mass = 0.18
+    advanced_signal_mass = 0.20
+    weights: Dict[str, float] = {key: value * base_mass for key, value in base_weights.items()}
 
-        components = {
-            "layer": layer_conf,
-            "membership": membership_conf,
-            "method": method_conf,
-            "quality": quality_conf if quality_conf is not None else 0.0,
-            "poi_quality": poi_quality_conf if poi_quality_conf is not None else 0.0,
-            "semantic_anchor": semantic_anchor_conf if semantic_anchor_conf is not None else 0.0,
-            "niche_consistency": niche_consistency_conf if niche_consistency_conf is not None else 0.0,
-            "visual_morphology": visual_morphology_conf if visual_morphology_conf is not None else 0.0,
-            "self_validation": self_validation_conf if self_validation_conf is not None else 0.0,
-            "skg_consistency": skg_consistency_conf if skg_consistency_conf is not None else 0.0,
-        }
-        total_weight = sum(v4_weights.values())
-        if total_weight > 0:
-            v4_weights = {key: (value / total_weight) for key, value in v4_weights.items()}
-        weights = v4_weights
-        score = _clamp01(
-            sum(float(weights.get(key, 0.0)) * float(components.get(key, 0.0)) for key in weights)
+    semantic_template = {
+        "semantic_anchor": 0.62,
+        "niche_consistency": 0.38,
+    }
+    semantic_allocated = 0.0
+    if semantic_anchor_conf is not None:
+        semantic_weight = semantic_signal_mass * semantic_template["semantic_anchor"]
+        weights["semantic_anchor"] = semantic_weight
+        semantic_allocated += semantic_weight
+    if niche_consistency_conf is not None:
+        semantic_weight = semantic_signal_mass * semantic_template["niche_consistency"]
+        weights["niche_consistency"] = semantic_weight
+        semantic_allocated += semantic_weight
+
+    advanced_template = {
+        "visual_morphology": 0.46,
+        "self_validation": 0.34,
+        "skg_consistency": 0.20,
+    }
+    advanced_available = [
+        key
+        for key, value in (
+            ("visual_morphology", visual_morphology_conf),
+            ("self_validation", self_validation_conf),
+            ("skg_consistency", skg_consistency_conf),
         )
+        if value is not None
+    ]
+    advanced_allocated = 0.0
+    if advanced_available:
+        advanced_total = (
+            sum(float(advanced_template.get(key, 0.0)) for key in advanced_available) or 1.0
+        )
+        for key in advanced_available:
+            share = float(advanced_template.get(key, 0.0)) / advanced_total
+            advanced_weight = advanced_signal_mass * share
+            weights[key] = advanced_weight
+            advanced_allocated += advanced_weight
+
+    rebalance_mass = max(
+        0.0,
+        (semantic_signal_mass - semantic_allocated) + (advanced_signal_mass - advanced_allocated),
+    )
+    if rebalance_mass > 0:
+        base_total = sum(base_weights.values()) or 1.0
+        for key, value in base_weights.items():
+            weights[key] += rebalance_mass * (value / base_total)
+
+    total_weight = sum(weights.values())
+    if total_weight > 0:
+        weights = {key: (value / total_weight) for key, value in weights.items()}
+
+    components = {
+        "layer": layer_conf,
+        "membership": membership_conf,
+        "method": method_conf,
+        "quality": quality_conf if quality_conf is not None else 0.0,
+        "poi_quality": poi_quality_conf if poi_quality_conf is not None else 0.0,
+        "semantic_anchor": semantic_anchor_conf if semantic_anchor_conf is not None else 0.0,
+        "niche_consistency": niche_consistency_conf if niche_consistency_conf is not None else 0.0,
+        "visual_morphology": visual_morphology_conf if visual_morphology_conf is not None else 0.0,
+        "self_validation": self_validation_conf if self_validation_conf is not None else 0.0,
+        "skg_consistency": skg_consistency_conf if skg_consistency_conf is not None else 0.0,
+    }
+    score = _clamp01(
+        sum(float(weights.get(key, 0.0)) * float(components.get(key, 0.0)) for key in weights)
+    )
 
     explain = {
-        "model": model_name,
+        "model": "composite_v5",
         "layer_confidence": round(layer_conf, 4),
         "membership_confidence": round(membership_conf, 4),
         "method_confidence": round(method_conf, 4),
         "weights": {key: round(float(value), 6) for key, value in weights.items()},
+        "weight_policy": "composite_v5_dynamic_mass_v1",
+        "base_mass": round(base_mass, 4),
+        "semantic_signal_mass": round(semantic_signal_mass, 4),
+        "advanced_signal_mass": round(advanced_signal_mass, 4),
+        "semantic_signal_enabled": bool(
+            semantic_anchor_conf is not None or niche_consistency_conf is not None
+        ),
+        "advanced_signal_enabled": bool(advanced_available),
     }
-    if model_name == "composite_v3":
-        explain["weight_policy"] = "semantic_mass_fixed_v1"
-        explain["base_mass"] = 0.78
-        explain["semantic_mass"] = 0.22
     if quality_conf is not None:
         explain["quality_confidence"] = round(quality_conf, 4)
     if poi_quality_conf is not None:
@@ -300,10 +227,6 @@ def build_boundary_confidence(
         explain["self_validation_confidence"] = round(self_validation_conf, 4)
     if skg_consistency_conf is not None:
         explain["skg_consistency_confidence"] = round(skg_consistency_conf, 4)
-    if model_name == "composite_v4":
-        explain["legacy_model"] = legacy_model_name
-        explain["weight_policy"] = "visual_self_validation_skg_v1"
-        explain["extra_signal_mass"] = 0.26
 
     return {
         "score": round(score, 4),

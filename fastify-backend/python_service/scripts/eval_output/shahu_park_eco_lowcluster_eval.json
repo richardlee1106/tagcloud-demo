@@ -1,0 +1,190 @@
+{
+  "run_id": "shahu_park_eco_lowcluster_20260221_222033_d231bd",
+  "case_name": "shahu_park_eco_lowcluster",
+  "input": {
+    "bbox_file": "D:\\AAA_Edu\\TagCloud\\vite-project\\用于比较数据\\沙湖公园外接矩形面.shp",
+    "bbox_file_resolved": "D:\\AAA_Edu\\TagCloud\\vite-project\\用于比较数据\\沙湖公园外接矩形面.shp",
+    "bbox_feature_index": 0,
+    "truth_file": "D:\\AAA_Edu\\TagCloud\\vite-project\\用于比较数据\\沙湖公园矢量面要素.shp",
+    "truth_file_resolved": "D:\\AAA_Edu\\TagCloud\\vite-project\\用于比较数据\\沙湖公园矢量面要素.shp",
+    "truth_feature_index": -1,
+    "viewport": [
+      114.31258309561906,
+      30.55691153106733,
+      114.34646022626976,
+      30.578758094232057
+    ],
+    "strict_bbox": false,
+    "query_type": "area_analysis",
+    "categories": [
+      "公园",
+      "景点",
+      "湖泊",
+      "湿地",
+      "绿地"
+    ],
+    "semantic_query": "沙湖公园",
+    "semantic_anchor_hints": [
+      "沙湖",
+      "沙湖公园"
+    ],
+    "cluster_min_cluster_size": 2,
+    "cluster_min_samples": 1,
+    "allow_single_cluster_fallback": true,
+    "road_boundary_enhancement": true,
+    "landuse_boundary_enhancement": true,
+    "anchor_mask_block_overlap_ratio": null,
+    "anchor_mask_support_edge_ratio": null,
+    "anchor_mask_outlier_area_factor": null,
+    "anchor_mask_outlier_overlap_ratio": null,
+    "anchor_mask_use_centroid": true,
+    "anchor_mask_use_unfiltered_poi_support": true,
+    "water_semantic_mask_enabled": true,
+    "note": "生态类别+低聚类阈值",
+    "target_iou": 0.9
+  },
+  "pipeline_stats": {
+    "total_candidates": 27,
+    "cluster_count": 2,
+    "avg_boundary_confidence": 0.7096,
+    "avg_boundary_quality_score": 0.65,
+    "boundary_method": "aoi_override_v5",
+    "boundary_confidence_model": "composite_v4",
+    "boundary_quality_model": "coverage_area_compactness_v1"
+  },
+  "pipeline_stage_events": [
+    {
+      "type": "STAGE",
+      "payload": {
+        "stage": "fetch_candidates",
+        "query_type": "area_analysis",
+        "fetch_limit": 8000
+      }
+    },
+    {
+      "type": "PROGRESS",
+      "payload": {
+        "stage": "fetch_candidates",
+        "progress": 0.25,
+        "poi_count": 27,
+        "candidate_source": "db",
+        "direction": null,
+        "direction_applied": false,
+        "graph_enabled": false,
+        "graph_nodes": 0,
+        "road_boundary_enhancement": true,
+        "road_feature_count": 513,
+        "road_source": "wuhan_roads",
+        "landuse_boundary_enhancement": true,
+        "landuse_feature_count": 152,
+        "landuse_source": "wuhan_landuse",
+        "semantic_anchor_hint_count": 2
+      }
+    },
+    {
+      "type": "STAGE",
+      "payload": {
+        "stage": "cluster"
+      }
+    },
+    {
+      "type": "PROGRESS",
+      "payload": {
+        "stage": "cluster",
+        "progress": 0.55,
+        "cluster_count": 2,
+        "cluster_engine": "hdbscan",
+        "noise_count": 0,
+        "cluster_effective_min_cluster_size": 6,
+        "cluster_effective_min_samples": 3,
+        "v5_enabled": true,
+        "single_cluster_fallback_applied": false
+      }
+    },
+    {
+      "type": "PROGRESS",
+      "payload": {
+        "stage": "region_modeling",
+        "progress": 0.85,
+        "vernacular_count": 2
+      }
+    }
+  ],
+  "bbox_vs_truth": {
+    "pred_area": 0.0007190621192555345,
+    "truth_area": 0.0003443513590879439,
+    "intersection_area": 0.0003440067774319814,
+    "union_area": 0.0007194067009115178,
+    "iou": 0.47818122488449266,
+    "precision": 0.4784103740413157,
+    "recall": 0.9989993312154332,
+    "dice": 0.6469859268059204
+  },
+  "best_match": {
+    "id": 0,
+    "name": "沙湖公园生态片区",
+    "boundary_confidence": 0.7052,
+    "vitality_score": 0.20268,
+    "metrics": {
+      "pred_area": 2.760872972671803e-05,
+      "truth_area": 0.0003443513590879439,
+      "intersection_area": 2.7354651732272594e-05,
+      "union_area": 0.00034460543708238184,
+      "iou": 0.07937962895731432,
+      "precision": 0.9907971863624151,
+      "recall": 0.07943819883483164,
+      "dice": 0.14708380041226793
+    }
+  },
+  "union_all_predictions_vs_truth": {
+    "pred_area": 4.612601624609476e-05,
+    "truth_area": 0.0003443513590879439,
+    "intersection_area": 4.587193825164934e-05,
+    "union_area": 0.00034460543708238184,
+    "iou": 0.13311437753282787,
+    "precision": 0.9944916553580122,
+    "recall": 0.13321259533619006,
+    "dice": 0.23495311712955266
+  },
+  "top_matches": [
+    {
+      "rank": 1,
+      "id": 0,
+      "name": "沙湖公园生态片区",
+      "boundary_confidence": 0.7052,
+      "vitality_score": 0.20268,
+      "metrics": {
+        "pred_area": 2.760872972671803e-05,
+        "truth_area": 0.0003443513590879439,
+        "intersection_area": 2.7354651732272594e-05,
+        "union_area": 0.00034460543708238184,
+        "iou": 0.07937962895731432,
+        "precision": 0.9907971863624151,
+        "recall": 0.07943819883483164,
+        "dice": 0.14708380041226793
+      }
+    },
+    {
+      "rank": 2,
+      "id": 1,
+      "name": "沙湖公园生态片区",
+      "boundary_confidence": 0.7139,
+      "vitality_score": 0.29036,
+      "metrics": {
+        "pred_area": 1.8517286519376756e-05,
+        "truth_area": 0.0003443513590879439,
+        "intersection_area": 1.8517286519376756e-05,
+        "union_area": 0.0003443513590879438,
+        "iou": 0.05377439650135846,
+        "precision": 1.0,
+        "recall": 0.05377439650135844,
+        "dice": 0.1020605485954016
+      }
+    }
+  ],
+  "target": {
+    "target_iou": 0.9,
+    "is_pass": false,
+    "best_iou": 0.07937962895731432
+  }
+}

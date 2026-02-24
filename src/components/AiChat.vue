@@ -105,7 +105,7 @@
             <div v-if="!msg.pipelineCompleted && currentStageHint" class="pipeline-hint-inline">{{ currentStageHint }}</div>
           </div>
           <!-- 嵌入式 Pipeline 追踪器 (当有阶段信息时显示) -->
-          <div v-if="msg.content && msg.content.trim()" class="message-text" v-html="renderMarkdown(msg.content)"></div>
+          <div v-if="msg.content && msg.content.trim()" class="message-text" v-html="renderMessageHtml(msg)"></div>
           
           <!-- 嵌入式标签云（在文本下方显示，增加视觉引导） -->
           <EmbeddedTagCloud 
@@ -123,9 +123,7 @@
             :clusters="msg.spatialClusters"
             :vernacular-regions="msg.vernacularRegions"
             :fuzzy-regions="msg.fuzzyRegions"
-            :boundary="msg.boundary"
             @locate="handleEvidenceLocate"
-            @show-boundary="handleShowBoundary"
             @ask-followup="handleEvidenceFollowup"
           />
 
@@ -178,7 +176,6 @@ import { normalizeRefinedResultEvidence } from '../utils/refinedResultEvidence.j
 import EmbeddedTagCloud from './EmbeddedTagCloud.vue';
 import SpatialEvidenceCard from './SpatialEvidenceCard.vue';
 import { marked } from 'marked';
-import html2canvas from 'html2canvas';
 
 const props = defineProps({
   // 当前选中的 POI 数据
@@ -248,9 +245,11 @@ const currentStage = ref(''); // 原始 stage 名称（来自 SSE）
 const streamQueue = ref('');
 
 const stageSteps = [
-  { key: 'planner', label: '意图处理', hint: '正在理解问题意图与约束...', icon: 'M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z' },
-  { key: 'executor', label: '空间分析', hint: '正在执行空间检索与约束过滤...', icon: 'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7' },
-  { key: 'writer', label: '组织回答', hint: '正在整理答案并生成可读输出...', icon: 'M4 6h16M4 12h16m-7 6h7' }
+  { key: 'planner', label: '意图处理', hint: '正在理解问题意图与约束...' },
+  { key: 'visual', label: '视觉感知', hint: '正在提取视口锚点与视觉形态特征...' },
+  { key: 'spatial', label: '空间分析', hint: '正在执行空间检索、聚类与边界建模...' },
+  { key: 'fusion', label: '融合校验', hint: '正在进行自校验、知识图谱与置信度融合...' },
+  { key: 'writer', label: '组织回答', hint: '正在整理答案并生成可读输出...' }
 ];
 
 function normalizeStageName(stageName) {
@@ -258,8 +257,11 @@ function normalizeStageName(stageName) {
   if (!raw) return '';
 
   if (raw.includes('planner') || raw.includes('intent')) return 'planner';
+  if (raw.includes('visual') || raw.includes('vlm') || raw.includes('ocr') || raw.includes('snapshot')) return 'visual';
+  if (raw.includes('fusion') || raw.includes('self_validation') || raw.includes('skg') || raw.includes('validate') || raw.includes('name_audit')) return 'fusion';
   if (raw.includes('writer') || raw.includes('answer') || raw.includes('compose')) return 'writer';
-  if (raw.includes('executor') || raw.includes('spatial') || raw.includes('compute') || raw.includes('python')) return 'executor';
+  if (raw.includes('fetch_candidates') || raw.includes('cluster') || raw.includes('region_modeling')) return 'spatial';
+  if (raw.includes('executor') || raw.includes('spatial') || raw.includes('compute') || raw.includes('python') || raw.includes('region_comparison')) return 'spatial';
 
   return '';
 }
@@ -278,13 +280,21 @@ const currentStageHint = computed(() => {
 });
 const streamTimer = ref(null);
 const activeMessageIndex = ref(-1);
-const streamRenderStep = 4;
-const streamRenderIntervalMs = 16;
+const streamRenderStep = 18;
+const streamRenderIntervalMs = 24;
+const streamScrollTick = ref(0);
 const isOnline = ref(false);
 const messagesContainer = ref(null);
 const inputRef = ref(null);
 const extractedPOIs = ref([]); // AI 提取的 POI 名称列表
 let statusTimer = null;
+let html2canvasModulePromise = null;
+const snapshotCache = {
+  dataUrl: null,
+  capturedAt: 0,
+  key: ''
+};
+const SNAPSHOT_CACHE_TTL_MS = 25000;
 
 // 计算 POI 数量
 const poiCount = computed(() => props.poiFeatures?.length || 0);
@@ -377,6 +387,230 @@ function inferAnalysisScale(zoom) {
   return 'city';
 }
 
+const DEEP_SPATIAL_KEYWORDS = [
+  '模糊',
+  '边界',
+  '片区',
+  '聚类',
+  '热力',
+  '对比',
+  '空间结构',
+  '可达性',
+  '生态位',
+  'fuzzy',
+  'vernacular',
+  'cluster',
+  'region',
+  'comparison'
+];
+
+const VISUAL_SNAPSHOT_KEYWORDS = [
+  '看图',
+  '截图',
+  '视觉',
+  '形态',
+  '地图',
+  'v l m'.replace(/\s+/g, ''),
+  'ocr'
+];
+
+function shouldRunDeepSpatialMode(queryText, spatialContext, regions, poiCount) {
+  const normalized = String(queryText || '').toLowerCase();
+  if (!normalized) return false;
+  if ((regions?.length || 0) >= 2) return true;
+  if (DEEP_SPATIAL_KEYWORDS.some((kw) => normalized.includes(kw))) return true;
+  if (String(spatialContext?.mode || '').toLowerCase() === 'polygon' && Number(poiCount) >= 180) return true;
+  return false;
+}
+
+function shouldCaptureSnapshot(queryText, deepSpatialMode) {
+  if (!deepSpatialMode) return false;
+  const normalized = String(queryText || '').toLowerCase();
+  return VISUAL_SNAPSHOT_KEYWORDS.some((kw) => normalized.includes(kw)) || normalized.length >= 28;
+}
+
+const poiCoordSys = (import.meta.env.VITE_POI_COORD_SYS || 'gcj02').toLowerCase();
+const shouldProjectToBackend = poiCoordSys === 'wgs84';
+
+const GCJ_A = 6378245.0;
+const GCJ_EE = 0.00669342162296594323;
+
+function outOfChina(lon, lat) {
+  return (lon < 72.004 || lon > 137.8347) || (lat < 0.8293 || lat > 55.8271);
+}
+
+function transformLat(x, y) {
+  let ret = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * Math.sqrt(Math.abs(x));
+  ret += (20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0 / 3.0;
+  ret += (20.0 * Math.sin(y * Math.PI) + 40.0 * Math.sin(y / 3.0 * Math.PI)) * 2.0 / 3.0;
+  ret += (160.0 * Math.sin(y / 12.0 * Math.PI) + 320.0 * Math.sin((y * Math.PI) / 30.0)) * 2.0 / 3.0;
+  return ret;
+}
+
+function transformLon(x, y) {
+  let ret = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * Math.sqrt(Math.abs(x));
+  ret += (20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0 / 3.0;
+  ret += (20.0 * Math.sin(x * Math.PI) + 40.0 * Math.sin(x / 3.0 * Math.PI)) * 2.0 / 3.0;
+  ret += (150.0 * Math.sin(x / 12.0 * Math.PI) + 300.0 * Math.sin(x / 30.0 * Math.PI)) * 2.0 / 3.0;
+  return ret;
+}
+
+function wgs84ToGcj02(lon, lat) {
+  if (outOfChina(lon, lat)) return [lon, lat];
+
+  const dLat = transformLat(lon - 105.0, lat - 35.0);
+  const dLon = transformLon(lon - 105.0, lat - 35.0);
+  const radLat = lat / 180.0 * Math.PI;
+  let magic = Math.sin(radLat);
+  magic = 1 - GCJ_EE * magic * magic;
+  const sqrtMagic = Math.sqrt(magic);
+  const mgLat = lat + (dLat * 180.0) / ((GCJ_A * (1 - GCJ_EE)) / (magic * sqrtMagic) * Math.PI);
+  const mgLon = lon + (dLon * 180.0) / (GCJ_A / sqrtMagic * Math.cos(radLat) * Math.PI);
+  return [mgLon, mgLat];
+}
+
+function gcj02ToWgs84(lon, lat) {
+  if (outOfChina(lon, lat)) return [lon, lat];
+  const [gcjLon, gcjLat] = wgs84ToGcj02(lon, lat);
+  return [lon * 2 - gcjLon, lat * 2 - gcjLat];
+}
+
+function toBackendLonLat(lon, lat) {
+  const numericLon = Number(lon);
+  const numericLat = Number(lat);
+  if (!Number.isFinite(numericLon) || !Number.isFinite(numericLat)) {
+    return [lon, lat];
+  }
+  if (!shouldProjectToBackend) {
+    return [numericLon, numericLat];
+  }
+  return gcj02ToWgs84(numericLon, numericLat);
+}
+
+function convertCoordinateArrayToBackend(coords) {
+  if (!Array.isArray(coords)) return coords;
+  if (coords.length >= 2 && Number.isFinite(Number(coords[0])) && Number.isFinite(Number(coords[1]))) {
+    const [lon, lat] = toBackendLonLat(coords[0], coords[1]);
+    const rest = coords.length > 2 ? coords.slice(2) : [];
+    return [lon, lat, ...rest];
+  }
+  return coords.map((item) => convertCoordinateArrayToBackend(item));
+}
+
+function normalizeBoundaryForBackend(boundary) {
+  if (!Array.isArray(boundary)) return boundary;
+  return boundary
+    .map((point) => {
+      if (Array.isArray(point) && point.length >= 2) {
+        const [lon, lat] = toBackendLonLat(point[0], point[1]);
+        return [lon, lat];
+      }
+      if (point && typeof point === 'object') {
+        const [lon, lat] = toBackendLonLat(point.lon ?? point.lng ?? point.longitude, point.lat ?? point.latitude);
+        return { ...point, lon, lat };
+      }
+      return null;
+    })
+    .filter(Boolean);
+}
+
+function normalizeCenterForBackend(center) {
+  if (!center) return center;
+  if (Array.isArray(center) && center.length >= 2) {
+    const [lon, lat] = toBackendLonLat(center[0], center[1]);
+    return [lon, lat];
+  }
+  if (center && typeof center === 'object') {
+    const [lon, lat] = toBackendLonLat(center.lon ?? center.lng ?? center.longitude, center.lat ?? center.latitude);
+    return { ...center, lon, lat };
+  }
+  return center;
+}
+
+function normalizeViewportForBackend(viewport) {
+  if (!Array.isArray(viewport) || viewport.length < 4) return viewport;
+  const [swLon, swLat] = toBackendLonLat(viewport[0], viewport[1]);
+  const [neLon, neLat] = toBackendLonLat(viewport[2], viewport[3]);
+  return [
+    Math.min(swLon, neLon),
+    Math.min(swLat, neLat),
+    Math.max(swLon, neLon),
+    Math.max(swLat, neLat)
+  ];
+}
+
+function normalizeBoundaryWKTForBackend(boundaryWKT) {
+  if (!shouldProjectToBackend) return boundaryWKT;
+  if (typeof boundaryWKT !== 'string' || !boundaryWKT.trim()) return boundaryWKT;
+  if (!/POLYGON\s*\(\(/i.test(boundaryWKT)) return boundaryWKT;
+
+  const match = boundaryWKT.match(/POLYGON\s*\(\(\s*(.+?)\s*\)\)/i);
+  if (!match || !match[1]) return boundaryWKT;
+
+  const convertedPairs = match[1]
+    .split(',')
+    .map((pair) => pair.trim().split(/\s+/))
+    .filter((pair) => pair.length >= 2)
+    .map(([lon, lat]) => toBackendLonLat(lon, lat))
+    .map(([lon, lat]) => `${lon} ${lat}`);
+
+  if (convertedPairs.length < 3) return boundaryWKT;
+  return `POLYGON((${convertedPairs.join(', ')}))`;
+}
+
+function normalizeRegionGeometryForBackend(geometry) {
+  if (!geometry || typeof geometry !== 'object') return geometry;
+  if (!Array.isArray(geometry.coordinates)) return geometry;
+  return {
+    ...geometry,
+    coordinates: convertCoordinateArrayToBackend(geometry.coordinates)
+  };
+}
+
+async function loadHtml2Canvas() {
+  if (!html2canvasModulePromise) {
+    html2canvasModulePromise = import('html2canvas')
+      .then((mod) => mod.default || mod)
+      .catch((error) => {
+        html2canvasModulePromise = null;
+        throw error;
+      });
+  }
+  return html2canvasModulePromise;
+}
+
+async function captureMapSnapshot(snapshotKey) {
+  const now = Date.now();
+  if (
+    snapshotCache.dataUrl &&
+    snapshotCache.key === snapshotKey &&
+    now - snapshotCache.capturedAt < SNAPSHOT_CACHE_TTL_MS
+  ) {
+    return snapshotCache.dataUrl;
+  }
+
+  const mapElement = document.querySelector('.map-container');
+  if (!mapElement) return null;
+
+  try {
+    const html2canvas = await loadHtml2Canvas();
+    const canvas = await html2canvas(mapElement, {
+      useCORS: true,
+      allowTaint: true,
+      backgroundColor: '#000000',
+      scale: 0.65
+    });
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.68);
+    snapshotCache.dataUrl = dataUrl;
+    snapshotCache.capturedAt = now;
+    snapshotCache.key = snapshotKey;
+    return dataUrl;
+  } catch (error) {
+    console.warn('[AiChat] map snapshot capture failed:', error);
+    return null;
+  }
+}
+
 function enqueueStreamChunk(chunk, messageIndex) {
   if (!chunk || typeof chunk !== 'string') return;
 
@@ -406,12 +640,15 @@ function enqueueStreamChunk(chunk, messageIndex) {
     streamQueue.value = streamQueue.value.slice(streamRenderStep);
     currentMessage.content += delta;
 
-    // 每次追加流式片段后，保持消息视图贴底
-    scrollToBottom(true, 'auto');
+    streamScrollTick.value += 1;
+    if (streamScrollTick.value % 3 === 0) {
+      scrollToBottom(false, 'auto');
+    }
 
     if (!streamQueue.value) {
       window.clearInterval(streamTimer.value);
       streamTimer.value = null;
+      scrollToBottom(false, 'auto');
     }
   }, streamRenderIntervalMs);
 }
@@ -430,14 +667,16 @@ async function flushStreamQueue() {
     window.clearInterval(streamTimer.value);
     streamTimer.value = null;
   }
+  streamScrollTick.value = 0;
 
   await nextTick();
-  scrollToBottom(true, 'auto');
+  scrollToBottom(false, 'auto');
 }
 
 function resetStreamState() {
   streamQueue.value = '';
   activeMessageIndex.value = -1;
+  streamScrollTick.value = 0;
   if (streamTimer.value) {
     window.clearInterval(streamTimer.value);
     streamTimer.value = null;
@@ -448,6 +687,7 @@ marked.setOptions({
   gfm: true,
   breaks: true
 });
+const markdownRenderCache = new WeakMap();
 
 async function sendMessage() {
   const text = inputText.value.trim();
@@ -489,30 +729,12 @@ async function sendMessage() {
       timestamp: Date.now()
     });
 
-    // 尝试捕获地图截图，传递给 VLM 进行视口 OCR
-    let screenshotBase64 = null;
-    try {
-      const mapContainerObj = document.querySelector('.map-container');
-      if (mapContainerObj) {
-        const canvas = await html2canvas(mapContainerObj, {
-          useCORS: true,
-          allowTaint: true,
-          backgroundColor: '#000000',
-          scale: 1 // 使用较低缩放比以节省 Base64 长度
-        });
-        screenshotBase64 = canvas.toDataURL('image/jpeg', 0.75); // 适度压缩
-        console.log('[AiChat] UI screenshot captured for VLM OCR, length:', screenshotBase64.length);
-      }
-    } catch (e) {
-      console.warn('[AiChat] UI screenshot failed:', e);
-    }
-
     const spatialContext = {
-      boundary: props.boundaryPolygon,
+      boundary: normalizeBoundaryForBackend(props.boundaryPolygon),
       mode: props.drawMode,
-      center: props.circleCenter,
+      center: normalizeCenterForBackend(props.circleCenter),
       radius: props.circleRadius,
-      viewport: props.mapBounds,
+      viewport: normalizeViewportForBackend(props.mapBounds),
       mapZoom: props.mapZoom,
       analysisScale: inferAnalysisScale(props.mapZoom),
       interactionHints: {
@@ -527,9 +749,9 @@ async function sendMessage() {
       id: r.id,
       name: r.name,
       type: r.type,
-      geometry: r.geometry,
-      boundaryWKT: r.boundaryWKT,
-      center: r.center,
+      geometry: normalizeRegionGeometryForBackend(r.geometry),
+      boundaryWKT: normalizeBoundaryWKTForBackend(r.boundaryWKT),
+      center: normalizeCenterForBackend(r.center),
       poiCount: r.pois?.length || 0,
       stats: r.stats
     }));
@@ -537,6 +759,13 @@ async function sendMessage() {
     spatialContext.regions = normalizedRegions;
 
     const normalizedSelectedCategories = normalizeSelectedCategories(props.selectedCategories);
+    const poiCount = props.poiFeatures?.length || 0;
+    const deepSpatialMode = shouldRunDeepSpatialMode(text, spatialContext, props.regions, poiCount);
+    const shouldSnapshot = shouldCaptureSnapshot(text, deepSpatialMode);
+    const screenshotBase64 = shouldSnapshot
+      ? await captureMapSnapshot(`${props.drawMode || 'none'}:${props.mapZoom || 0}:${poiCount}`)
+      : null;
+
     const options = {
       globalAnalysis: props.globalAnalysisEnabled,
       selectedCategories: normalizedSelectedCategories,
@@ -546,14 +775,21 @@ async function sendMessage() {
         hasCategoryFilter: normalizedSelectedCategories.length > 0
       },
       confidenceModel: 'composite_v5',
-      visualReviewEnabled: true,
-      visualRemoteEnabled: false,
-      selfValidationEnabled: true,
-      skgEnabled: true,
+      visualReviewEnabled: deepSpatialMode,
+      visualRemoteEnabled: Boolean(deepSpatialMode && screenshotBase64),
+      selfValidationEnabled: deepSpatialMode,
+      skgEnabled: deepSpatialMode,
+      nameAuditEnabled: true,
+      nameAuditRemoteEnabled: deepSpatialMode,
+      nameAuditTimeoutMs: deepSpatialMode ? 900 : 420,
       visualModel: 'qwen3-vl-4b',
       screenshotBase64, // 新增：将前端截图传给后端
+      limit: deepSpatialMode ? 8000 : 4200,
+      clusterMaxHdbscanPoints: deepSpatialMode ? 3500 : 1800,
+      maxRegionOutputs: deepSpatialMode ? 60 : 24,
       spatialContext,
-      regions: normalizedRegions
+      regions: normalizedRegions,
+      analysisDepth: deepSpatialMode ? 'deep' : 'fast'
     };
 
     await sendChatMessageStream(
@@ -692,22 +928,13 @@ function handleTagClick(tag) {
 function hasSpatialEvidence(msg) {
   return msg.spatialClusters?.hotspots?.length > 0 ||
          msg.vernacularRegions?.length > 0 ||
-         msg.fuzzyRegions?.length > 0 ||
-         !!msg.boundary;
+         msg.fuzzyRegions?.length > 0;
 }
 
 function handleEvidenceLocate(center) {
   if (!center) return;
   const poi = { lon: center.lon || center[0], lat: center.lat || center[1] };
   emit('render-pois-to-map', [{ type: 'Feature', geometry: { type: 'Point', coordinates: [poi.lon, poi.lat] }, properties: { _source: 'evidence_locate' } }]);
-}
-
-function handleShowBoundary(boundaryPayload) {
-  const payload =
-    boundaryPayload && typeof boundaryPayload === 'object' && !Array.isArray(boundaryPayload)
-      ? boundaryPayload
-      : { boundary: boundaryPayload };
-  emit('ai-boundary', { ...payload, source: 'ui' });
 }
 
 function handleEvidenceFollowup(prompt) {
@@ -830,6 +1057,21 @@ function renderMarkdown(text) {
   });
 
   return sanitizeRenderedHtml(rawHtml);
+}
+
+function renderMessageHtml(message) {
+  if (!message || typeof message !== 'object') return '';
+  const content = String(message.content || '');
+  if (!content) return '';
+
+  const cached = markdownRenderCache.get(message);
+  if (cached && cached.content === content) {
+    return cached.html;
+  }
+
+  const html = renderMarkdown(content);
+  markdownRenderCache.set(message, { content, html });
+  return html;
 }
 
 function renderTables(text) {
@@ -1000,21 +1242,25 @@ function clearExtractedPOIs() {
   extractedPOIs.value = [];
 }
 
-// 监听消息变化，自动提取 POI
-watch(messages, (newMessages) => {
-  if (isTyping.value) return;
-
-  if (newMessages.length > 0) {
-    const lastMsg = newMessages[newMessages.length - 1];
-    if (lastMsg.role === 'assistant' && lastMsg.content) {
-      const pois = extractPOIsFromResponse(lastMsg.content);
-      if (pois.length > 0) {
-        extractedPOIs.value = pois;
-        console.log('[AiChat] ??? POI:', pois);
-      }
+const latestAssistantMessageText = computed(() => {
+  for (let i = messages.value.length - 1; i >= 0; i -= 1) {
+    const item = messages.value[i];
+    if (item?.role === 'assistant' && item?.content) {
+      return String(item.content);
     }
   }
-}, { deep: true });
+  return '';
+});
+
+// 监听最新 assistant 文本，自动提取 POI（避免 deep watch 导致频繁重算）
+watch(latestAssistantMessageText, (latestText) => {
+  if (isTyping.value || !latestText) return;
+  const pois = extractPOIsFromResponse(latestText);
+  if (pois.length > 0) {
+    extractedPOIs.value = pois;
+    console.log('[AiChat] extracted POI count:', pois.length);
+  }
+});
 
 watch(() => props.poiFeatures, (newVal, oldVal) => {
   if (newVal?.length > 0 && newVal.length !== oldVal?.length) {
@@ -1063,11 +1309,11 @@ defineExpose({
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: rgba(15, 23, 42, 0.7);
+  background: linear-gradient(160deg, rgba(9, 18, 38, 0.84) 0%, rgba(16, 30, 59, 0.78) 48%, rgba(8, 41, 48, 0.68) 100%);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
   color: #e5e7eb;
-  font-family: 'Inter', 'Segoe UI', sans-serif;
+  font-family: 'Manrope', 'Noto Sans SC', 'PingFang SC', 'Segoe UI', sans-serif;
   border-left: 1px solid rgba(255, 255, 255, 0.08);
   box-shadow: -4px 0 32px rgba(0, 0, 0, 0.3);
 }
@@ -1296,8 +1542,8 @@ defineExpose({
 
 .quick-action-btn {
   padding: 8px 16px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.66), rgba(30, 41, 59, 0.58));
+  border: 1px solid rgba(148, 163, 184, 0.26);
   border-radius: 20px;
   color: #e2e8f0;
   font-size: 13px;
@@ -1310,11 +1556,11 @@ defineExpose({
 }
 
 .quick-action-btn:hover {
-  background: rgba(99, 102, 241, 0.2);
-  border-color: rgba(99, 102, 241, 0.4);
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.26), rgba(59, 130, 246, 0.24));
+  border-color: rgba(56, 189, 248, 0.56);
   transform: translateY(-2px);
   color: #fff;
-  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.2);
+  box-shadow: 0 8px 20px rgba(37, 99, 235, 0.24);
 }
 
 /* 消息泡泡 */
@@ -1745,6 +1991,58 @@ defineExpose({
 @keyframes hint-fade {
   0%, 100% { opacity: 0.7; }
   50% { opacity: 1; }
+}
+
+/* 五阶段链路展示：避免中文标签挤压 */
+.pipeline-trace-inline {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  align-items: start;
+  gap: 6px;
+}
+
+.trace-step-inline {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.trace-connector {
+  display: none;
+}
+
+.step-label-inline {
+  font-size: 11px;
+  line-height: 1.25;
+  text-align: center;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.step-icon-wrapper {
+  width: 24px;
+  height: 24px;
+}
+
+@media (max-width: 768px) {
+  .pipeline-tracker-inline {
+    padding: 10px 12px;
+  }
+
+  .pipeline-trace-inline {
+    gap: 4px;
+  }
+
+  .step-icon-wrapper {
+    width: 20px;
+    height: 20px;
+  }
+
+  .step-label-inline {
+    font-size: 10px;
+  }
 }
 
 /* 输入区域 */

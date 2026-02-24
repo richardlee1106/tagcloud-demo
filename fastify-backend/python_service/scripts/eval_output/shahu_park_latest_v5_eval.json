@@ -1,0 +1,320 @@
+{
+  "run_id": "shahu_park_latest_v5_20260221_224723_8364ea",
+  "case_name": "shahu_park_latest_v5",
+  "input": {
+    "bbox_file": "D:\\AAA_Edu\\TagCloud\\vite-project\\用于比较数据\\沙湖公园外接矩形面.shp",
+    "bbox_file_resolved": "D:\\AAA_Edu\\TagCloud\\vite-project\\用于比较数据\\沙湖公园外接矩形面.shp",
+    "bbox_feature_index": 0,
+    "truth_file": "D:\\AAA_Edu\\TagCloud\\vite-project\\用于比较数据\\沙湖公园矢量面要素.shp",
+    "truth_file_resolved": "D:\\AAA_Edu\\TagCloud\\vite-project\\用于比较数据\\沙湖公园矢量面要素.shp",
+    "truth_feature_index": -1,
+    "viewport": [
+      114.31258309561906,
+      30.55691153106733,
+      114.34646022626976,
+      30.578758094232057
+    ],
+    "strict_bbox": false,
+    "query_type": "area_analysis",
+    "categories": [],
+    "semantic_query": "沙湖公园绿地湖泊生态片区边界识别",
+    "semantic_anchor_hints": [
+      "沙湖",
+      "沙湖公园"
+    ],
+    "cluster_min_cluster_size": null,
+    "cluster_min_samples": null,
+    "allow_single_cluster_fallback": true,
+    "road_boundary_enhancement": true,
+    "landuse_boundary_enhancement": true,
+    "anchor_mask_block_overlap_ratio": null,
+    "anchor_mask_support_edge_ratio": null,
+    "anchor_mask_outlier_area_factor": null,
+    "anchor_mask_outlier_overlap_ratio": null,
+    "anchor_mask_use_centroid": true,
+    "anchor_mask_use_unfiltered_poi_support": true,
+    "water_semantic_mask_enabled": true,
+    "note": "修复生态误触发后复测",
+    "target_iou": 0.9
+  },
+  "pipeline_stats": {
+    "total_candidates": 6995,
+    "cluster_count": 63,
+    "avg_boundary_confidence": 0.7108,
+    "avg_boundary_quality_score": 0.6913,
+    "boundary_method": "mixed",
+    "boundary_confidence_model": "composite_v4",
+    "boundary_quality_model": "coverage_area_compactness_v1"
+  },
+  "pipeline_stage_events": [
+    {
+      "type": "STAGE",
+      "payload": {
+        "stage": "fetch_candidates",
+        "query_type": "area_analysis",
+        "fetch_limit": 8000
+      }
+    },
+    {
+      "type": "PROGRESS",
+      "payload": {
+        "stage": "fetch_candidates",
+        "progress": 0.25,
+        "poi_count": 6995,
+        "candidate_source": "db",
+        "direction": null,
+        "direction_applied": false,
+        "graph_enabled": false,
+        "graph_nodes": 0,
+        "road_boundary_enhancement": true,
+        "road_feature_count": 513,
+        "road_source": "wuhan_roads",
+        "landuse_boundary_enhancement": true,
+        "landuse_feature_count": 152,
+        "landuse_source": "wuhan_landuse",
+        "semantic_anchor_hint_count": 2
+      }
+    },
+    {
+      "type": "STAGE",
+      "payload": {
+        "stage": "cluster"
+      }
+    },
+    {
+      "type": "PROGRESS",
+      "payload": {
+        "stage": "cluster",
+        "progress": 0.55,
+        "cluster_count": 62,
+        "cluster_engine": "hdbscan",
+        "noise_count": 1730,
+        "cluster_effective_min_cluster_size": 25,
+        "cluster_effective_min_samples": 8,
+        "v5_enabled": true,
+        "single_cluster_fallback_applied": false
+      }
+    },
+    {
+      "type": "PROGRESS",
+      "payload": {
+        "stage": "region_modeling",
+        "progress": 0.85,
+        "vernacular_count": 63
+      }
+    }
+  ],
+  "bbox_vs_truth": {
+    "pred_area": 0.0007190621192555345,
+    "truth_area": 0.0003443513590879439,
+    "intersection_area": 0.0003440067774319814,
+    "union_area": 0.0007194067009115178,
+    "iou": 0.47818122488449266,
+    "precision": 0.4784103740413157,
+    "recall": 0.9989993312154332,
+    "dice": 0.6469859268059204
+  },
+  "best_match": {
+    "id": 3,
+    "name": "公交五公司生态片区",
+    "boundary_confidence": 0.7148,
+    "vitality_score": 0.6311,
+    "metrics": {
+      "pred_area": 0.0003157969145314895,
+      "truth_area": 0.0003443513590879439,
+      "intersection_area": 0.00031484638674123466,
+      "union_area": 0.00034530188687819865,
+      "iou": 0.911800365725465,
+      "precision": 0.9969900662529745,
+      "recall": 0.9143172472881863,
+      "dice": 0.9538656672235405
+    }
+  },
+  "union_all_predictions_vs_truth": {
+    "pred_area": 0.0006010561571099263,
+    "truth_area": 0.0003443513590879439,
+    "intersection_area": 0.00031516380364849484,
+    "union_area": 0.0006302437125493725,
+    "iou": 0.5000665573856166,
+    "precision": 0.5243500127573854,
+    "recall": 0.9152390293543321,
+    "dice": 0.6667258261622119
+  },
+  "top_matches": [
+    {
+      "rank": 1,
+      "id": 3,
+      "name": "公交五公司生态片区",
+      "boundary_confidence": 0.7148,
+      "vitality_score": 0.6311,
+      "metrics": {
+        "pred_area": 0.0003157969145314895,
+        "truth_area": 0.0003443513590879439,
+        "intersection_area": 0.00031484638674123466,
+        "union_area": 0.00034530188687819865,
+        "iou": 0.911800365725465,
+        "precision": 0.9969900662529745,
+        "recall": 0.9143172472881863,
+        "dice": 0.9538656672235405
+      }
+    },
+    {
+      "rank": 2,
+      "id": 23,
+      "name": "万达御湖世家生态片区",
+      "boundary_confidence": 0.7206,
+      "vitality_score": 0.45351,
+      "metrics": {
+        "pred_area": 0.0003157969145314895,
+        "truth_area": 0.0003443513590879439,
+        "intersection_area": 0.00031484638674123466,
+        "union_area": 0.00034530188687819865,
+        "iou": 0.911800365725465,
+        "precision": 0.9969900662529745,
+        "recall": 0.9143172472881863,
+        "dice": 0.9538656672235405
+      }
+    },
+    {
+      "rank": 3,
+      "id": 5,
+      "name": "水岸星城生态片区",
+      "boundary_confidence": 0.7044,
+      "vitality_score": 0.23801,
+      "metrics": {
+        "pred_area": 0.0003172807414463688,
+        "truth_area": 0.0003443513590879439,
+        "intersection_area": 0.00031484638674123466,
+        "union_area": 0.00034678571379307793,
+        "iou": 0.9078989537876379,
+        "precision": 0.9923274425859042,
+        "recall": 0.9143172472881863,
+        "dice": 0.9517264548892802
+      }
+    },
+    {
+      "rank": 4,
+      "id": 6,
+      "name": "水岸国际·澜桥公馆1期商务片区",
+      "boundary_confidence": 0.7082,
+      "vitality_score": 0.49023,
+      "metrics": {
+        "pred_area": 5.818192645294759e-06,
+        "truth_area": 0.0003443513590879439,
+        "intersection_area": 3.8373855248992567e-07,
+        "union_area": 0.0003497858131807482,
+        "iou": 0.0010970672280857564,
+        "precision": 0.06595494097299434,
+        "recall": 0.001114380827496379,
+        "dice": 0.002191729981036501
+      }
+    },
+    {
+      "rank": 5,
+      "id": 15,
+      "name": "青鱼片区",
+      "boundary_confidence": 0.6409,
+      "vitality_score": 0.55283,
+      "metrics": {
+        "pred_area": 4.609953536999862e-05,
+        "truth_area": 0.0003443513590879439,
+        "intersection_area": 2.2428511813488016e-12,
+        "union_area": 0.000390450892215089,
+        "iou": 5.744259332139711e-09,
+        "precision": 4.8652359798151883e-08,
+        "recall": 6.513263624947679e-09,
+        "dice": 1.1488518598286323e-08
+      }
+    },
+    {
+      "rank": 6,
+      "id": 40,
+      "name": "湖北大学科教片区",
+      "boundary_confidence": 0.733,
+      "vitality_score": 0.61036,
+      "metrics": {
+        "pred_area": 3.894555785495342e-05,
+        "truth_area": 0.0003443513590879439,
+        "intersection_area": 3.3523796646400684e-13,
+        "union_area": 0.00038329691660765863,
+        "iou": 8.746169142997705e-10,
+        "precision": 8.607861459130916e-09,
+        "recall": 9.735346111365004e-10,
+        "dice": 1.749233827069628e-09
+      }
+    },
+    {
+      "rank": 7,
+      "id": 13,
+      "name": "公司商务片区",
+      "boundary_confidence": 0.6871,
+      "vitality_score": 0.67507,
+      "metrics": {
+        "pred_area": 2.7215807650003857e-06,
+        "truth_area": 0.0003443513590879439,
+        "intersection_area": 0.0,
+        "union_area": 0.0003470729398529442,
+        "iou": 0.0,
+        "precision": 0.0,
+        "recall": 0.0,
+        "dice": 0.0
+      }
+    },
+    {
+      "rank": 8,
+      "id": 12,
+      "name": "公司商务片区",
+      "boundary_confidence": 0.6832,
+      "vitality_score": 0.66584,
+      "metrics": {
+        "pred_area": 2.7215807650003857e-06,
+        "truth_area": 0.0003443513590879439,
+        "intersection_area": 0.0,
+        "union_area": 0.0003470729398529442,
+        "iou": 0.0,
+        "precision": 0.0,
+        "recall": 0.0,
+        "dice": 0.0
+      }
+    },
+    {
+      "rank": 9,
+      "id": 60,
+      "name": "环球国际中心行政片区",
+      "boundary_confidence": 0.7405,
+      "vitality_score": 0.66342,
+      "metrics": {
+        "pred_area": 2.099438955004392e-06,
+        "truth_area": 0.0003443513590879439,
+        "intersection_area": 0.0,
+        "union_area": 0.0003464507980429482,
+        "iou": 0.0,
+        "precision": 0.0,
+        "recall": 0.0,
+        "dice": 0.0
+      }
+    },
+    {
+      "rank": 10,
+      "id": 0,
+      "name": "公交五公司商务片区",
+      "boundary_confidence": 0.7391,
+      "vitality_score": 0.66299,
+      "metrics": {
+        "pred_area": 3.4037283650058636e-06,
+        "truth_area": 0.0003443513590879439,
+        "intersection_area": 0.0,
+        "union_area": 0.00034775508745294977,
+        "iou": 0.0,
+        "precision": 0.0,
+        "recall": 0.0,
+        "dice": 0.0
+      }
+    }
+  ],
+  "target": {
+    "target_iou": 0.9,
+    "is_pass": true,
+    "best_iou": 0.911800365725465
+  }
+}
