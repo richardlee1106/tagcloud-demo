@@ -22,7 +22,7 @@
 
 ## 1. 服务概述
 
-`python_service` 是一个 **Python 空间计算侧车服务**（Sidecar Service），作为 Fastify Node.js 后端的协处理器，提供高性能的空间分析与计算能力。
+`python_service` һ **Python ռ೵**Sidecar ServiceΪ Fastify Node.js ˵ЭṩܵĿռ
 
 ### 核心职责
 
@@ -31,13 +31,13 @@
 | **空间聚类分析** | 基于 HDBSCAN/DBSCAN 对 POI 点进行密度聚类 |
 | **边界生成** | 使用 Alpha-Shape 算法生成模糊区域边界 |
 | **隶属度计算** | 多因素（密度、纯度、中心性等）隶属度评分 |
-| **图结构推理** | 空间邻近图构建与连通分量分析 |
+| **ͼṹ** | ռڽͼͨ |
 | **区域对比** | 多选区 POI 分布差异与相似性分析 |
 | **H3 聚合** | 基于 Uber H3 的六边形网格聚合统计 |
 
 ### 通信协议
 
-- **gRPC (50051端口)**: 主要通信通道，提供流式空间计算接口
+- **gRPC (50051˿)**: Ҫͨͨṩʽռӿ
 - **HTTP (8081端口)**: 健康检查与运维指标接口
 
 ---
@@ -183,12 +183,12 @@ service SpatialComputeService {
 |------|------|
 | `build_alpha_shape()` | 主入口，构建 Alpha-Shape 边界并返回 GeoJSON |
 | `_as_polygon()` | 将复杂几何体（MultiPolygon/GeometryCollection）归一化为单个 Polygon |
-| `_downsample_points()` | 确定性降采样，控制输入点数避免计算爆炸 |
+| `_downsample_points()` | ȷԽ㱬ը |
 | `_simplify_tolerance()` | 根据几何跨度自适应计算简化容差 |
 
 **特性**:
 
-- 降采样后保留首尾点，确保边界闭合
+- β㣬ȷ߽պ
 - 支持 Convex Hull fallback：Alpha-Shape 失败时回退到凸包
 - 面积过滤：过滤掉面积过小（<800m²）的噪声区域
 - 输出包含边界生成元信息（方法、alpha值、采样率等）
@@ -220,9 +220,9 @@ service SpatialComputeService {
 
 ### 4.4 `graph_reasoning.py`
 
-**用途**: 空间邻近图构建与推理
+**;**: ռڽͼ
 
-基于 POI 点位构建空间邻近图，分析连通分量和中心节点，用于空间关系推理。
+ POI λռڽͼͨĽڵ㣬ڿռϵ
 
 **核心功能**:
 
@@ -230,13 +230,13 @@ service SpatialComputeService {
 |------|------|
 | `analyze_spatial_graph()` | 主入口，构建邻近图并返回图结构统计 |
 | `_haversine_m()` | Haversine 距离计算（单位：米） |
-| `_grid_steps()` | 计算网格步长用于空间索引加速 |
+| `_grid_steps()` | 񲽳ڿռ |
 | `_cell_key()` | 将坐标映射到网格单元 |
 
 **算法亮点**:
 
-- **网格加速**: 避免 O(n²) 暴力距离计算，使用网格索引将复杂度降至 O(n×k)
-- **连通分量分析**: BFS 遍历发现独立空间聚落
+- ****:  O(n05) 㣬ʹӶȽ O(nk)
+- **ͨ**: BFS ֶռ
 - **Hub 节点识别**: 按 degree 排序输出核心枢纽节点
 
 **输出结构**:
@@ -271,7 +271,7 @@ service SpatialComputeService {
 **特性**:
 
 - H3 可选依赖：自动检测 h3 库，不可用时回退到简单网格
-- 分辨率自适应：根据查询范围面积动态选择 H3 分辨率（6-10）
+- ֱӦݲѯΧ̬ѡ H3 ֱʣ6-10
 - 主导类别统计：每个单元输出占比最高的 POI 类别
 
 ---
@@ -290,7 +290,7 @@ service SpatialComputeService {
 
 **算法策略**:
 
-1. **首选 HDBSCAN**: 自适应密度聚类，无需预设簇数
+1. **ѡ HDBSCAN**: ӦܶȾ࣬Ԥ
 2. **Fallback DBSCAN**: HDBSCAN 不可用时使用 scikit-learn DBSCAN
 3. **结果标准化**: 统一输出 `ClusterResult` 数据类
 
@@ -389,7 +389,7 @@ class ClusterResult:
 
 | 优先级 | 条件 | 说明 |
 |--------|------|------|
-| 1 | regions (多选区) | 前端绘制的多边形/圆形选区 OR 并集 |
+| 1 | regions (ѡ) | ǰ˻ƵĶ/Բѡ OR  |
 | 2 | boundary (自定义边界) | GeoJSON 边界数组 |
 | 3 | viewport (视口) | 地图当前可视范围 bbox |
 | 4 | center+radius (圆形) | 中心点 + 半径 |
@@ -608,7 +608,7 @@ Node.js (Fastify) → 前端 WebSocket/SSE
 
 ---
 
-## 附录 A: 环境变量速查
+## ¼ A: ٲ
 
 | 变量名 | 默认值 | 说明 |
 |--------|--------|------|

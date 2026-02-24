@@ -1,6 +1,6 @@
 # GeoLoom V1 版本构建日志：空间、时间与智能的融合
 
-本文档全面记录了 GeoLoom V1 版本从单体应用进化为 Geo-AI 智能空间分析平台的完整构建历程。涵盖了 AI 架构重构、界面交互进化、核心算法优化以及基础设施建设等关键里程碑。
+ĵȫ¼ GeoLoom V1 汾ӵӦýΪ Geo-AI ܿռƽ̨̡ AI ܹع潻㷨ŻԼʩȹؼ̱
 
 ---
 
@@ -10,7 +10,7 @@
 
 ### 1. 三通道 RAG 流水线 (Three-Stage Pipeline)
 
-为解决传统 RAG 无法处理复杂空间语义（如“找个离公园近的咖啡馆”）的问题，我们引入了类 Agent 的三阶段架构：
+Ϊͳ RAG ޷ӿռ壨硰Ҹ빫԰Ŀȹݡ⣬ Agent ׶μܹ
 
 * **Stage 1: 意图规划 (Planner)**
   * **职责**：LLM 作为意图解析器。
@@ -46,7 +46,7 @@
 * 实现**双向高亮 (Bi-directional Highlighting)**：
   * Hover 地图红点 -> 标签云文字高亮。
   * Hover 标签云文字 -> 地图红点放大变色。
-* 支持**D3.js 力导向布局**，在有限空间内展示高频语义标签。
+* ֧**D3.js 򲼾**޿ռչʾƵǩ
 
 ### 3. 三栏响应式布局
 
@@ -57,15 +57,15 @@
 
 ## 🚀 第三阶段：性能与数据加载优化 (The Muscle)
 
-**核心目标**：支持海量数据的高效加载与渲染，解决前端性能瓶颈。
+**Ŀ**ֺ֧ݵĸЧȾǰƿ
 
 ### 1. 空间数据智能加载 (Smart Loading) - *Recent!*
 
-* **问题**：旧版全量加载导致内存溢出，"筛选叠加"开关操作繁琐。
+* ****ɰȫصڴ"ɸѡ"ز
 * **方案**：重构 `ControlPanel` 与 `DataLoaderWorker`。
   * **BBox 优先**：优先加载用户绘制选区 (Polygon) 或当前视口 (Viewport) 内的数据。
-  * **增量更新**：级联选择器支持 Set 差集计算，仅请求新增分类，秒级响应。
-* **移除**：彻底移除了已废弃的 "筛选叠加" 开关，系统自动管理加载策略。
+  * ****ѡ֧ Set 㣬࣬뼶Ӧ
+* **Ƴ**Ƴѷ "ɸѡ" أϵͳԶزԡ
 
 ### 2. Web Worker 深度优化
 
@@ -74,7 +74,7 @@
 
 ### 3. 移动端适配修复
 
-* 解决级联选择器在手机端宽度溢出问题。
+* ѡֻ˿⡣
 * 优化 Touch 事件处理，区分“点击”与“拖拽”。
 
 ---
@@ -91,14 +91,14 @@
 
 ### 2. 安全与部署
 
-* **环境隔离**：敏感 API Key 后端管理，前端零暴露。
+* **** API Key ˹ǰ㱩¶
 * **Docker 化**：编写 `Dockerfile` 与 `docker-compose.yml`，一键拉起 PostGIS + App + Service 全栈环境。
 
 ---
 
 ## 📝 附录：关键文件变更索引
 
-* `src/components/ControlPanel.vue`: 智能加载逻辑、移动端样式适配。
+* `src/components/ControlPanel.vue`: ܼ߼ƶʽ䡣
 * `src/components/AiChat.vue`: 对话流控制、滚动优化。
 * `src/components/MapContainer.vue`: 移除旧版 Overlay 逻辑。
 * `src/App.vue`: 全局状态管理、Notification 统一管控。

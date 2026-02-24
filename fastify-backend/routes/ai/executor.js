@@ -7,7 +7,7 @@
  * - 绝不调用 LLM
  * 
  * 重构说明 (2026-02-17):
- * - executor已完全丢弃空间计算这类Python见长的逻辑
+ * - executorȫռPython߼
  * - 所有空间计算由Python gRPC服务处理
  * - 保留此文件仅作为API入口和结果归一化
  * - Python服务不可用时直接返回错误，不再回退到Node.js
@@ -97,7 +97,7 @@ function normalizeExecutorCategories(rawCategories = []) {
 
 /**
  * 判断是否应该使用Python执行器
- * 重构目标：executor完全丢弃空间计算这类Python见长的逻辑
+ * عĿ꣺executorȫռPython߼
  * 强制使用Python服务，不再有Node.js回退
  */
 export function shouldUsePythonExecutor(queryPlan = {}, options = {}) {
@@ -311,7 +311,7 @@ export async function executeQuery(queryPlan, frontendPOIs = [], options = {}) {
   // 检查是否应该使用Python执行器
   if (!shouldUsePythonExecutor(queryPlan, options)) {
     // 不使用Python执行器的情况（包括调试模式forceNodeFallback）
-    // 这里直接返回错误，因为executor不再执行任何空间计算逻辑
+    // ֱӷشΪexecutorִκοռ߼
     console.warn('[Executor] 不适合使用Python执行器，但executor不再执行Node.js空间计算')
     throw new Error('此查询类型不支持空间计算')
   }

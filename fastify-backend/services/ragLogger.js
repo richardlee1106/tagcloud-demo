@@ -304,7 +304,7 @@ class RAGSession {
     
     if (this.summary.parsedIntent) {
       const intent = this.summary.parsedIntent;
-      parts.push(`解析意图: 锚点=${intent.place_name || '无'}, 半径=${intent.radius || '默认'}, 类别=${intent.category || '全部'}`);
+      parts.push(`ͼ: ê=${intent.place_name || ''}, 뾶=${intent.radius || 'Ĭ'}, =${intent.category || 'ȫ'}`);
     }
     
     const services = [];

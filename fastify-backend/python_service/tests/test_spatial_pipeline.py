@@ -102,9 +102,9 @@ class _V5AnchorBypassRepository(_StubRepository):
                     "lon": 114.335 + (idx % 6) * 0.00035,
                     "lat": 30.582 + (idx // 6) * 0.00035,
                     "block_id": 11,
-                    "aoi_name": "婕椂鍖哄晢鍔″尯",
-                    "aoi_type": "鍟嗗姟鍖?",
-                    "land_type": "鍟嗕笟鏈嶅姟鐢ㄥ湴",
+                    "aoi_name": "漫时区商务区",
+                    "aoi_type": "商务?",
+                    "land_type": "商业服务用地",
                 }
             )
         return rows
@@ -1417,7 +1417,7 @@ class SpatialPipelineTest(unittest.TestCase):
                 }
             }
         )
-        request["categories"] = ["鍟嗗満", "渚垮埄搴?", "鍜栧暋鍘?"]
+        request["categories"] = ["商场", "便利?", "咖啡?"]
 
         hints = json.loads(request["hints"])
         hints["query_plan"] = {
@@ -1444,11 +1444,11 @@ class SpatialPipelineTest(unittest.TestCase):
             options={
                 "sourcePolicy": {
                     "has_category_filter": True,
-                    "selected_categories": ["鍟嗗満", "渚垮埄搴?"],
+                    "selected_categories": ["商场", "便利?"],
                 }
             }
         )
-        request["categories"] = ["鍟嗗満", "渚垮埄搴?"]
+        request["categories"] = ["商场", "便利?"]
 
         hints = json.loads(request["hints"])
         hints["query_plan"] = {
@@ -1463,7 +1463,7 @@ class SpatialPipelineTest(unittest.TestCase):
         stats = final_payload["results"].get("stats", {})
 
         self.assertGreaterEqual(len(repo.fetch_calls), 1)
-        self.assertEqual(repo.fetch_calls[0].get("categories"), ["鍟嗗満", "渚垮埄搴?"])
+        self.assertEqual(repo.fetch_calls[0].get("categories"), ["商场", "便利?"])
         self.assertFalse(bool(stats.get("fetch_categories_relaxed_macro")))
         self.assertEqual(int(stats.get("effective_fetch_categories_count", -1)), 2)
 
@@ -1490,7 +1490,7 @@ class SpatialPipelineTest(unittest.TestCase):
             "intent_mode": "macro_overview",
             "anchor": {"type": "unknown", "name": None},
         }
-        hints["vlm_extracted_texts"] = ["婀栧寳澶у", "婀栧寳澶у鍥句功棣?"]
+        hints["vlm_extracted_texts"] = ["湖北大学", "湖北大学图书?"]
         request["hints"] = json.dumps(hints, ensure_ascii=False)
 
         events = list(pipeline.run(request))
@@ -1518,7 +1518,7 @@ class SpatialPipelineTest(unittest.TestCase):
             "intent_mode": "macro_overview",
             "anchor": {"type": "unknown", "name": None},
         }
-        hints["vlm_extracted_texts"] = ["婀栧寳澶у", "婀栧寳澶у姝︽槍鏍″尯"]
+        hints["vlm_extracted_texts"] = ["湖北大学", "湖北大学武昌校区"]
         request["hints"] = json.dumps(hints, ensure_ascii=False)
 
         original_assemble = spatial_module.block_assembler.assemble_block_boundaries

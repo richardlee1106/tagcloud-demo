@@ -6,7 +6,7 @@
 
 说明：
 - 真正的空间计算通过 gRPC (`grpc_server.py`) 提供。
-- 这里保持轻量，避免引入额外业务依赖。
+- ﱣҵ
 """
 
 from __future__ import annotations

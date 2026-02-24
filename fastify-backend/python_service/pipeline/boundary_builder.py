@@ -241,8 +241,8 @@ def build_cluster_boundary(
     to_surface_polygon_func: Callable[..., Polygon | None],
 ) -> Dict[str, Any]:
     """
-    通过迭代 alpha-shape 候选并结合质量评分生成聚类边界。
-    当 alpha 候选质量不足或无效时回退到凸包方案。
+    ͨ alpha-shape ѡɾ߽硣
+     alpha ѡЧʱ˵͹
     """
     raw_hull = MultiPoint(cluster_points).convex_hull
     raw_hull_type = str(getattr(raw_hull, "geom_type", ""))

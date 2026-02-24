@@ -81,7 +81,7 @@ function runDynamicGravityLayout(tags, width, height, configOverrides) {
         };
     });
 
-    // 按权重降序排序（如果有权重），否则按字体大小排序
+    // ȨؽȨأС
     // 这确保高权重的标签优先放置在中心位置
     if (hasWeights) {
         processedTags.sort((a, b) => (b.weight || 0) - (a.weight || 0));
@@ -131,8 +131,8 @@ function runDynamicGravityLayout(tags, width, height, configOverrides) {
             };
             tree.insert(item);
 
-            // 重新计算重心（增量平均法）
-            // 重心会随着新标签的加入而移动，引导后续标签向新的中心聚集
+            // ¼ģƽ
+            // Ļ±ǩļƶǩµľۼ
             // 公式: newCx = (oldCx * n + currentWordCx) / (n + 1)
             if (i === 0) {
                 currentCentroid = { x: tag.x, y: tag.y };

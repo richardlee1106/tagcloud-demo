@@ -67,7 +67,7 @@ export function hasCustomAreaSelection(spatialContext = {}, options = {}) {
  * 解析并执行 source policy。
  *
  * 规则（UI 约束开启时）：
- * - 有选区 + 有类别：按“空间 ∩ 类别”筛选。
+ * - ѡ + 𣺰ռ  ɸѡ
  * - 有选区 + 无类别：选区内全类别。
  * - 无选区 + 有类别：视窗内所选类别。
  * - 无选区 + 无类别：视窗内全类别。

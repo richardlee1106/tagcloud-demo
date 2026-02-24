@@ -32,7 +32,7 @@ export const QUERY_PLAN_DEFAULTS = {
   max_results: 30,  // 增加默认结果数
   sort_by: 'distance',
   
-  // 三通道核心配置
+  // ͨ
   aggregation_strategy: {
     enable: false,
     method: 'h3',       // 'h3' | 'cluster' | 'administrative'
@@ -64,7 +64,7 @@ export const QUERY_PLAN_DEFAULTS = {
  */
 const GRAPH_REASONING_KEYWORDS = [
   // 网络/可达性
-  '可达性', '交通网络', '路网', '连通性', '通达', '便利度',
+  'ɴ', 'ͨ', '·', 'ͨ', 'ͨ', '',
   // 枢纽/节点
   '枢纽', '核心节点', '中心节点', '交通中心', '商业中心', '核心区',
   // 路径/连接
@@ -76,7 +76,7 @@ const GRAPH_REASONING_KEYWORDS = [
 ]
 
 /**
- * 检测问题是否需要图推理
+ * ǷҪͼ
  * @param {string} question - 用户问题
  * @returns {boolean}
  */
@@ -155,7 +155,7 @@ function calculatePlanConfidence(plan, question) {
     reasons.push('anchor 坐标已设置')
   } else if (plan.anchor?.type === 'unknown') {
     // 检查问题中是否有地名
-    const hasPlaceName = /(?:在|到|去|附近|周边|旁边)[^，。？]+/.test(question)
+    const hasPlaceName = /(?:||ȥ||ܱ|Ա)[^]+/.test(question)
     if (!hasPlaceName) {
       score += 1 // 问题中没有地名，unknown 是合理的
       reasons.push('anchor 未知但问题中无明确地名')
@@ -196,7 +196,7 @@ function calculatePlanConfidence(plan, question) {
   if (hasLocal && hasMacro) {
     // 同时包含微观和宏观关键词，可能有歧义
     score += 0
-    reasons.push('问题包含冲突关键词 (微观+宏观)')
+    reasons.push('ͻؼ (΢+)')
   } else {
     score += 1.5
     reasons.push('无冲突关键词')
@@ -219,7 +219,7 @@ function calculatePlanConfidence(plan, question) {
 /**
  * 生成澄清问题
  * 
- * 当解析置信度低时，生成针对性的澄清问题
+ * ŶȵʱԵĳ
  * 
  * @param {Object} plan - 当前解析的 QueryPlan
  * @param {string} question - 原始用户问题
@@ -230,9 +230,9 @@ function generateClarificationQuestion(plan, question, confidence) {
   const issues = []
 
   // 分析置信度低的原因
-  if (confidence.reasons.includes('问题包含冲突关键词 (微观+宏观)')) {
+  if (confidence.reasons.includes('ͻؼ (΢+)')) {
     // 意图模糊：同时有微观和宏观词
-    return `您的问题同时涉及「搜索」和「分析」，请问您是想：
+    return `ͬʱ漰͡룺
 1️⃣ **找具体的点** - 如"推荐几家附近的餐厅"
 2️⃣ **分析区域整体情况** - 如"这片区域的餐饮分布如何"
 
@@ -243,7 +243,7 @@ function generateClarificationQuestion(plan, question, confidence) {
     // 地名解析失败
     return `我注意到您提到了一个地点，但我没能准确识别。请问您说的是：
 - 📍 一个具体的地名（如"武汉大学"、"光谷广场"）?  
-- 🗺️ 当前地图视野范围?  
+- 9015 ǰͼҰΧ?  
 
 请提供更具体的位置描述，或者在地图上选择一个区域。`
   }
@@ -253,7 +253,7 @@ function generateClarificationQuestion(plan, question, confidence) {
       plan.query_type === 'poi_search') {
     // POI 搜索但没有类别
     return `您想找什么类型的地点呢？例如：
-- 🍜 餐饮美食（餐厅、咖啡厅、奶茶店...）
+- 90 ʳ̲...
 - 🏪 购物消费（商场、超市、便利店...）
 - 🚇 交通出行（地铁站、公交站、停车场...）
 - 🏥 生活服务（医院、银行、药店...）
@@ -277,8 +277,8 @@ function generateClarificationQuestion(plan, question, confidence) {
 /**
  * 净化类别列表：移除过于泛化的类别
  * 
- * 问题场景：LLM 输出 ["咖啡厅", "餐厅"]
- * - "餐厅" 会匹配所有中餐厅、快餐厅等，淹没咖啡厅的结果
+ * ⳡLLM  ["", ""]
+ * - "" ƥвȣûĽ
  * - 应该只保留精确的 "咖啡厅" 类别
  * 
  * @param {string[]} categories - LLM 输出的类别列表
@@ -291,8 +291,8 @@ function sanitizeCategories(categories) {
   // 定义泛化类别及其精确子类
   const generalizationMap = {
     '餐厅': {
-      generalKeywords: ['餐厅', '饭店', '餐饮'],
-      preciseCategories: ['咖啡厅', '咖啡馆', '咖啡', '奶茶', '茶饮', '火锅', '烧烤', '日料', '韩餐', '西餐']
+      generalKeywords: ['', '', ''],
+      preciseCategories: ['', 'ȹ', '', '̲', '', '', 'տ', '', '', '']
     },
     '商店': {
       generalKeywords: ['商店', '店铺', '门店'],
@@ -300,7 +300,7 @@ function sanitizeCategories(categories) {
     },
     '服务': {
       generalKeywords: ['服务', '生活服务'],
-      preciseCategories: ['银行', '邮局', '快递']
+      preciseCategories: ['', 'ʾ', '']
     }
   }
   
@@ -457,7 +457,7 @@ function buildQuickPlannerOutput(userQuestion, { routerResult = null, reason = '
     score: routerResult ? 8 : 7,
     level: 'high',
     reasons: routerResult
-      ? ['LLM 路由判定简单问题', '规则引擎快速生成']
+      ? ['LLM ·ж', '']
       : ['规则引擎快速路径', reason]
   }
 
@@ -475,7 +475,7 @@ function buildQuickPlannerOutput(userQuestion, { routerResult = null, reason = '
 }
 
 // =====================================================
-// LLM Router: 超快速问题复杂度分类
+// LLM Router: ⸴Ӷȷ
 // 使用极短 prompt，预期响应时间 < 1秒
 // =====================================================
 
@@ -484,12 +484,12 @@ const ROUTER_PROMPT = `判断这个空间查询的复杂度，返回JSON:
 - intent: "search"(找具体POI) 或 "analysis"(区域分析) 或 "comparison"(多选区对比)
 - anchor: 提取的地名(如"武汉大学")，无则null
 - categories: 类别数组(如["咖啡厅"])
-- regions: 提取的选区编号数组(如问题中有"选区1和选区4"则返回[1,4])，无则[]
+- regions: ȡѡ("ѡ1ѡ4"򷵻[1,4])[]
 
 只返回JSON，不要解释。`
 
 /**
- * LLM Router: 快速分类问题复杂度
+ * LLM Router: ٷ⸴Ӷ
  * 使用极短 prompt，预期 < 1秒完成
  * 
  * @param {string} question - 用户问题
@@ -568,7 +568,7 @@ const PLANNER_SYSTEM_PROMPT = `你是一个"空间查询规划器"，职责是�
 
 ### 模式 A: 宏观概括 (Macro Overview) / query_type="area_analysis"
 - **用户意图**：了解区域整体情况、分布规律、业态结构、交通便利度等。
-- **典型提问**："分析这片区域"、"这里有什么特点"、"交通怎么样"、"商业分布如何"。
+- ****"Ƭ""ʲôص""ͨô""ҵֲ"
 - **配置**：
   - \`query_type\`: "area_analysis"
   - \`intent_mode\`: "macro_overview"
@@ -576,13 +576,13 @@ const PLANNER_SYSTEM_PROMPT = `你是一个"空间查询规划器"，职责是�
   - \`radius_m\`: 3000 ~ 5000 (大范围)
   - \`sampling_strategy.enable\`: true (选代表点)
   - \`categories\`: 
-    - 问"交通": ["公交站", "地铁站", "停车场", ...]
+    - "ͨ": ["վ", "վ", "ͣ", ...]
     - 问"商业": ["商场", "超市", ...]
     - 问"整体": [] (空数组代表全域)
 
 ### 模式 B: 微观检索 (Local Search) / query_type="poi_search"
 - **用户意图**：寻找特定的店、设施，或者查询某个具体地点周边的信息。
-- **典型提问**："附近有好吃的吗"、"找最近的咖啡馆"、"武汉大学附近有什么"、"哪里有停车场"。
+- ****"кóԵ""Ŀȹ""人ѧʲô""ͣ"
 - **配置**：
   - \`query_type\`: "poi_search"
   - \`intent_mode\`: "local_search"
@@ -615,11 +615,11 @@ const PLANNER_SYSTEM_PROMPT = `你是一个"空间查询规划器"，职责是�
 ## 类别映射表 (必须严格遵守)
 | 领域 | 关键词 | categories |
 |---|---|---|
-| **交通/通勤** | 交通,出行,公交,地铁,停车 | ["公交站", "地铁站", "停车场", "加油站", "火车站"] |
+| **ͨ/ͨ** | ͨ,,,,ͣ | ["վ", "վ", "ͣ", "վ", "վ"] |
 | **教育/学校** | 教育,上学,学校,培训 | ["学校", "幼儿园", "小学", "中学", "大学", "培训机构"] |
 | **医疗/健康** | 医院,看病,药店 | ["医院", "诊所", "药店", "社区卫生服务中心"] |
 | **购物/商业** | 购物,商场,买东西 | ["商场", "购物中心", "超市", "便利店"] |
-| **餐饮/美食** | 吃饭,好吃的,餐厅 | ["餐厅", "中餐厅", "快餐", "小吃", "咖啡厅"] |
+| **/ʳ** | Է,óԵ, | ["", "в", "", "С", ""] |
 
 ## 决策逻辑
 1. **关键词匹配**：
@@ -639,7 +639,7 @@ const PLANNER_SYSTEM_PROMPT = `你是一个"空间查询规划器"，职责是�
 
 ### 模式 C: 多选区对比 (Region Comparison) / query_type="region_comparison"
 - **用户意图**：对比多个已绘制选区的差异、相似性、优劣势等。
-- **典型提问**："选区1和选区4的产业结构有什么差异"、"对比选区2和选区3的商业分布"。
+- ****"ѡ1ѡ4Ĳҵṹʲô""Աѡ2ѡ3ҵֲ"
 - **配置**：
   - \`query_type\`: "region_comparison"
   - \`intent_mode\`: "comparison"
@@ -658,7 +658,7 @@ const PLANNER_SYSTEM_PROMPT = `你是一个"空间查询规划器"，职责是�
   "radius_m": 3000,
   "aggregation_strategy": { "enable": true, "method": "h3", "resolution": 9 },
   "sampling_strategy": { "enable": true, "count": 25 },
-  "semantic_query": "交通便利度 交通枢纽 公交站 地铁站",
+  "semantic_query": "ͨ ͨŦ վ վ",
   "need_landmarks": true
 }
 
@@ -668,7 +668,7 @@ const PLANNER_SYSTEM_PROMPT = `你是一个"空间查询规划器"，职责是�
   "query_type": "poi_search",
   "intent_mode": "local_search",
   "anchor": { "type": "landmark", "name": "武汉大学" },
-  "categories": ["餐厅", "中餐厅", "小吃", "快餐"],
+  "categories": ["", "в", "С", ""],
   "radius_m": 1000,
   "aggregation_strategy": { "enable": false },
   "semantic_query": "美食 餐厅 好吃的",
@@ -698,7 +698,7 @@ function buildContextString(context) {
   if (context.hasSelectedArea) {
     lines.push('- 用户已选择了一个地图区域')
   } else {
-    lines.push('- 用户尚未选择区域，需要根据问题中的地名定位')
+    lines.push('- ûδѡҪеĵλ')
   }
   
   if (context.poiCount) {
@@ -727,7 +727,7 @@ function buildContextString(context) {
     lines.push('- 请使用 query_type: "region_comparison" 并设置 target_regions 字段')
   }
   
-  return lines.length > 0 ? lines.join('\n') : '无额外上下文'
+  return lines.length > 0 ? lines.join('\n') : '޶'
 }
 
 /**
@@ -799,7 +799,7 @@ function validateAndNormalize(plan) {
     normalized.categories = plan.categories.filter(c => typeof c === 'string').slice(0, 10)
     
     // Phase 1 修复：净化 categories，避免泛化类别覆盖精确类别
-    // 例如：["咖啡厅", "餐厅"] → ["咖啡厅", "咖啡馆", "咖啡店"] (移除"餐厅"并展开)
+    // 磺["", ""]  ["", "ȹ", "ȵ"] (Ƴ""չ)
     normalized.categories = sanitizeCategories(normalized.categories)
   }
   
@@ -886,7 +886,7 @@ function validateAndNormalize(plan) {
 }
 
 /**
- * 根据用户问题自动推断 POI 类别（后备逻辑）
+ * ûԶƶ POI 𣨺߼
  * 当 LLM 没有正确识别专题时，后端自动补充
  * 
  * Phase 1 优化：使用类别本体进行更精确的匹配
@@ -913,8 +913,8 @@ function inferCategoriesFromQuestion(question, existingCategories) {
   
   const topicMapping = {
     traffic: {
-      keywords: ['交通', '出行', '通勤', '公交', '地铁', '火车', '机场', '停车'],
-      categories: ['公交站', '地铁站', '停车场', '加油站', '高铁站', '火车站', '汽车站', '机场']
+      keywords: ['ͨ', '', 'ͨ', '', '', '', '', 'ͣ'],
+      categories: ['վ', 'վ', 'ͣ', 'վ', 'վ', 'վ', 'վ', '']
     },
     education: {
       keywords: ['教育', '学校', '上学', '幼儿园', '小学', '中学', '大学', '培训'],
@@ -929,8 +929,8 @@ function inferCategoriesFromQuestion(question, existingCategories) {
       categories: ['商场', '超市', '购物中心', '百货', '便利店']
     },
     food: {
-      keywords: ['餐饮', '吃饭', '美食', '餐厅', '小吃', '好吃'],
-      categories: ['餐厅', '饭店', '快餐', '小吃', '咖啡', '奶茶']
+      keywords: ['', 'Է', 'ʳ', '', 'С', 'ó'],
+      categories: ['', '', '', 'С', '', '̲']
     },
     entertainment: {
       keywords: ['娱乐', '休闲', '玩', '电影', '公园', '景点'],
@@ -975,7 +975,7 @@ export async function parseIntent(userQuestion, context = {}) {
   console.log(`[Planner] 开始解析意图: "${userQuestion.slice(0, 50)}..."`)
   
   // =========================================================
-  // 快速规则路径优先：明显简单问题不再等待 LLM Router
+  // ٹ·ȣԼⲻٵȴ LLM Router
   // =========================================================
   const fastPathDecision = shouldUseRuleFastPath(userQuestion, context)
   if (fastPathDecision.bypass) {
@@ -991,7 +991,7 @@ export async function parseIntent(userQuestion, context = {}) {
 
   const routerResult = await classifyQueryComplexity(userQuestion)
 
-  // Router 不可用时，直接回退规则引擎，避免额外一次 LLM 重试。
+  // Router ʱֱӻ˹棬һ LLM ԡ
   if (routerResult?.error) {
     const fallbackOutput = buildQuickPlannerOutput(userQuestion, {
       reason: `router_failed:${routerResult.error}`,
@@ -1097,12 +1097,12 @@ export async function parseIntent(userQuestion, context = {}) {
       }
     }
     
-    // 关键后备逻辑：如果 LLM 没有正确设置 categories，根据问题自动推断
+    // ؼ߼ LLM ûȷ categoriesԶƶ
     if (queryPlan.query_type !== 'clarification_needed') {
       queryPlan.categories = inferCategoriesFromQuestion(userQuestion, queryPlan.categories)
     }
     
-    // 图推理后备检测：如果 LLM 没有识别到图推理需求，但问题中包含关键词，强制开启
+    // ͼ󱸼⣺ LLM ûʶͼ󣬵аؼʣǿƿ
     if (!queryPlan.need_graph_reasoning && detectGraphReasoningNeed(userQuestion)) {
       queryPlan.need_graph_reasoning = true
       console.log('[Planner] 后备检测：启用图推理通道')
@@ -1148,7 +1148,7 @@ export function quickIntentClassify(question) {
   const plan = { ...QUERY_PLAN_DEFAULTS }
   
   // 1. 明确的微观检索 (Local Search)
-  // 关键词：附近、周围、周边、最近、找、哪里有、有没有、推荐几个
+  // ؼʣΧܱߡҡСûСƼ
   const localKeywords = ['附近', '周围', '周边', '最近', '找', '哪里有', '有没有', '推荐几个', '东侧', '西侧', '南侧', '北侧', '东边', '西边', '南边', '北边']
   if (localKeywords.some(kw => q.includes(kw))) {
     plan.query_type = 'poi_search'
@@ -1169,7 +1169,7 @@ export function quickIntentClassify(question) {
       if (match && match[1]) {
         const anchorName = match[1].trim()
         // 过滤掉太短或太通用的词
-        if (anchorName.length >= 2 && !['这里', '那里', '这边', '那边', '哪里'].includes(anchorName)) {
+        if (anchorName.length >= 2 && !['', '', '', 'Ǳ', ''].includes(anchorName)) {
           plan.anchor = { type: 'landmark', name: anchorName, lat: null, lon: null }
           console.log(`[Planner Quick] 提取到锚点: "${anchorName}"`)
           break
@@ -1185,7 +1185,7 @@ export function quickIntentClassify(question) {
       plan.semantic_query = categories.join(' ')
     } else {
       // 尝试从问题中截取（简单启发式）
-      const match = q.match(/(?:找|哪里有|有没有|好吃的|好玩的)(.+)/)
+      const match = q.match(/(?:||û|óԵ|)(.+)/)
       if (match) {
         plan.semantic_query = match[1].trim()
       }
@@ -1195,7 +1195,7 @@ export function quickIntentClassify(question) {
     plan.confidence = { 
       score: plan.anchor?.name ? 8 : 6, 
       level: plan.anchor?.name ? 'high' : 'medium', 
-      reasons: plan.anchor?.name ? ['规则匹配成功', '锚点已提取'] : ['规则匹配成功'] 
+      reasons: plan.anchor?.name ? ['ƥɹ', 'êȡ'] : ['ƥɹ'] 
     }
     
     return plan
@@ -1227,7 +1227,7 @@ export function quickIntentClassify(question) {
     plan.intent_mode = 'macro_overview'
     plan.aggregation_strategy = { enable: true, method: 'h3', resolution: 9, max_bins: 60 }
     plan.need_global_context = true
-    console.log('[Planner Quick] 检测到图推理关键词，启用图推理通道')
+    console.log('[Planner Quick] ⵽ͼؼʣͼͨ')
   }
   
   // 4. 默认兜底：如果没有明确分类，设置为 area_analysis 并标记低置信度
@@ -1241,7 +1241,7 @@ export function quickIntentClassify(question) {
   const conflict = detectIntentConflict(question)
   if (conflict.hasConflict) {
     plan.query_type = 'clarification_needed'
-    plan.clarification_question = `您的问题同时包含微观搜索（如"${localKeywords.find(kw => q.includes(kw))}"）和宏观分析（如"${macroKeywords.find(kw => q.includes(kw))}"），请问您更倾向于：
+    plan.clarification_question = `ͬʱ΢"${localKeywords.find(kw => q.includes(kw))}"ͺ۷"${macroKeywords.find(kw => q.includes(kw))}"ڣ
 1️⃣ **查看区域整体分布与分析**
 2️⃣ **寻找具体的兴趣点列表**`
   }

@@ -1,5 +1,10 @@
+<<<<<<< HEAD
 <template>
   <div class="ai-chat-container" :class="{ 'map-link-pulse': mapLinkPulse }">
+=======
+﻿<template>
+  <div class="ai-chat-container">
+>>>>>>> 2152efd (优化前端性能，checkpoint v5)
     <!-- 头部状态栏 -->
     <div class="chat-header">
       <div class="header-main-row">
@@ -20,7 +25,7 @@
         
         <!-- 右侧：按钮组 -->
         <div class="header-actions">
-           <!-- POI 徽章 (在按钮组左侧，空间不足时可隐藏) -->
+           <!-- POI 徽章（在按钮组左侧，空间不足时可隐藏） -->
            <div class="poi-badge" v-if="poiCount > 0">
              <span class="poi-icon">📍</span>
              <span>{{ poiCount }}</span>
@@ -50,8 +55,8 @@
     <div class="chat-messages" ref="messagesContainer">
       <!-- 欢迎消息 -->
       <div v-if="messages.length === 0" class="welcome-message">
-        <h3>欢迎使用 标签云 智能分析助手 </h3>
-        <p>我拥有地理感知的能力，可以帮您分析选中区域内的POI数据，提供地理分析和洞察参考。</p>
+        <h3>欢迎使用地名标签云智能分析助手</h3>
+        <p>我具备地理感知能力，可以帮您分析选中区域内的 POI 数据，并提供地理分析与洞察参考。</p>
         <div class="quick-actions">
           <button v-for="action in quickActions" :key="action.text" 
                   @click="sendQuickAction(action.prompt)"
@@ -77,7 +82,7 @@
           </template>
         </div>
         <div class="message-content">
-          <!-- 三阶段 Pipeline 追踪器（嵌入 assistant 消息内） -->
+          <!-- 五阶段 Pipeline 追踪器（嵌入 assistant 消息内） -->
           <div v-if="msg.role === 'assistant' && (msg.pipelineCompleted || (isTyping && index === messages.length - 1))"
                class="pipeline-tracker-inline">
             <div class="pipeline-trace-inline">
@@ -98,20 +103,30 @@
                   </div>
                   <span class="step-label-inline">{{ step.label }}</span>
                 </div>
-                <div v-if="idx < stageSteps.length - 1" class="trace-connector"
-                     :class="{ completed: msg.pipelineCompleted || stageActiveIndex > idx }"></div>
               </template>
             </div>
             <div v-if="!msg.pipelineCompleted && currentStageHint" class="pipeline-hint-inline">{{ currentStageHint }}</div>
+            <div
+              v-if="msg.queryType || msg.intentMeta?.intentMode"
+              class="pipeline-intent-inline"
+            >
+              <span v-if="msg.queryType" class="intent-pill">Type: {{ msg.queryType }}</span>
+              <span v-if="msg.intentMeta?.intentMode" class="intent-pill">Mode: {{ msg.intentMeta.intentMode }}</span>
+            </div>
           </div>
-          <!-- 嵌入式 Pipeline 追踪器 (当有阶段信息时显示) -->
+          <!-- 嵌入式 Pipeline 追踪器（当有阶段信息时显示） -->
           <div v-if="msg.content && msg.content.trim()" class="message-text" v-html="renderMessageHtml(msg)"></div>
           
           <!-- 嵌入式标签云（在文本下方显示，增加视觉引导） -->
           <EmbeddedTagCloud 
             v-if="msg.role === 'assistant' && msg.pois && msg.pois.length > 0"
             :pois="msg.pois"
+<<<<<<< HEAD
             :intent-mode="msg.tagCloudMode || 'macro'"
+=======
+            :intent-mode="resolveEmbeddedIntentMode(msg)"
+            :intent-meta="msg.intentMeta || null"
+>>>>>>> 2152efd (优化前端性能，checkpoint v5)
             :width="360"
             :height="200"
             @render-to-map="handleRenderToMap"
@@ -176,6 +191,8 @@ import {
   getCurrentProviderInfo
 } from '../utils/aiService.js';
 import { normalizeRefinedResultEvidence } from '../utils/refinedResultEvidence.js';
+import { useAiStreamDispatcher } from '../composables/ai/useAiStreamDispatcher.js';
+import { useSpatialRequestBuilder } from '../composables/ai/useSpatialRequestBuilder.js';
 import EmbeddedTagCloud from './EmbeddedTagCloud.vue';
 import SpatialEvidenceCard from './SpatialEvidenceCard.vue';
 import { marked } from 'marked';
@@ -221,7 +238,7 @@ const props = defineProps({
     type: Array,
     default: () => []
   },
-  // 多选区数据 (新增)
+  // 多区数据 (新增)
   regions: {
     type: Array,
     default: () => []
@@ -237,7 +254,8 @@ const emit = defineEmits([
   'ai-spatial-clusters',
   'ai-vernacular-regions',
   'ai-fuzzy-regions',
-  'ai-analysis-stats'
+  'ai-analysis-stats',
+  'ai-intent-meta'
 ]);
 
 // 响应式状态
@@ -283,6 +301,30 @@ const currentStageHint = computed(() => {
   if (stageActiveIndex.value < 0) return '';
   return stageSteps[stageActiveIndex.value]?.hint || '';
 });
+
+function toEmbeddedIntentMode(intentMode, queryType = '') {
+  const rawMode = String(intentMode || '').trim().toLowerCase();
+  const rawType = String(queryType || '').trim().toLowerCase();
+
+  if (rawMode === 'local_search') return 'micro';
+  if (rawMode === 'macro_overview') return 'macro';
+  if (rawType === 'poi_search') return 'micro';
+  if (rawType === 'area_analysis') return 'macro';
+  return '';
+}
+
+function resolveEmbeddedIntentMode(message) {
+  const fromMeta = toEmbeddedIntentMode(
+    message?.intentMeta?.intentMode,
+    message?.intentMeta?.queryType || message?.queryType
+  );
+  if (fromMeta) return fromMeta;
+
+  const fromMessage = String(message?.intentMode || '').trim().toLowerCase();
+  if (fromMessage === 'micro' || fromMessage === 'macro') return fromMessage;
+
+  return 'macro';
+}
 const streamTimer = ref(null);
 const activeMessageIndex = ref(-1);
 const streamRenderStep = 18;
@@ -292,6 +334,21 @@ const isOnline = ref(false);
 const messagesContainer = ref(null);
 const inputRef = ref(null);
 const extractedPOIs = ref([]); // AI 提取的 POI 名称列表
+const { dispatchMetaEvent } = useAiStreamDispatcher({
+  messagesRef: messages,
+  extractedPOIsRef: extractedPOIs,
+  emit,
+  normalizeRefinedResultEvidence,
+  toEmbeddedIntentMode
+});
+const {
+  normalizeSelectedCategories,
+  hasCustomSelection,
+  shouldRunDeepSpatialMode,
+  shouldCaptureSnapshot,
+  normalizeRegionsForBackend,
+  buildSpatialContext
+} = useSpatialRequestBuilder();
 let statusTimer = null;
 let html2canvasModulePromise = null;
 const snapshotCache = {
@@ -301,7 +358,7 @@ const snapshotCache = {
 };
 const SNAPSHOT_CACHE_TTL_MS = 25000;
 
-// 计算 POI 数量
+// 璁＄畻 POI 鏁伴噺
 const poiCount = computed(() => props.poiFeatures?.length || 0);
 
 // 快捷操作按钮
@@ -337,8 +394,8 @@ const isLocalProvider = ref(false);
 
 // 计算状态文本
 const statusText = computed(() => {
-  if (!isOnline.value) return '离线';
-  // 本地显示 "Local LM"，云端统一显示 "在线"
+  if (!isOnline.value) return '绂荤嚎';
+  // 本地显示 "Local LM"，云端统丢显示 "在线"
   return isLocalProvider.value ? 'Local LM' : '在线';
 });
 
@@ -354,6 +411,7 @@ async function checkOnlineStatus() {
 
 // 发送消息
 
+<<<<<<< HEAD
 function normalizeSelectedCategories(rawSelectedCategories) {
   if (!Array.isArray(rawSelectedCategories) || rawSelectedCategories.length === 0) {
     return [];
@@ -596,6 +654,9 @@ function normalizeRegionGeometryForBackend(geometry) {
   };
 }
 
+=======
+// spatial request normalization moved to composable: useSpatialRequestBuilder
+>>>>>>> 2152efd (优化前端性能，checkpoint v5)
 async function loadHtml2Canvas() {
   if (!html2canvasModulePromise) {
     html2canvasModulePromise = import('html2canvas')
@@ -739,7 +800,7 @@ async function sendMessage() {
   isTyping.value = true;
   resetStreamState();
 
-  // 预先定义 aiMessageIndex
+  // 棰勫厛瀹氫箟 aiMessageIndex
   let aiMessageIndex = -1;
 
   try {
@@ -761,33 +822,19 @@ async function sendMessage() {
       tagCloudMode: inferTagCloudMode('', '', props.drawMode)
     });
 
-    const spatialContext = {
-      boundary: normalizeBoundaryForBackend(props.boundaryPolygon),
-      mode: props.drawMode,
-      center: normalizeCenterForBackend(props.circleCenter),
-      radius: props.circleRadius,
-      viewport: normalizeViewportForBackend(props.mapBounds),
+    const spatialContext = buildSpatialContext({
+      boundaryPolygon: props.boundaryPolygon,
+      drawMode: props.drawMode,
+      circleCenter: props.circleCenter,
+      circleRadius: props.circleRadius,
+      mapBounds: props.mapBounds,
       mapZoom: props.mapZoom,
-      analysisScale: inferAnalysisScale(props.mapZoom),
-      interactionHints: {
-        hasDrawnRegion: props.regions?.length > 0,
-        regionCount: props.regions?.length || 0,
-        isComparing: (props.regions?.length || 0) >= 2,
-        poiCount: props.poiFeatures?.length || 0
-      }
-    };
+      regions: props.regions,
+      poiFeatures: props.poiFeatures
+    });
 
-    const normalizedRegions = props.regions.map(r => ({
-      id: r.id,
-      name: r.name,
-      type: r.type,
-      geometry: normalizeRegionGeometryForBackend(r.geometry),
-      boundaryWKT: normalizeBoundaryWKTForBackend(r.boundaryWKT),
-      center: normalizeCenterForBackend(r.center),
-      poiCount: r.pois?.length || 0,
-      stats: r.stats
-    }));
-    // 多选区约束写入 spatialContext，供 Python 直查模式按“选区并集”严格过滤。
+    const normalizedRegions = normalizeRegionsForBackend(props.regions);
+    // 多区约束写入 spatialContext，供 Python 直查模式按“选区并集”严格过滤
     spatialContext.regions = normalizedRegions;
 
     const normalizedSelectedCategories = normalizeSelectedCategories(props.selectedCategories);
@@ -832,6 +879,7 @@ async function sendMessage() {
       options,
       props.poiFeatures,
       (type, data) => {
+<<<<<<< HEAD
         if (type === 'stage') {
           currentStage.value = data;
           return;
@@ -931,6 +979,17 @@ async function sendMessage() {
           if (messages.value[aiMessageIndex]) {
             messages.value[aiMessageIndex].progress = data.progress;
           }
+=======
+        const fallbackIntentMode = spatialContext?.mode === 'Polygon' ? 'micro' : 'macro';
+        const dispatchResult = dispatchMetaEvent({
+          type,
+          data,
+          aiMessageIndex,
+          fallbackIntentMode
+        });
+        if (dispatchResult?.stage) {
+          currentStage.value = dispatchResult.stage;
+>>>>>>> 2152efd (优化前端性能，checkpoint v5)
         }
       }
     );
@@ -961,7 +1020,7 @@ function sendQuickAction(prompt) {
   sendMessage();
 }
 
-// 标签云：渲染至地图
+// 标签云：渲染到地图
 function handleRenderToMap(pois) {
   console.log('[AiChat] 渲染 POI 到地图:', pois.length);
   triggerMapLinkPulse();
@@ -995,6 +1054,7 @@ function handleEvidenceFollowup(prompt) {
   sendQuickAction(prompt);
 }
 
+<<<<<<< HEAD
 function triggerMapLinkPulse() {
   mapLinkPulse.value = true;
   if (mapLinkPulseTimer) {
@@ -1007,6 +1067,9 @@ function triggerMapLinkPulse() {
 }
 
 // 清空对话
+=======
+// 娓呯┖瀵硅瘽
+>>>>>>> 2152efd (优化前端性能，checkpoint v5)
 function clearChat() {
   messages.value = [];
   extractedPOIs.value = [];
@@ -1014,13 +1077,13 @@ function clearChat() {
   resetStreamState();
 }
 
-// 保存对话记录
+// 淇濆瓨瀵硅瘽璁板綍
 function saveChatHistory() {
   if (messages.value.length === 0) return;
   
   let content = "===== 标签云智能助手对话记录 =====\n\n";
-  content += `导出时间: ${new Date().toLocaleString()}\n`;
-  content += `选中POI数量: ${props.poiFeatures.length}\n\n`;
+  content += `瀵煎嚭鏃堕棿: ${new Date().toLocaleString()}\n`;
+  content += `閫変腑POI鏁伴噺: ${props.poiFeatures.length}\n\n`;
   content += "-----------------------------------\n\n";
   
   messages.value.forEach(msg => {
@@ -1056,7 +1119,7 @@ function handleScroll() {
   userScrolledUp.value = !isAtBottom
 }
 
-// 滚动到底部 (平滑)
+// 滚动到底部（平滑）
 function scrollToBottom(force = false, behavior = 'smooth') {
   if (userScrolledUp.value && !force) return
 
@@ -1106,7 +1169,7 @@ function formatTime(timestamp) {
   return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
 }
 
-// 增强的 Markdown 渲染（支持表格）
+// 增强版 Markdown 渲染（支持表格）
 function sanitizeRenderedHtml(html) {
   if (!html) return '';
 
@@ -1152,7 +1215,7 @@ function renderTables(text) {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
     
-    // 检测表格行（以 | 开头和结尾）
+      // 检测表格行（以 | 开头和结尾）
     if (line.startsWith('|') && line.endsWith('|')) {
       // 检查是否是分隔行（如 |---|---|）
       const isSeparator = /^\|[\s\-:|]+\|$/.test(line);
@@ -1185,7 +1248,7 @@ function renderTables(text) {
   return result.join('\n');
 }
 
-// 生成表格 HTML
+// 鐢熸垚琛ㄦ牸 HTML
 function generateTableHTML(tableLines) {
   if (tableLines.length === 0) return '';
   
@@ -1195,18 +1258,18 @@ function generateTableHTML(tableLines) {
     // 解析单元格
     const cells = line
       .split('|')
-      .filter((cell, i, arr) => i !== 0 && i !== arr.length - 1) // 移除首尾空元素
+      .filter((cell, i, arr) => i !== 0 && i !== arr.length - 1) // 移除首尾空单元格
       .map(cell => cell.trim());
     
     if (index === 0) {
-      // 表头
+      // 琛ㄥご
       html += '<thead><tr>';
       cells.forEach(cell => {
         html += `<th>${cell}</th>`;
       });
       html += '</tr></thead><tbody>';
     } else {
-      // 表体
+      // 琛ㄤ綋
       html += '<tr>';
       cells.forEach(cell => {
         html += `<td>${cell}</td>`;
@@ -1222,7 +1285,7 @@ function generateTableHTML(tableLines) {
 /**
  * 从 AI 回复中提取 POI 名称（解析 Markdown 表格）
  * @param {string} content - AI 回复内容
- * @returns {Array} POI 列表 [{name, distance}, ...]
+ * @returns {Array} POI 鍒楄〃 [{name, distance}, ...]
  */
 function extractPOIsFromResponse(content) {
   const pois = [];
@@ -1236,7 +1299,7 @@ function extractPOIsFromResponse(content) {
   for (const line of lines) {
     const trimmed = line.trim();
     
-    // 检测表格行
+    // 棢测表格行
     if (trimmed.startsWith('|') && trimmed.endsWith('|')) {
       const cells = trimmed.split('|').filter((c, i, arr) => i !== 0 && i !== arr.length - 1).map(c => c.trim());
       
@@ -1245,10 +1308,10 @@ function extractPOIsFromResponse(content) {
         continue;
       }
       
-      // 检查是否是表头（寻找"名称"列）
+      // 检查是否是表头（寻找“名称”列）
       if (!inTable) {
-        nameColIndex = cells.findIndex(c => c.includes('名称') || c.includes('店名') || c.includes('POI'));
-        distanceColIndex = cells.findIndex(c => c.includes('距离'));
+        nameColIndex = cells.findIndex(c => c.includes('鍚嶇О') || c.includes('搴楀悕') || c.includes('POI'));
+        distanceColIndex = cells.findIndex(c => c.includes('璺濈'));
         if (nameColIndex >= 0) {
           inTable = true;
         }
@@ -1278,15 +1341,15 @@ function extractPOIsFromResponse(content) {
  * 将 AI 提取的 POI 渲染到标签云
  */
 function renderToTagCloud() {
-  // 如果提取的数据里包含坐标信息，说明是后端下发的结构化数据，直接作为 Feature 数组传出去
+  // 如果提取的数据包含坐标，说明是后端下发的结构化数据，直接作为 Feature 数组传出
   if (extractedPOIs.value.length > 0 && extractedPOIs.value[0].lon) {
      const features = extractedPOIs.value.map(p => ({
         type: 'Feature',
         properties: {
            id: p.id || `temp_${Math.random()}`,
-           '名称': p.name,
-           '小类': p.category,
-           '地址': p.address,
+           '鍚嶇О': p.name,
+           '灏忕被': p.category,
+           '鍦板潃': p.address,
            '_is_temp': true // 标记为临时数据
         },
         geometry: {
@@ -1294,13 +1357,13 @@ function renderToTagCloud() {
            coordinates: [p.lon, p.lat]
         }
      }));
-     console.log('[AiChat] 渲染结构化 POI 到标签云:', features.length);
+      console.log('[AiChat] 渲染结构化 POI 到标签云:', features.length);
      emit('render-to-tagcloud', features);
      return;
   }
 
   const poiNames = extractedPOIs.value.map(p => p.name);
-  console.log('[AiChat] 渲染到标签云:', poiNames);
+  console.log('[AiChat] 娓叉煋鍒版爣绛句簯:', poiNames);
   emit('render-to-tagcloud', poiNames);
 }
 
@@ -1334,7 +1397,7 @@ watch(latestAssistantMessageText, (latestText) => {
 watch(() => props.poiFeatures, (newVal, oldVal) => {
   if (newVal?.length > 0 && newVal.length !== oldVal?.length) {
     // 可以在这里添加提示消息
-    console.log(`[AiChat] POI 数据已更新: ${newVal.length} 个`);
+    console.log(`[AiChat] POI data updated: ${newVal.length}`);
   }
 }, { deep: false });
 
@@ -1349,7 +1412,7 @@ onMounted(() => {
 
 /**
  * 自动发送消息（供父组件调用）
- * 用于复杂查询时，自动打开AI面板并发送用户输入
+ * 用于复杂查询时，自动打开 AI 面板并发送用户输入
  * @param {string} message - 要发送的消息内容
  */
 async function autoSendMessage(message) {
@@ -1358,14 +1421,14 @@ async function autoSendMessage(message) {
   // 填充输入框
   inputText.value = message.trim();
   
-  // 等待 DOM 更新
+  // 绛夊緟 DOM 鏇存柊
   await nextTick();
   
   // 自动发送
   await sendMessage();
 }
 
-// 暴露方法给父组件
+// 鏆撮湶鏂规硶缁欑埗缁勪欢
 defineExpose({
   clearChat,
   checkOnlineStatus,
@@ -1387,7 +1450,7 @@ defineExpose({
   box-shadow: -4px 0 32px rgba(0, 0, 0, 0.3);
 }
 
-/* 头部 */
+/* 澶撮儴 */
 .chat-header {
   padding: 16px 20px;
   background: rgba(15, 23, 42, 0.4);
@@ -1408,7 +1471,7 @@ defineExpose({
   display: flex;
   align-items: center;
   gap: 12px;
-  flex: 1; /* 占据剩余空间 */
+  flex: 1; /* 鍗犳嵁鍓╀綑绌洪棿 */
   overflow: hidden; /* 防止文字过长挤压按钮 */
 }
 
@@ -1496,7 +1559,7 @@ defineExpose({
   font-size: 10px;
 }
 
-/* 操作按钮通用样式重构 - 迷你图标版 */
+/* 操作按钮通用样式重构 - 迷你图标 */
 .action-btn {
   width: 28px;
   height: 28px;
@@ -1545,7 +1608,7 @@ defineExpose({
   color: #c7d2ff;
 }
 
-/* 消息区域 */
+/* 娑堟伅鍖哄煙 */
 .chat-messages {
   flex: 1;
   overflow-y: auto;
@@ -1564,7 +1627,7 @@ defineExpose({
   border-radius: 3px;
 }
 
-/* 欢迎消息 */
+/* 娆㈣繋娑堟伅 */
 .welcome-message {
   display: flex;
   flex-direction: column;
@@ -1632,7 +1695,7 @@ defineExpose({
   box-shadow: 0 8px 20px rgba(37, 99, 235, 0.24);
 }
 
-/* 消息泡泡 */
+/* 娑堟伅娉℃场 */
 .message {
   display: flex;
   gap: 12px;
@@ -1792,7 +1855,7 @@ defineExpose({
   height: 8px;
 }
 
-/* Markdown 表格样式 */
+/* Markdown 琛ㄦ牸鏍峰紡 */
 .message-text :deep(table),
 .message-text :deep(.md-table) {
   width: 100%;
@@ -1870,7 +1933,7 @@ defineExpose({
   40% { transform: scale(1); opacity: 1; }
 }
 
-/* Pipeline 追踪器 (内联在 assistant 消息中) */
+/* Pipeline 追踪器（内联 assistant 消息） */
 .pipeline-tracker-inline {
   padding: 8px 12px;
   background: rgba(15, 23, 42, 0.6);
@@ -2067,7 +2130,7 @@ defineExpose({
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   align-items: start;
-  gap: 6px;
+  gap: 10px;
 }
 
 .trace-step-inline {
@@ -2076,10 +2139,45 @@ defineExpose({
   align-items: center;
   gap: 6px;
   min-width: 0;
+  position: relative;
 }
 
-.trace-connector {
+.trace-step-inline::after {
+  content: "";
+  position: absolute;
+  top: 11px;
+  left: calc(50% + 16px);
+  width: calc(100% - 32px);
+  height: 2px;
+  border-radius: 999px;
+  background: rgba(71, 85, 105, 0.45);
+}
+
+.trace-step-inline:last-child::after {
   display: none;
+}
+
+.trace-step-inline.completed::after,
+.trace-step-inline.active::after {
+  background: linear-gradient(90deg, rgba(99, 102, 241, 0.75), rgba(16, 185, 129, 0.75));
+}
+
+.pipeline-intent-inline {
+  margin-top: 6px;
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.intent-pill {
+  font-size: 10px;
+  line-height: 1;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(30, 41, 59, 0.7);
+  border: 1px solid rgba(99, 102, 241, 0.4);
+  color: #c7d2fe;
 }
 
 .step-label-inline {
@@ -2104,6 +2202,13 @@ defineExpose({
     gap: 4px;
   }
 
+  .trace-step-inline::after {
+    top: 9px;
+    left: calc(50% + 12px);
+    width: calc(100% - 24px);
+    height: 1px;
+  }
+
   .step-icon-wrapper {
     width: 20px;
     height: 20px;
@@ -2114,7 +2219,7 @@ defineExpose({
   }
 }
 
-/* 输入区域 */
+/* 杈撳叆鍖哄煙 */
 .chat-input-area {
   padding: 12px 16px 16px;
   background: rgba(17, 24, 39, 0.95);
@@ -2267,7 +2372,7 @@ defineExpose({
   word-break: break-all;
 }
 
-/* 移动端适配 */
+/* 绉诲姩绔€傞厤 */
 @media (max-width: 768px) {
   .chat-header {
     padding: 10px 12px;
@@ -2409,3 +2514,5 @@ defineExpose({
   box-shadow: 0 6px 16px rgba(14, 165, 233, 0.35);
 }
 </style>
+
+

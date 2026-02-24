@@ -1,148 +1,352 @@
 <template>
-  <div class="embedded-tagcloud-container" ref="containerRef">
-    <!-- 标题栏 + 控制按钮 -->
+  <div ref="containerRef" class="embedded-tagcloud-container">
     <div class="tagcloud-header">
-      <span class="tagcloud-title">📊 地名标签云</span>
+      <span class="tagcloud-title">地名标签云</span>
       <div class="tagcloud-controls">
-        <button 
-          class="control-btn" 
+        <button
+          class="control-btn"
           :class="{ active: currentMode === 'coarse' }"
+          title="粗粒聚合（最多 50 个）"
           @click="switchMode('coarse')"
-          title="粗略聚合 (50个)"
         >
-          粗略聚合
+          粗粒聚合
         </button>
-        <button 
-          class="control-btn" 
+        <button
+          class="control-btn"
           :class="{ active: currentMode === 'fine' }"
+          title="精细聚合（最多 20 个）"
           @click="switchMode('fine')"
-          title="高精聚合 (20个)"
         >
-          高精聚合
+          精细聚合
         </button>
-        <button 
-          class="control-btn render-btn" 
+        <button
+          class="control-btn render-btn"
+          title="将当前标签对应 POI 渲染到地图"
           @click="renderToMap"
-          title="将标签云渲染到地图"
         >
-          渲染至地图
+          渲染到地图
         </button>
       </div>
     </div>
-    
-    <!-- Canvas 画布区域 -->
-    <div class="tagcloud-canvas-wrapper">
-      <canvas 
-        ref="canvasRef" 
+
+    <div
+      class="tagcloud-canvas-wrapper"
+      @mouseenter="lockContextScroll"
+      @mouseleave="unlockContextScroll"
+    >
+      <canvas
+        ref="canvasRef"
         class="tagcloud-canvas"
         @click="handleCanvasClick"
         @mousedown="handleCanvasMouseDown"
-        @wheel="handleCanvasWheel"
+        @wheel.passive="handleCanvasWheel"
       ></canvas>
-      
-      <!-- 加载指示器 -->
+
       <div v-if="isCalculating" class="loading-overlay">
         <div class="loading-spinner"></div>
-        <span>计算布局中...</span>
+        <span>布局计算中...</span>
       </div>
     </div>
-    
-    <!-- 底部统计 -->
+
     <div class="tagcloud-footer">
-      <span class="tag-count">{{ placedTags.length }} / {{ currentMode === 'coarse' ? 50 : 20 }} 个标签</span>
-      <span class="mode-indicator">{{ intentMode === 'macro' ? '🌍 宏观分析' : '🔍 微观检索' }}</span>
+      <span class="tag-count">
+        {{ placedTags.length }} / {{ currentMode === 'coarse' ? 50 : 20 }} 个标签
+      </span>
+      <span class="mode-indicator">{{ modeLabel }}</span>
     </div>
   </div>
 </template>
 
 <script setup>
+<<<<<<< HEAD
 import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { buildPlaceTagsFromPois } from '../utils/placeTagExtractor'
+=======
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { buildPlaceTags } from '../utils/tagExtraction.js'
+>>>>>>> 2152efd (优化前端性能，checkpoint v5)
 
 const props = defineProps({
-  // 后端返回的 POI 数据
   pois: { type: Array, default: () => [] },
-  // 意图模式：macro | micro
   intentMode: { type: String, default: 'macro' },
-  // 默认高度
+  intentMeta: { type: Object, default: null },
+  width: { type: Number, default: 360 },
   height: { type: Number, default: 220 }
 })
 
 const emit = defineEmits(['render-to-map', 'tag-click'])
 
-// 响应式状态
 const containerRef = ref(null)
 const canvasRef = ref(null)
-const currentMode = ref('fine') // 'coarse' | 'fine'
+const currentMode = ref('fine')
 const isCalculating = ref(false)
 const placedTags = ref([])
-const canvasWidth = ref(380) // 动态宽度
+const canvasWidth = ref(Math.max(240, Number(props.width) || 360))
 
-// 变换与交互
 const transform = ref({ k: 1, x: 0, y: 0 })
 const isDragging = ref(false)
 const lastMousePos = ref({ x: 0, y: 0 })
+const dragStartPos = ref({ x: 0, y: 0 })
 
-// Worker 实例
 let worker = null
 let resizeObserver = null
+let renderRaf = null
+let originalPoiById = new Map()
+let scrollLockTarget = null
+let previousOverflowY = ''
+let previousOverscrollBehavior = ''
 
-// 初始化 Worker
-onMounted(() => {
-  // 1. 初始化 Worker
-  worker = new Worker(new URL('../workers/basic.worker.js', import.meta.url), { type: 'module' })
-  worker.onmessage = (event) => {
-    placedTags.value = event.data || []
-    isCalculating.value = false
+const modeLabel = computed(() => {
+  const mode = String(props.intentMeta?.intent_mode || props.intentMeta?.intentMode || props.intentMode || '')
+    .toLowerCase()
+  return mode === 'micro' || mode === 'local_search' ? '微观检索' : '宏观分析'
+})
+
+function idKey(value) {
+  return String(value ?? '')
+}
+
+function scheduleRender() {
+  if (renderRaf) return
+  renderRaf = requestAnimationFrame(() => {
+    renderRaf = null
     renderCanvas()
+  })
+}
+
+function lockContextScroll() {
+  if (scrollLockTarget) return
+  const target = containerRef.value?.closest('.chat-messages')
+  if (!target) return
+  scrollLockTarget = target
+  previousOverflowY = target.style.overflowY
+  previousOverscrollBehavior = target.style.overscrollBehavior
+  target.style.overflowY = 'hidden'
+  target.style.overscrollBehavior = 'none'
+}
+
+function unlockContextScroll() {
+  if (!scrollLockTarget) return
+  scrollLockTarget.style.overflowY = previousOverflowY
+  scrollLockTarget.style.overscrollBehavior = previousOverscrollBehavior
+  scrollLockTarget = null
+  previousOverflowY = ''
+  previousOverscrollBehavior = ''
+}
+
+function getTagColor(index) {
+  const hue = 198 + (index % 12) * 7
+  const saturation = 68 + (index % 4) * 4
+  const lightness = 66 + (index % 3) * 5
+  return `hsl(${hue}, ${saturation}%, ${lightness}%)`
+}
+
+function sanitizeTagForWorker(tag, index, fallbackWeight) {
+  const rawId = tag?.id
+  const id = typeof rawId === 'string' || typeof rawId === 'number' ? rawId : `${index}`
+  const name = String(tag?.name || '未知')
+  const type = String(tag?.type || '')
+  const numericWeight = Number(tag?.weight)
+  const weight = Number.isFinite(numericWeight) ? numericWeight : fallbackWeight
+
+  return { id, name, type, weight }
+}
+
+function makeFallbackLayout(tags, width, height) {
+  const safeWidth = Math.max(200, width || 360)
+  const safeHeight = Math.max(120, height || 220)
+  const radiusStep = 16
+  const angleStep = Math.PI / 6
+
+  return tags.map((tag, index) => {
+    const fontSize = Math.max(12, 19 - Math.floor(index / 3))
+    const ring = Math.floor(index / 10)
+    const radius = 24 + ring * radiusStep + (index % 10) * 2
+    const angle = index * angleStep
+    const x = safeWidth / 2 + Math.cos(angle) * radius
+    const y = safeHeight / 2 + Math.sin(angle) * radius
+    const widthEstimate = Math.max(24, tag.name.length * fontSize * 0.62)
+    const heightEstimate = Math.max(16, fontSize * 1.2)
+
+    return {
+      ...tag,
+      text: tag.name,
+      fontSize,
+      width: widthEstimate,
+      height: heightEstimate,
+      x,
+      y,
+      placed: true,
+      rotation: 0
+    }
+  })
+}
+
+function applyLayout(layoutTags) {
+  placedTags.value = (Array.isArray(layoutTags) ? layoutTags : []).map((tag, index) => ({
+    ...tag,
+    id: tag?.id ?? index,
+    text: String(tag?.text || tag?.name || '未知'),
+    originalPoi: originalPoiById.get(idKey(tag?.id ?? index)) || null
+  }))
+  isCalculating.value = false
+  fitToView()
+}
+
+function calculateLayout() {
+  const pois = Array.isArray(props.pois) ? props.pois : []
+  if (!pois.length) {
+    placedTags.value = []
+    scheduleRender()
+    return
   }
-  
-  // 2. 监听容器宽度自适应
-  if (containerRef.value) {
-    resizeObserver = new ResizeObserver(entries => {
-      for (const entry of entries) {
-        if (entry.contentRect.width > 0) {
-          canvasWidth.value = Math.floor(entry.contentRect.width)
-          // 宽度变化后，如果已有数据，重新渲染；如果没有数据，不管
-          if (placedTags.value.length > 0) {
-            requestAnimationFrame(renderCanvas)
-          } else {
-             // 首次加载且无数据时可能需要计算
-             if (props.pois.length > 0 && !isCalculating.value) calculateLayout()
-          }
-        }
+
+  const topK = currentMode.value === 'coarse' ? 50 : 20
+  const intentMeta = props.intentMeta || {
+    intentMode: props.intentMode === 'micro' ? 'local_search' : 'macro_overview'
+  }
+
+  const builtTags = buildPlaceTags(pois, { topK, intentMeta })
+  const tags = builtTags.map((tag, index) => ({
+    ...sanitizeTagForWorker(tag, index, topK - index),
+    originalPoi: tag?.originalPoi || null
+  }))
+
+  originalPoiById = new Map(tags.map((tag) => [idKey(tag.id), tag.originalPoi]))
+  const workerTags = tags.map(({ originalPoi, ...safe }) => safe)
+
+  if (!worker || !workerTags.length) {
+    applyLayout(makeFallbackLayout(workerTags, canvasWidth.value, props.height))
+    return
+  }
+
+  isCalculating.value = true
+
+  try {
+    worker.postMessage({
+      tags: workerTags,
+      width: canvasWidth.value || 380,
+      height: props.height,
+      config: {
+        fontMin: 12,
+        fontMax: 18,
+        padding: 3,
+        spiralStep: 4
       }
     })
-    resizeObserver.observe(containerRef.value)
+  } catch (error) {
+    console.warn('[EmbeddedTagCloud] worker postMessage failed, fallback to local layout:', error)
+    applyLayout(makeFallbackLayout(workerTags, canvasWidth.value, props.height))
   }
-  
-  // 初始计算
-  if (props.pois.length > 0) {
-    calculateLayout()
+}
+
+function renderCanvas() {
+  const canvas = canvasRef.value
+  if (!canvas) return
+
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+
+  const dpr = window.devicePixelRatio || 1
+  const w = Math.max(200, canvasWidth.value)
+  const h = props.height
+
+  canvas.width = w * dpr
+  canvas.height = h * dpr
+  canvas.style.width = `${w}px`
+  canvas.style.height = `${h}px`
+
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  ctx.clearRect(0, 0, w, h)
+  ctx.fillStyle = 'rgba(20, 25, 35, 0.64)'
+  ctx.fillRect(0, 0, w, h)
+
+  ctx.save()
+  ctx.translate(transform.value.x, transform.value.y)
+  ctx.scale(transform.value.k, transform.value.k)
+
+  for (let index = 0; index < placedTags.value.length; index += 1) {
+    const tag = placedTags.value[index]
+    if (!tag?.placed) continue
+
+    ctx.save()
+    ctx.translate(tag.x || 0, tag.y || 0)
+
+    ctx.fillStyle = getTagColor(index)
+    ctx.font = `${tag.fontSize || 13}px "PingFang SC", "Microsoft YaHei", sans-serif`
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.82)'
+    ctx.shadowBlur = 4
+    ctx.shadowOffsetX = 1
+    ctx.shadowOffsetY = 1
+    ctx.fillText(String(tag.text || tag.name || ''), 0, 0)
+
+    ctx.restore()
   }
-})
 
-onUnmounted(() => {
-  if (worker) worker.terminate()
-  if (resizeObserver) resizeObserver.disconnect()
-  window.removeEventListener('mousemove', handleWindowMouseMove)
-  window.removeEventListener('mouseup', handleWindowMouseUp)
-})
+  ctx.restore()
+}
 
-// 监听 POI 数据变化
-watch(() => props.pois, (newPois) => {
-  if (newPois.length > 0) {
-    calculateLayout()
+function fitToView() {
+  if (!placedTags.value.length) {
+    transform.value = { k: 1, x: 0, y: 0 }
+    scheduleRender()
+    return
   }
-}, { immediate: true })
 
-// 切换模式
+  let minX = Infinity
+  let maxX = -Infinity
+  let minY = Infinity
+  let maxY = -Infinity
+  let hasPlaced = false
+
+  for (const tag of placedTags.value) {
+    if (!tag?.placed) continue
+    hasPlaced = true
+    const halfW = (Number(tag.width) || 20) / 2
+    const halfH = (Number(tag.height) || 14) / 2
+    minX = Math.min(minX, (Number(tag.x) || 0) - halfW)
+    maxX = Math.max(maxX, (Number(tag.x) || 0) + halfW)
+    minY = Math.min(minY, (Number(tag.y) || 0) - halfH)
+    maxY = Math.max(maxY, (Number(tag.y) || 0) + halfH)
+  }
+
+  if (!hasPlaced) {
+    transform.value = { k: 1, x: 0, y: 0 }
+    scheduleRender()
+    return
+  }
+
+  const padding = 20
+  const w = Math.max(200, canvasWidth.value)
+  const h = props.height
+  const contentWidth = Math.max(1, maxX - minX + padding * 2)
+  const contentHeight = Math.max(1, maxY - minY + padding * 2)
+
+  const scaleX = w / contentWidth
+  const scaleY = h / contentHeight
+  const scale = Math.min(scaleX, scaleY, 1.15)
+
+  const contentCenterX = (minX + maxX) / 2
+  const contentCenterY = (minY + maxY) / 2
+
+  transform.value = {
+    k: scale,
+    x: w / 2 - contentCenterX * scale,
+    y: h / 2 - contentCenterY * scale
+  }
+
+  scheduleRender()
+}
+
 function switchMode(mode) {
   if (mode === currentMode.value) return
   currentMode.value = mode
   calculateLayout()
 }
 
+<<<<<<< HEAD
 // 计算布局
 function calculateLayout() {
   if (!worker || props.pois.length === 0) return
@@ -302,25 +506,28 @@ const dragStartPos = ref({ x: 0, y: 0 })
 
 // Canvas 交互事件处理
 function handleCanvasMouseDown(e) {
+=======
+function handleCanvasMouseDown(event) {
+>>>>>>> 2152efd (优化前端性能，checkpoint v5)
   isDragging.value = true
-  lastMousePos.value = { x: e.clientX, y: e.clientY }
-  dragStartPos.value = { x: e.clientX, y: e.clientY } // 记录起始位置
+  lastMousePos.value = { x: event.clientX, y: event.clientY }
+  dragStartPos.value = { x: event.clientX, y: event.clientY }
   document.body.style.cursor = 'grabbing'
-  
-  // 绑定全局事件
+
   window.addEventListener('mousemove', handleWindowMouseMove)
   window.addEventListener('mouseup', handleWindowMouseUp)
 }
 
-function handleWindowMouseMove(e) {
+function handleWindowMouseMove(event) {
   if (!isDragging.value) return
-  const dx = e.clientX - lastMousePos.value.x
-  const dy = e.clientY - lastMousePos.value.y
-  
+
+  const dx = event.clientX - lastMousePos.value.x
+  const dy = event.clientY - lastMousePos.value.y
+
   transform.value.x += dx
   transform.value.y += dy
-  lastMousePos.value = { x: e.clientX, y: e.clientY }
-  renderCanvas()
+  lastMousePos.value = { x: event.clientX, y: event.clientY }
+  scheduleRender()
 }
 
 function handleWindowMouseUp() {
@@ -330,53 +537,48 @@ function handleWindowMouseUp() {
   window.removeEventListener('mouseup', handleWindowMouseUp)
 }
 
-function handleCanvasWheel(e) {
-  e.preventDefault()
-  
+function handleCanvasWheel(event) {
   const zoomIntensity = 0.1
-  const delta = e.deltaY > 0 ? (1 - zoomIntensity) : (1 + zoomIntensity)
-  
-  // 以鼠标为中心缩放
-  const rect = canvasRef.value.getBoundingClientRect()
-  const mouseX = e.clientX - rect.left
-  const mouseY = e.clientY - rect.top
-  
+  const delta = event.deltaY > 0 ? 1 - zoomIntensity : 1 + zoomIntensity
+
+  const rect = canvasRef.value?.getBoundingClientRect()
+  if (!rect) return
+
+  const mouseX = event.clientX - rect.left
+  const mouseY = event.clientY - rect.top
+
   const newK = transform.value.k * delta
   if (newK < 0.1 || newK > 10) return
 
   transform.value.x = mouseX - (mouseX - transform.value.x) * delta
   transform.value.y = mouseY - (mouseY - transform.value.y) * delta
   transform.value.k = newK
-  
-  renderCanvas()
+
+  scheduleRender()
 }
 
-// 处理 Canvas 点击
 function handleCanvasClick(event) {
-  // 计算总位移
   const dx = Math.abs(event.clientX - dragStartPos.value.x)
   const dy = Math.abs(event.clientY - dragStartPos.value.y)
-  
-  // 如果位移超过 3px，说明是拖拽，不触发点击
   if (dx > 3 || dy > 3) return
 
-  const rect = canvasRef.value.getBoundingClientRect()
+  const rect = canvasRef.value?.getBoundingClientRect()
+  if (!rect) return
+
   const rawX = event.clientX - rect.left
   const rawY = event.clientY - rect.top
-  
-  const width = canvasWidth.value
-  const height = props.height
-  
-  // (rawX, rawY) 是 Canvas 内的坐标
-  // 需要将其转换回 World 坐标
-  const wx = (rawX - transform.value.x) / transform.value.k
-  const wy = (rawY - transform.value.y) / transform.value.k
-  
+  const worldX = (rawX - transform.value.x) / transform.value.k
+  const worldY = (rawY - transform.value.y) / transform.value.k
+
   for (const tag of placedTags.value) {
-    if (!tag.placed) continue
+    if (!tag?.placed) continue
+    const halfW = (Number(tag.width) || 20) / 2
+    const halfH = (Number(tag.height) || 14) / 2
     if (
-      wx >= tag.x - tag.width/2 && wx <= tag.x + tag.width/2 &&
-      wy >= tag.y - tag.height/2 && wy <= tag.y + tag.height/2
+      worldX >= (Number(tag.x) || 0) - halfW
+      && worldX <= (Number(tag.x) || 0) + halfW
+      && worldY >= (Number(tag.y) || 0) - halfH
+      && worldY <= (Number(tag.y) || 0) + halfH
     ) {
       emit('tag-click', tag)
       return
@@ -384,41 +586,114 @@ function handleCanvasClick(event) {
   }
 }
 
-// 渲染至地图
 function renderToMap() {
-  // 提取所有已放置标签对应的原始 POI
   const poisToRender = placedTags.value
-    .filter(t => t.placed && t.originalPoi)
-    .map(t => t.originalPoi)
-  
+    .filter((tag) => tag?.placed && tag?.originalPoi)
+    .map((tag) => tag.originalPoi)
+
   emit('render-to-map', poisToRender)
 }
+
+onMounted(() => {
+  worker = new Worker(new URL('../workers/basic.worker.js', import.meta.url), { type: 'module' })
+
+  worker.onmessage = (event) => {
+    const layoutTags = Array.isArray(event.data) ? event.data : []
+    applyLayout(layoutTags)
+  }
+
+  worker.onerror = (error) => {
+    console.warn('[EmbeddedTagCloud] worker runtime error, fallback to local layout:', error)
+    const topK = currentMode.value === 'coarse' ? 50 : 20
+    const intentMeta = props.intentMeta || {
+      intentMode: props.intentMode === 'micro' ? 'local_search' : 'macro_overview'
+    }
+    const fallbackTags = buildPlaceTags(props.pois, { topK, intentMeta })
+      .map((tag, index) => sanitizeTagForWorker(tag, index, topK - index))
+    applyLayout(makeFallbackLayout(fallbackTags, canvasWidth.value, props.height))
+  }
+
+  worker.onmessageerror = (error) => {
+    console.warn('[EmbeddedTagCloud] worker message decode error:', error)
+  }
+
+  if (containerRef.value) {
+    resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.contentRect.width <= 0) continue
+        canvasWidth.value = Math.max(240, Math.floor(entry.contentRect.width))
+        if (placedTags.value.length > 0) {
+          scheduleRender()
+        } else if (props.pois.length > 0 && !isCalculating.value) {
+          calculateLayout()
+        }
+      }
+    })
+    resizeObserver.observe(containerRef.value)
+  }
+
+  if (props.pois.length > 0) {
+    calculateLayout()
+  } else {
+    scheduleRender()
+  }
+})
+
+onUnmounted(() => {
+  unlockContextScroll()
+
+  if (renderRaf) {
+    cancelAnimationFrame(renderRaf)
+    renderRaf = null
+  }
+
+  if (worker) {
+    worker.terminate()
+    worker = null
+  }
+
+  if (resizeObserver) {
+    resizeObserver.disconnect()
+    resizeObserver = null
+  }
+
+  window.removeEventListener('mousemove', handleWindowMouseMove)
+  window.removeEventListener('mouseup', handleWindowMouseUp)
+})
+
+watch(
+  () => [props.pois, props.intentMode, props.intentMeta],
+  () => {
+    calculateLayout()
+  },
+  { deep: true }
+)
 </script>
 
 <style scoped>
 .embedded-tagcloud-container {
-  background: linear-gradient(135deg, rgba(25, 32, 48, 0.95), rgba(15, 20, 30, 0.98));
-  border-radius: 12px;
-  border: 1px solid rgba(100, 120, 180, 0.3);
-  overflow: hidden;
-  margin: 12px 0;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
   width: 100%;
+  margin: 12px 0;
+  overflow: hidden;
+  border: 1px solid rgba(100, 120, 180, 0.3);
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(25, 32, 48, 0.95), rgba(15, 20, 30, 0.98));
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
 }
 
 .tagcloud-header {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  justify-content: space-between;
   padding: 10px 14px;
-  background: rgba(40, 50, 70, 0.5);
   border-bottom: 1px solid rgba(100, 120, 180, 0.2);
+  background: rgba(40, 50, 70, 0.5);
 }
 
 .tagcloud-title {
+  color: rgba(200, 210, 230, 0.9);
   font-size: 13px;
   font-weight: 600;
-  color: rgba(200, 210, 230, 0.9);
 }
 
 .tagcloud-controls {
@@ -428,29 +703,29 @@ function renderToMap() {
 
 .control-btn {
   padding: 4px 10px;
-  font-size: 11px;
   border: 1px solid rgba(100, 140, 200, 0.4);
   border-radius: 6px;
   background: rgba(60, 80, 120, 0.3);
   color: rgba(180, 200, 230, 0.9);
+  font-size: 11px;
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
 .control-btn:hover {
-  background: rgba(80, 100, 150, 0.5);
   border-color: rgba(120, 160, 220, 0.6);
+  background: rgba(80, 100, 150, 0.5);
 }
 
 .control-btn.active {
-  background: rgba(60, 120, 200, 0.5);
   border-color: rgba(100, 160, 240, 0.7);
+  background: rgba(60, 120, 200, 0.5);
   color: #fff;
 }
 
 .control-btn.render-btn {
-  background: linear-gradient(135deg, rgba(80, 160, 120, 0.4), rgba(60, 140, 100, 0.5));
   border-color: rgba(100, 180, 140, 0.5);
+  background: linear-gradient(135deg, rgba(80, 160, 120, 0.4), rgba(60, 140, 100, 0.5));
 }
 
 .control-btn.render-btn:hover {
@@ -459,14 +734,14 @@ function renderToMap() {
 
 .tagcloud-canvas-wrapper {
   position: relative;
-  /* width: 100%; 由父容器控制 */
   background: rgba(20, 25, 35, 0.6);
+  overscroll-behavior: contain;
 }
 
 .tagcloud-canvas {
   display: block;
   cursor: grab;
-  user-select: none; /* 防止选中 */
+  user-select: none;
 }
 
 .tagcloud-canvas:active {
@@ -475,15 +750,15 @@ function renderToMap() {
 
 .loading-overlay {
   position: absolute;
-  top: 0; left: 0; right: 0; bottom: 0;
+  inset: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  background: rgba(20, 25, 35, 0.8);
+  gap: 8px;
+  background: rgba(20, 25, 35, 0.82);
   color: rgba(180, 200, 230, 0.9);
   font-size: 12px;
-  gap: 8px;
 }
 
 .loading-spinner {
@@ -496,18 +771,20 @@ function renderToMap() {
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .tagcloud-footer {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  justify-content: space-between;
   padding: 8px 14px;
-  background: rgba(40, 50, 70, 0.4);
   border-top: 1px solid rgba(100, 120, 180, 0.15);
-  font-size: 11px;
+  background: rgba(40, 50, 70, 0.4);
   color: rgba(150, 170, 200, 0.7);
+  font-size: 11px;
 }
 
 .mode-indicator {

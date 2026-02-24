@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 ﻿# GIS Agent 代码审阅与改进清单（2026-02-24）
 
 ## 审阅范围
@@ -55,3 +56,63 @@
 ## 回归验证记录
 - `npm run test` 通过（12/12）
 - `npm run build` 通过（vite 生产构建成功）
+=======
+# GIS Agent 代码审阅（2026-02-24）
+
+## 验证快照
+
+- `npm run build` 已通过
+- `npm run test` 已通过（6 个测试文件、15 个测试用例）
+- 近期已完成的关键拆分：
+  - `MapContainer` 拆分为 `useProjection`、`usePopupAnchor`、`useDeckBridge`、`useEvidenceLayer`
+  - `AiChat` 拆分出 `useAiStreamDispatcher`、`useSpatialRequestBuilder`
+
+## 高优先级问题
+
+1. `MainLayout.vue` 仍是超大单体
+- 现状：文件体量极大，承载地图编排、面板联动、导入流程与选区生命周期等多类职责。
+- 风险：局部变更容易触发跨功能回归，联调和回归成本高。
+- 建议：按领域继续拆分为选择域、AI 编排、导入流程、Narrative 入口四类子域，并把跨面板状态迁移到独立 store/service。
+
+2. `AiChat.vue` 职责依旧偏重
+- 现状：虽有 composable 拆分，但仍承担流式渲染、上下文构建、消息展示与交互动画。
+- 风险：可维护性与迭代速度受限。
+- 建议：继续下沉为 `useStreamRenderer`、`useMessageViewModel`、`useSnapshotCapture` 等可测试模块，组件保留“视图壳 + 调度”。
+
+3. 前端 Vendor 体积仍偏大
+- 现状：`vendor-element-plus`、`vendor-deckgl`、`vendor-narrative-three` 体积较大。
+- 风险：首屏解析压力与弱网场景体验受影响。
+- 建议：继续按路由与场景懒加载，收敛 Element Plus 全量引入，CI 增加 chunk 预算守门。
+
+## 中优先级问题
+
+4. SSE 事件契约虽已落地，但“未知事件”仍偏宽松
+- 现状：前后端已引入 schema 校验，但兼容路径较多。
+- 风险：字段漂移可能被兼容分支掩盖。
+- 建议：生产环境启用严格模式；关键事件统一携带 `schema_version` 并纳入监控。
+
+5. `schema_error` 缺少统一可视化诊断闭环
+- 现状：前端可接收警告但缺乏统一展示区。
+- 风险：联调时定位效率低。
+- 建议：在 AI 面板增加“数据契约告警”区，并接入遥测链路。
+
+6. 标签重排仍在前端主导
+- 现状：`src/utils/tagExtraction.js` 已实现二阶段排序与语义/地理权重。
+- 风险：多端结果一致性与复现性不足。
+- 建议：逐步后端化标签重排，前端保留 fallback；API 返回 `scoreBreakdown` 以增强可解释性。
+
+## 低优先级问题
+
+7. Pipeline 相关样式仍有重复与覆盖复杂
+- 建议：抽离为独立样式模块，降低后续样式回归概率。
+
+8. 缺少自动化体积守门
+- 建议：CI 增加入口路由与关键 vendor chunk 预算阈值，超限即失败。
+
+## 下一步建议
+
+1. 优先拆分 `MainLayout` 状态编排职责（先状态、后视图）。
+2. 继续下沉 `AiChat` 逻辑至 composable，并补充单测覆盖。
+3. 对 SSE schema 启用严格模式与版本化字段。
+4. 推进标签重排后端化，前端保留兜底。
+>>>>>>> 2152efd (优化前端性能，checkpoint v5)

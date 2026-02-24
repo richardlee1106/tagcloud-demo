@@ -36,7 +36,7 @@ const CACHE_CONFIG = {
   maxEntries: 500,
 
   // 内存硬上限（字节），超过时强制淘汰最旧条目
-  // 默认 128MB，可通过环境变量 QUERY_CACHE_MAX_MEMORY_MB 调整
+  // Ĭ 128MBͨ QUERY_CACHE_MAX_MEMORY_MB 
   maxMemoryBytes: (parseInt(process.env.QUERY_CACHE_MAX_MEMORY_MB || '128', 10)) * 1024 * 1024,
   
   // 空间指纹的 H3 分辨率（用于归一化空间坐标）
@@ -230,7 +230,7 @@ export function setToCache(fingerprint, data, queryType = 'default') {
 
 /**
  * 驱逐最旧的缓存条目
- * @param {number} count - 要驱逐的数量
+ * @param {number} count - Ҫ
  */
 function evictOldestEntries(count) {
   // 按创建时间排序

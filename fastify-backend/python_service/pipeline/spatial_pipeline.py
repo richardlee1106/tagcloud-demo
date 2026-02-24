@@ -2916,7 +2916,7 @@ class SpatialPipeline:
             },
         }
 
-        # 图推理不需要进入高开销的片区建模链路。
+        # ͼҪ߿Ƭģ·
         # 提前返回以保证大规模候选下图分析响应速度。
         if query_type == "graph_reasoning":
             final_results = {
@@ -3057,7 +3057,7 @@ class SpatialPipeline:
         ]
         # 在昂贵的下游建模前先输出一个快速预览边界。
         if len(coords) >= 3:
-            # 下采样以保持预览边界生成稳定且快速。
+            # ²ԱԤ߽ȶҿ١
             preview_coords = _sample_coordinates(coords, 3000)
             sketch_polygon = mapping(MultiPoint(preview_coords).convex_hull)
             yield {

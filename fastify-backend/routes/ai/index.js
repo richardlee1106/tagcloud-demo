@@ -19,13 +19,14 @@ import {
   toLegacySSEPayload
 } from '../../services/spatialJobRunner.js'
 import { parseIntent } from './planner.js'
+import { validateSSEEventPayload } from '../../../shared/sseEventSchema.js'
 
 // 会话内存缓存：保存本次请求的日志上下文与结果。
-// LRU 硬上限防止高并发场景下内存无限累积。
+// LRU Ӳ޷ֹ߲ڴۻ
 const ragSessions = new Map()
 const RAG_SESSION_MAX = parseInt(process.env.RAG_SESSION_MAX || '200', 10)
 
-// 定期回收过期会话，防止内存随运行时间累积。
+// ڻչڻỰֹڴʱۻ
 setInterval(() => {
   const now = Date.now()
   const maxAge = 30 * 60 * 1000
@@ -55,6 +56,22 @@ setInterval(() => {
  */
 function writeSSEEvent(reply, eventName, payload) {
   if (reply.raw.destroyed) return
+  const validation = validateSSEEventPayload(eventName, payload)
+  if (!validation.ok) {
+    console.warn('[AI Routes] SSE schema mismatch', {
+      event: eventName,
+      errors: validation.errors.slice(0, 5)
+    })
+    if (eventName !== 'schema_error') {
+      const schemaErrorPayload = {
+        event: String(eventName || 'unknown'),
+        errors: validation.errors
+      }
+      reply.raw.write('event: schema_error\n')
+      reply.raw.write(`data: ${JSON.stringify(schemaErrorPayload)}\n\n`)
+    }
+    return
+  }
   reply.raw.write(`event: ${eventName}\n`)
   reply.raw.write(`data: ${JSON.stringify(payload)}\n\n`)
 }
@@ -103,7 +120,7 @@ function applyResultToSession(session, legacyPayload) {
 /**
  */
 /**
- * 向旧前端发送兼容事件，确保 UI 无需改造。
+ * ǰ˷ͼ¼ȷ UI 졣
  */
 function emitLegacyEvents(reply, legacyPayload) {
   if (legacyPayload.pois?.length) {
@@ -498,7 +515,7 @@ async function aiRoutes(fastify) {
       return { success: true, query, total: 0, results: [] }
     }
 
-    // 单轮遍历：一次完成过滤+打分，避免 filter+sort 两轮重复拼接字符串
+    // ֱһɹ+֣ filter+sort ظƴַ
     const scored = []
     for (let i = 0; i < poiFeatures.length; i++) {
       const props = poiFeatures[i].properties || {}

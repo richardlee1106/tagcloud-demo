@@ -3,7 +3,13 @@
     <div ref="mapContainer" class="map-container"></div>
 
     <!-- POI 名称气泡 -->
-    <div ref="poiPopup" class="poi-popup" v-show="popupVisible">
+    <div
+      ref="poiPopup"
+      class="poi-popup"
+      :class="{ 'is-bottom': popupPlacement === 'bottom' }"
+      :style="popupStyle"
+      v-show="popupVisible"
+    >
       <div class="popup-content">
         <div class="popup-title">{{ popupName }}</div>
         <div
@@ -118,7 +124,7 @@
 
     <el-dialog
       v-model="weightDialogVisible"
-      title="请选择需要渲染的地理权重"
+      title="ѡҪȾĵȨ"
       width="360px"
       class="mirspatial-dialog"
       append-to-body
@@ -155,6 +161,7 @@
 
 <script setup>
 import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue';
+import { ElNotification } from 'element-plus';
 import OlMap from 'ol/Map';
 import View from 'ol/View';
 import TileLayer from 'ol/layer/Tile';
@@ -168,12 +175,18 @@ import Polygon from 'ol/geom/Polygon';
 import Overlay from 'ol/Overlay';
 import { fromLonLat, toLonLat } from 'ol/proj';
 import { Style, Fill, Stroke, Circle as CircleStyle, RegularShape, Text as TextStyle } from 'ol/style';
+<<<<<<< HEAD
 import { getCenter as getExtentCenter, isEmpty as isEmptyExtent } from 'ol/extent';
+=======
+>>>>>>> 2152efd (优化前端性能，checkpoint v5)
 
 
 import { useRegions, REGION_COLORS, MAX_REGIONS } from '../composables/useRegions';
-import { buildAiBoundaryMeta, buildBoundaryPopupLines, nicheLabel } from '../utils/aiBoundaryMeta';
-import { normalizeAiEvidencePayload, resolveFuzzyLayerBundle, resolveRegionBoundary } from '../utils/aiEvidencePayload';
+import { nicheLabel } from '../utils/aiBoundaryMeta';
+import { useProjection } from '../composables/map/useProjection';
+import { usePopupAnchor } from '../composables/map/usePopupAnchor';
+import { useDeckBridge } from '../composables/map/useDeckBridge';
+import { useEvidenceLayer } from '../composables/map/useEvidenceLayer';
 
 /**
  *
@@ -243,38 +256,35 @@ watch(() => props.showWeightValue, (val) => { showWeightValue.value = val; });
 
 // POI 相关说明
 const poiPopup = ref(null); // DOM 相关说明
+<<<<<<< HEAD
 const popupVisible = ref(false);
 const popupName = ref('');
 const popupDetailLines = ref([]);
 let popupAnchor = null;
 let popupHideTimer = null;
 let popupPositionRafId = null;
+=======
+>>>>>>> 2152efd (优化前端性能，checkpoint v5)
 
 
 const weightOptions = ref([
   { value: 'population', label: '人口密度' },
 ]);
 
-const aiBoundaryLegend = ref({
-  visible: false,
-  model: null,
-  avg: null,
-  min: null,
-  max: null,
-  buckets: { high: 0, medium: 0, low: 0 },
-  anchorModel: null,
-  semanticAnchorCoverage: null,
-  dominantNicheType: null,
-  avgWaterPenalty: null
-});
-
 const MAP_MIN_ZOOM = 4;
 const MAP_MAX_ZOOM = 18;
 const VECTOR_LAYER_RUNTIME_OPTIONS = {
+<<<<<<< HEAD
   updateWhileAnimating: false,
   updateWhileInteracting: false,
   renderBuffer: 140
+=======
+  updateWhileAnimating: true,
+  updateWhileInteracting: true,
+  renderBuffer: 192
+>>>>>>> 2152efd (优化前端性能，checkpoint v5)
 };
+const { toGcj02IfNeeded } = useProjection();
 
 // ============  ============
 const { 
@@ -430,40 +440,99 @@ const locateLayer = new VectorLayer({
   zIndex: 300
 });
 
-// 注释说明
-const aiEvidenceLayerSource = new VectorSource();
-const aiEvidenceLayer = new VectorLayer({
-  ...VECTOR_LAYER_RUNTIME_OPTIONS,
-  source: aiEvidenceLayerSource,
-  zIndex: 260
+const poiCoordSys = import.meta.env.VITE_POI_COORD_SYS || 'gcj02';
+const toMapLonLat = (lon, lat) => toGcj02IfNeeded(lon, lat, poiCoordSys);
+
+const {
+  popupVisible,
+  popupName,
+  popupDetailLines,
+  popupStyle,
+  popupPlacement,
+  schedulePopupPosition,
+  showPoiPopup,
+  showBoundaryPopup,
+  hidePopup: hidePoiPopup,
+  attachPopupViewListeners,
+  cleanupPopupAnchor
+} = usePopupAnchor({
+  mapRef: map,
+  mapContainerRef: mapContainer,
+  popupRef: poiPopup
 });
 
-// deck.gl 相关说明
-// deck.gl 相关说明
-// deck.gl 相关说明
+const {
+  aiEvidenceLayer,
+  aiEvidenceLayerSource,
+  aiBoundaryLegend,
+  formatLegendPercent,
+  clearAiEvidenceBoundaries: clearAiEvidenceBoundariesInternal,
+  showAnalysisBoundary: showAnalysisBoundaryInternal,
+  showAiSpatialEvidence: showAiSpatialEvidenceInternal,
+  setBoundaryInteractionMode,
+  findAiBoundaryAtCoordinate,
+  buildBoundaryPopupLines
+} = useEvidenceLayer({
+  mapRef: map,
+  locateLayerSource,
+  hidePopup: hidePoiPopup,
+  vectorLayerRuntimeOptions: VECTOR_LAYER_RUNTIME_OPTIONS,
+  toMapLonLat
+});
 
-let deckInstance = null; // deck.gl 相关说明
-let deckContainer = null; // deck.gl 相关说明
-const highlightData = ref([]); // deck.gl 相关说明
-const heatmapData = ref([]); // deck.gl 相关说明
-let DeckClass = null;
-let ScatterplotLayerClass = null;
-let DeckHeatmapLayerClass = null;
-let deckRuntimePromise = null;
+function clearAiEvidenceBoundaries() {
+  clearAiEvidenceBoundariesInternal();
+  hidePoiPopup();
+}
+
+function showAnalysisBoundary(boundary, options = {}) {
+  showAnalysisBoundaryInternal(boundary, options);
+  if (options?.clear !== false) {
+    hidePoiPopup();
+  }
+}
+
+function showAiSpatialEvidence(payload = {}, options = {}) {
+  showAiSpatialEvidenceInternal(payload, options);
+  if (options?.clear !== false) {
+    hidePoiPopup();
+  }
+}
+
 let html2canvasModulePromise = null;
+<<<<<<< HEAD
 let deckViewSyncAnimationId = null;
 let deckLayerRefreshAnimationId = null;
 let pointerMoveAnimationId = null;
 let pendingPointerEvent = null;
 
 // deck.gl 相关说明
+=======
+>>>>>>> 2152efd (优化前端性能，checkpoint v5)
 let currentLocatedPoi = null;
+const {
+  highlightData,
+  heatmapData,
+  ensureDeckInitialized,
+  markDeckLayersDirty,
+  scheduleDeckSync,
+  pickDeckObject,
+  clearDeckData,
+  destroyDeckBridge
+} = useDeckBridge({
+  mapRef: map,
+  mapContainerRef: mapContainer,
+  heatmapEnabledRef: heatmapEnabled,
+  getCurrentLocatedPoi: () => currentLocatedPoi,
+  onAfterSync: schedulePopupPosition
+});
 
 // OpenLayers 相关说明
 let olPoiFeatures = [];
 // OpenLayers 相关说明
 let rawToOlMap = new Map();
 
+<<<<<<< HEAD
 async function loadDeckRuntime() {
   if (DeckClass && ScatterplotLayerClass && DeckHeatmapLayerClass) {
     return true;
@@ -689,6 +758,8 @@ function scheduleDeckLayerRefresh() {
   });
 }
 
+=======
+>>>>>>> 2152efd (优化前端性能，checkpoint v5)
 onMounted(() => {
   // 注释说明
   const amapKey = import.meta.env.VITE_AMAP_KEY || '2b42a2f72ef6751f2cd7c7bd24139e72';
@@ -712,12 +783,17 @@ onMounted(() => {
   });
 
   // OpenLayers 相关说明
+  map.value.on('movestart', onMapMoveStart);
   map.value.on('moveend', onMapMoveEnd);
   map.value.on('pointermove', onPointerMove);
   map.value.on('singleclick', onMapClick);
+<<<<<<< HEAD
   map.value.getView().on('change:center', schedulePopupPositionSync);
   map.value.getView().on('change:resolution', schedulePopupPositionSync);
   map.value.getView().on('change:rotation', schedulePopupPositionSync);
+=======
+  attachPopupViewListeners(map.value.getView());
+>>>>>>> 2152efd (优化前端性能，checkpoint v5)
 
   // POI 相关说明
   rebuildPoiOlFeatures();
@@ -747,12 +823,14 @@ watch(() => props.hoveredFeatureId, (newVal) => {
  *
  */
 function onMapMoveEnd() {
+  setBoundaryInteractionMode(false);
   if (!map.value) return;
   const extent = map.value.getView().calculateExtent(map.value.getSize());
   const bl = toLonLat([extent[0], extent[1]]);
   const tr = toLonLat([extent[2], extent[3]]);
   // [   ]
   emit('map-move-end', [bl[0], bl[1], tr[0], tr[1]]);
+<<<<<<< HEAD
   schedulePopupPositionSync();
 }
 
@@ -794,8 +872,14 @@ function findAiBoundaryAtCoordinate(coordinate) {
   });
 
   return bestMatch;
+=======
+  schedulePopupPosition();
 }
 
+function onMapMoveStart() {
+  setBoundaryInteractionMode(true);
+>>>>>>> 2152efd (优化前端性能，checkpoint v5)
+}
 
 function debounce(func, wait) {
   let timeout;
@@ -872,6 +956,7 @@ function onMapClick(evt) {
   }
 
   // deck.gl 相关说明
+<<<<<<< HEAD
   if (!boundaryLabel && !foundRaw && deckInstance && pixel && Number.isFinite(pixel[0]) && Number.isFinite(pixel[1])) {
     try {
       const pickInfo = deckInstance.pickObject({
@@ -889,10 +974,17 @@ function onMapClick(evt) {
       }
     } catch (e) {
       // deck.gl 相关说明
+=======
+  if (!boundaryLabel && !foundRaw && pixel && Number.isFinite(pixel[0]) && Number.isFinite(pixel[1])) {
+    const picked = pickDeckObject(pixel, 10);
+    if (picked?.raw) {
+      foundRaw = picked.raw;
+>>>>>>> 2152efd (优化前端性能，checkpoint v5)
     }
   }
   
   if (boundaryLabel) {
+<<<<<<< HEAD
     const boundaryAnchor = normalizePopupAnchor(
       {
         coordinate: resolveFeatureAnchorCoordinate(boundaryFeature, evt.coordinate),
@@ -901,11 +993,19 @@ function onMapClick(evt) {
       evt.coordinate
     );
     showBoundaryPopup(boundaryLabel, boundaryAnchor, boundaryMeta);
+=======
+    showBoundaryPopup(
+      boundaryLabel,
+      evt.coordinate,
+      buildBoundaryPopupLines(boundaryMeta)
+    );
+>>>>>>> 2152efd (优化前端性能，checkpoint v5)
   } else if (foundRaw) {
     console.log('[MapContainer] 点击要素:', foundRaw);
     emit('click-feature', foundRaw);
 
     // POI 相关说明
+<<<<<<< HEAD
     const poiAnchor = normalizePopupAnchor(
       {
         coordinate: rawAnchorCoordinate,
@@ -914,12 +1014,16 @@ function onMapClick(evt) {
       evt.coordinate
     );
     showPoiPopup(foundRaw, poiAnchor);
+=======
+    showPoiPopup(foundRaw, evt.coordinate);
+>>>>>>> 2152efd (优化前端性能，checkpoint v5)
   } else {
 
     hidePoiPopup();
   }
 }
 
+<<<<<<< HEAD
 function toFinitePair(value) {
   if (!Array.isArray(value) || value.length < 2) return null;
   const x = Number(value[0]);
@@ -1107,6 +1211,8 @@ function hidePoiPopup() {
   popupDetailLines.value = [];
 }
 
+=======
+>>>>>>> 2152efd (优化前端性能，checkpoint v5)
 /**
  *
  * deck.gl 相关说明
@@ -1143,6 +1249,7 @@ function processPointerMove(evt) {
   });
   
   // deck.gl 相关说明
+<<<<<<< HEAD
   if (!hitRaw && deckInstance && pixel && Number.isFinite(pixel[0]) && Number.isFinite(pixel[1])) {
     try {
       const pickInfo = deckInstance.pickObject({
@@ -1155,6 +1262,12 @@ function processPointerMove(evt) {
       }
     } catch (e) {
       // deck.gl 相关说明
+=======
+  if (!hitRaw && pixel && Number.isFinite(pixel[0]) && Number.isFinite(pixel[1])) {
+    const picked = pickDeckObject(pixel, 8);
+    if (picked?.raw) {
+      hitRaw = picked.raw;
+>>>>>>> 2152efd (优化前端性能，checkpoint v5)
     }
   }
   
@@ -1168,6 +1281,7 @@ function processPointerMove(evt) {
 }
 
 onBeforeUnmount(() => {
+<<<<<<< HEAD
 
   if (deckViewSyncAnimationId !== null) {
     cancelAnimationFrame(deckViewSyncAnimationId);
@@ -1205,6 +1319,11 @@ onBeforeUnmount(() => {
     deckContainer.parentNode.removeChild(deckContainer);
     deckContainer = null;
   }
+=======
+  cleanupPopupAnchor();
+  setBoundaryInteractionMode(false);
+  destroyDeckBridge();
+>>>>>>> 2152efd (优化前端性能，checkpoint v5)
   
   // OpenLayers 相关说明
   if (map.value) map.value.setTarget(null);
@@ -1234,9 +1353,7 @@ function rebuildPoiOlFeatures() {
   for (const f of (props.poiFeatures || [])) {
     let [lon, lat] = f.geometry.coordinates;
     // 注释说明
-    if (poiCoordSys.toLowerCase() === 'wgs84') {
-      [lon, lat] = wgs84ToGcj02(lon, lat);
-    }
+    [lon, lat] = toGcj02IfNeeded(lon, lat, poiCoordSys);
     const feat = new Feature({
       geometry: new Point(fromLonLat([lon, lat])),
       __raw: f,
@@ -1291,11 +1408,8 @@ function flyTo(target, options = {}) {
   const lonLat = resolveFlyToLonLat(target);
   if (!lonLat) return;
 
-  const poiCoordSys = import.meta.env.VITE_POI_COORD_SYS || 'gcj02';
   let [lon, lat] = lonLat;
-  if (poiCoordSys.toLowerCase() === 'wgs84') {
-    [lon, lat] = wgs84ToGcj02(lon, lat);
-  }
+  [lon, lat] = toGcj02IfNeeded(lon, lat, poiCoordSys);
   const center = fromLonLat([lon, lat]);
 
   const isPoiFeature = Array.isArray(target?.geometry?.coordinates);
@@ -1304,7 +1418,12 @@ function flyTo(target, options = {}) {
   } else {
     currentLocatedPoi = null;
   }
+<<<<<<< HEAD
   scheduleDeckLayerRefresh();
+=======
+  markDeckLayersDirty();
+  scheduleDeckSync({ forceLayerRefresh: true });
+>>>>>>> 2152efd (优化前端性能，checkpoint v5)
 
   hoverLayerSource.clear();
   locateLayerSource.clear();
@@ -1343,13 +1462,11 @@ function openPolygonDraw(mode = 'Polygon') {
   
 
   if (!canAddRegion.value) {
-    import('element-plus').then(({ ElNotification }) => {
-      ElNotification({
-        title: '选区数量已达上限',
-        message: `最多只能绘制 ${MAX_REGIONS} 个选区，请先删除现有选区后再添加。`,
-        type: 'warning',
-        duration: 4000
-      });
+    ElNotification({
+      title: 'ѡѴ',
+      message: `ֻܻ ${MAX_REGIONS} ѡɾѡӡ`,
+      type: 'warning',
+      duration: 4000
     });
     return;
   }
@@ -1810,7 +1927,7 @@ function removeRegionFromMap(regionId) {
 
     emit('region-removed', { regionId, regionName: region.name });
     
-    console.log(`[Map] 选区 ${region.name} 已删除，当前剩余 ${regions.value.length} 个选区`);
+    console.log(`[Map] ѡ ${region.name} ɾǰʣ ${regions.value.length} ѡ`);
   }
 }
 
@@ -1818,6 +1935,7 @@ function removeRegionFromMap(regionId) {
  *
  */
 function clearHighlights() {
+<<<<<<< HEAD
   highlightData.value = [];
   heatmapData.value = [];
   if (deckInstance) {
@@ -2250,6 +2368,9 @@ function showAiSpatialEvidence(payload = {}, options = {}) {
   });
 
   fitToAiEvidenceIfNeeded(fitView);
+=======
+  clearDeckData();
+>>>>>>> 2152efd (优化前端性能，checkpoint v5)
 }
 
 /**
@@ -2261,21 +2382,19 @@ function showHighlights(features, options = {}) {
   // deck.gl 相关说明
   if (!features || !features.length) {
     clearHighlights();
+<<<<<<< HEAD
     if (deckInstance) {
       scheduleDeckLayerRefresh();
     }
+=======
+>>>>>>> 2152efd (优化前端性能，checkpoint v5)
     return;
   }
-  
-  const poiCoordSys = import.meta.env.VITE_POI_COORD_SYS || 'gcj02';
-  
+
   // deck.gl 相关说明
   const deckData = features.map(raw => {
     let [lon, lat] = raw.geometry.coordinates;
-
-    if (poiCoordSys.toLowerCase() === 'wgs84') {
-      [lon, lat] = wgs84ToGcj02(lon, lat);
-    }
+    [lon, lat] = toGcj02IfNeeded(lon, lat, poiCoordSys);
     return {
       lon,
       lat,
@@ -2289,8 +2408,13 @@ function showHighlights(features, options = {}) {
   heatmapData.value = deckData;
   ensureDeckInitialized().then((instance) => {
     if (!instance) return;
+<<<<<<< HEAD
     scheduleDeckLayerRefresh();
     scheduleDeckViewSync();
+=======
+    markDeckLayersDirty();
+    scheduleDeckSync({ forceLayerRefresh: true });
+>>>>>>> 2152efd (优化前端性能，checkpoint v5)
   });
   
 
@@ -2326,12 +2450,22 @@ watch(heatmapEnabled, (enabled) => {
   if (enabled) {
     ensureDeckInitialized().then((instance) => {
       if (!instance) return;
+<<<<<<< HEAD
       scheduleDeckLayerRefresh();
       scheduleDeckViewSync();
     });
     return;
   }
   scheduleDeckLayerRefresh();
+=======
+      markDeckLayersDirty();
+      scheduleDeckSync({ forceLayerRefresh: true });
+    });
+    return;
+  }
+  markDeckLayersDirty();
+  scheduleDeckSync({ forceLayerRefresh: true });
+>>>>>>> 2152efd (优化前端性能，checkpoint v5)
 });
 
 /**
@@ -2457,26 +2591,22 @@ function clearPolygon() {
  */
 function addUploadedPolygon(coordinates) {
   if (!Array.isArray(coordinates) || coordinates.length < 3) {
-    import('element-plus').then(({ ElNotification }) => {
-      ElNotification({
-        title: 'Upload failed',
-        message: 'Invalid polygon coordinates in uploaded file.',
-        type: 'error',
-        duration: 3500
-      });
+    ElNotification({
+      title: 'Upload failed',
+      message: 'Invalid polygon coordinates in uploaded file.',
+      type: 'error',
+      duration: 3500
     });
     return;
   }
 
   // 注释说明
   if (!canAddRegion.value) {
-    import('element-plus').then(({ ElNotification }) => {
-      ElNotification({
-        title: 'Region limit reached',
-        message: `Only ${MAX_REGIONS} regions are allowed. Remove one before uploading another.`,
-        type: 'warning',
-        duration: 4000
-      });
+    ElNotification({
+      title: 'Region limit reached',
+      message: `Only ${MAX_REGIONS} regions are allowed. Remove one before uploading another.`,
+      type: 'warning',
+      duration: 4000
     });
     return;
   }
@@ -2488,12 +2618,9 @@ function addUploadedPolygon(coordinates) {
     closedCoordinates.push(first);
   }
 
-  const poiCoordSys = import.meta.env.VITE_POI_COORD_SYS || 'gcj02';
   const olCoords = closedCoordinates.map(coord => {
     let [lon, lat] = coord;
-    if (poiCoordSys.toLowerCase() === 'wgs84') {
-      [lon, lat] = wgs84ToGcj02(lon, lat);
-    }
+    [lon, lat] = toGcj02IfNeeded(lon, lat, poiCoordSys);
     return fromLonLat([lon, lat]);
   });
 
@@ -2546,45 +2673,6 @@ defineExpose({
   },
   captureMapScreenshot
 });
-
-// 注释说明
-// ()
-
-function wgs84ToGcj02(lon, lat) {
-  if (outOfChina(lon, lat)) return [lon, lat];
-  const dlat = transformLat(lon - 105.0, lat - 35.0);
-  const dlon = transformLon(lon - 105.0, lat - 35.0);
-  const radlat = lat / 180.0 * Math.PI;
-  let magic = Math.sin(radlat);
-  magic = 1 - ee * magic * magic;
-  const sqrtMagic = Math.sqrt(magic);
-  const dLat = (dlat * 180.0) / ((a * (1 - ee)) / (magic * sqrtMagic) * Math.PI);
-  const dLon = (dlon * 180.0) / (a / sqrtMagic * Math.cos(radlat) * Math.PI);
-  const mgLat = lat + dLat;
-  const mgLon = lon + dLon;
-  return [mgLon, mgLat];
-}
-
-const a = 6378245.0;
-const ee = 0.00669342162296594323;
-function outOfChina(lon, lat) {
-  return (lon < 72.004 || lon > 137.8347) || (lat < 0.8293 || lat > 55.8271);
-}
-function transformLat(x, y) {
-  let ret = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * Math.sqrt(Math.abs(x));
-  ret += (20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0 / 3.0;
-  ret += (20.0 * Math.sin(y * Math.PI) + 40.0 * Math.sin(y / 3.0 * Math.PI)) * 2.0 / 3.0;
-  ret += (160.0 * Math.sin(y / 12.0 * Math.PI) + 320.0 * Math.sin(y * Math.PI / 30.0)) * 2.0 / 3.0;
-  return ret;
-}
-function transformLon(x, y) {
-  let ret = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * Math.sqrt(Math.abs(x));
-  ret += (20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0 / 3.0;
-  ret += (20.0 * Math.sin(x * Math.PI) + 40.0 * Math.sin(x / 3.0 * Math.PI)) * 2.0 / 3.0;
-  ret += (150.0 * Math.sin(x / 12.0 * Math.PI) + 300.0 * Math.sin(x / 30.0 * Math.PI)) * 2.0 / 3.0;
-  ret += (150.0 * Math.sin(x / 12.0 * Math.PI) + 300.0 * Math.sin(x / 30.0 * Math.PI)) * 2.0 / 3.0;
-  return ret;
-}
 
 /**
  * 捕获当前地图和叠加层的截图
@@ -2800,19 +2888,17 @@ async function captureMapScreenshot() {
 /* POI 相关说明 */
 .poi-popup {
   position: absolute;
-  background: rgba(15, 23, 42, 0.9);
   color: #fff;
-  padding: 8px 12px;
-  border-radius: 8px;
-  font-size: 13px;
-  font-weight: 600;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6);
+  display: block;
   pointer-events: none;
+<<<<<<< HEAD
   border: 1px solid rgba(99, 102, 241, 0.5);
   transform: translate(-50%, -100%);
   margin-top: 0;
+=======
+>>>>>>> 2152efd (优化前端性能，checkpoint v5)
   z-index: 2000;
-  backdrop-filter: blur(4px);
+  will-change: left, top;
 }
 
 .poi-popup.flip-vertical {
@@ -2850,12 +2936,22 @@ async function captureMapScreenshot() {
 }
 
 .popup-arrow {
+  position: absolute;
+  left: var(--popup-arrow-left, 50%);
+  bottom: -8px;
+  transform: translateX(-50%);
   width: 0;
   height: 0;
   border-left: 8px solid transparent;
   border-right: 8px solid transparent;
   border-top: 8px solid #16213e;
-  margin: 0 auto;
+}
+
+.poi-popup.is-bottom .popup-arrow {
+  top: -8px;
+  bottom: auto;
+  border-top: none;
+  border-bottom: 8px solid #16213e;
 }
 
 .poi-popup.flip-vertical .popup-arrow {

@@ -40,7 +40,7 @@ def _grid_steps(distance_threshold_m: float, lat_ref: float) -> Tuple[float, flo
     """按阈值距离估算经纬度网格步长。"""
     meters_per_degree_lat = 111_320.0
     cos_lat = abs(math.cos(math.radians(lat_ref)))
-    # 在高纬度地区设置经度缩放下限，避免步长异常放大
+    # ڸγȵþޣⲽ쳣Ŵ
     meters_per_degree_lon = meters_per_degree_lat * max(0.2, cos_lat)
 
     lat_step = max(distance_threshold_m / meters_per_degree_lat, 1e-6)
@@ -63,7 +63,7 @@ def analyze_spatial_graph(
 
     过程：
     - 先进行节点清洗与数量上限控制；
-    - 再用网格分桶缩小候选邻居集合；
+    - ͰСѡھӼϣ
     - 最后用 haversine 精确距离判断是否连边。
     """
     if distance_threshold_m <= 0:
@@ -133,7 +133,7 @@ def analyze_spatial_graph(
         (1, 1),
     )
 
-    # 仅遍历本格与 8 邻格候选点，复杂度近似 O(n * k)，k 为局部密度
+    #  8 ڸѡ㣬ӶȽ O(n * k)k Ϊֲܶ
     for i in range(node_count):
         lon_i = lons[i]
         lat_i = lats[i]

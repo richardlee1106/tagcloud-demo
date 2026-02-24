@@ -19,10 +19,10 @@ const WRITER_SYSTEM_PROMPT = `你是 GeoLoom 地理助手，帮用户看懂地�
 ## 语气要求
 - 像一个熟悉本地的朋友在聊天，不要像写论文
 - 用"这一带"、"周边"、"沿着…走"这样的口语化表达
-- 重点说用户关心的：哪里好吃、哪里热闹、哪里方便、哪里值得去
+- ص˵ûĵģóԡ֡﷽㡢ֵȥ
 - 避免出现"聚类"、"密度梯度"、"功能分区"、"置信度"等学术术语
 - 如果数据中有知名地标（大学、公园、商圈、地铁站），优先提及，这些是用户的参照物
-- 不要罗列楼栋号、五金店、停车场出口等琐碎 POI，除非用户明确在找
+- Ҫ¥šꡢͣڵ POIûȷ
 
 ## 硬性规则
 - 只基于证据回答，不编造 POI、数字或地名
@@ -44,7 +44,7 @@ const WRITER_SYSTEM_PROMPT = `你是 GeoLoom 地理助手，帮用户看懂地�
 const DEFAULT_WRITER_CONTEXT_LIMIT = 9000
 const DEFAULT_WRITER_OUTPUT_LIMIT = 2200
 
-// 将环境变量/入参安全转成正整数，防止预算参数异常。
+// /ΰȫתֹԤ쳣
 function toPositiveInt(value, fallback) {
   const num = Number(value)
   if (!Number.isFinite(num) || num <= 0) return fallback
@@ -109,7 +109,7 @@ function resolveWriterProfile(executorResult, options = {}) {
   }
 }
 
-// 只在疑似幻觉占比较高时追加纠偏，避免正常回答被频繁打断。
+// ֻƻþռȽϸʱ׷ӾƫشƵϡ
 function shouldAppendCorrection(report) {
   if (!report?.hasHallucination) return false
   const totalMentions = report.totalMentions || 0
@@ -119,7 +119,7 @@ function shouldAppendCorrection(report) {
   return report.hallucinations.length >= 2 && ratio >= 0.35
 }
 
-// 高风险时输出可核验摘要，确保回答最终可落地。
+// ߷ʱɺժҪȷشտء
 function buildConservativeCorrection(executorResult, report) {
   const results = executorResult?.results || {}
   const topPois = Array.isArray(results.pois) ? results.pois.slice(0, 5) : []
@@ -128,7 +128,7 @@ function buildConservativeCorrection(executorResult, report) {
   const lines = [
     '',
     '---',
-    '⚠️ **一致性校验提醒**：上文存在疑似未命中证据的地点表述，以下为可核验摘要。'
+    '7215 **һУ**Ĵδ֤ݵĵصΪɺժҪ'
   ]
 
   if (topPois.length > 0) {
@@ -201,8 +201,8 @@ function buildResultContext(executorResult, options = {}) {
   
   // 0. 执行错误/异常提示
   if (results.execution_failure || results.error_message) {
-    sections.push(`⚠️ **查询执行遇到问题**: ${results.error_message || '无法获取位置信息'}`)
-    // 如果是严重错误，可能不需要展示其他空数据，但为了上下文完整，我们继续
+    sections.push(`7215 **ѯִ**: ${results.error_message || '޷ȡλϢ'}`)
+    // ش󣬿ܲҪչʾݣΪǼ
   }
   
   // 1. 锚点信息
@@ -753,7 +753,7 @@ export function buildQuickReply(executorResult) {
   const { results } = executorResult
   
   if (!results) {
-    return '抱歉，查询过程中出现问题，请稍后重试。'
+    return 'Ǹѯг⣬Ժԡ'
   }
   
   if (results.error) {
@@ -944,7 +944,7 @@ export function detectHallucinations(writerOutput, executorResult) {
     } else {
       // 可能是幻觉，但也可能是通用描述词
       // 排除一些常见的非 POI 词
-      const commonWords = ['附近', '区域', '中心', '广场', '商业', '餐饮', '交通']
+      const commonWords = ['', '', '', '㳡', 'ҵ', '', 'ͨ']
       if (!commonWords.some(w => mentionLower.includes(w))) {
         result.hallucinations.push(mention)
       }

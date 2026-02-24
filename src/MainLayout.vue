@@ -1,6 +1,6 @@
 <template>
   <div id="app" class="app-layout">
-    <!-- 桌面端顶部栏 -->
+    <!-- ˶ -->
     <header class="fixed-top-header desktop-only-flex">
       <!-- 品牌 Logo 区 -->
       <div class="header-logo">
@@ -64,7 +64,7 @@
       <!-- 物理中线分隔符 -->
       <div class="layout-divider-center"></div>
 
-      <!-- 锚点2：空间指挥 (右对齐至屏幕最右边缘) -->
+      <!-- ê2ռָ (ҶĻұԵ) -->
       <div class="layout-anchor-screen-right">
         <ControlPanel ref="controlPanelRefTag"
                       panel-type="tag"
@@ -156,7 +156,7 @@
         <!-- 移动端 AI 面板遮罩层（点击收起） -->
         <div v-if="aiExpanded" class="mobile-ai-mask mobile-only-block" @click="aiExpanded = false"></div>
 
-        <!-- 标签云面板 (移动端隐藏，AI 展开时隐藏) -->
+        <!-- ǩ (ƶأAI չʱ) -->
         <div class="tag-panel" 
              :style="tagPanelStyle" 
              :class="{ 
@@ -654,7 +654,7 @@ function resolveConstraintBounds(constraints, options = {}) {
 }
 
 function constraintToGeometryWKT(constraint, forBackend = false) {
-  // 将统一约束对象转换为可发送给后端的 WKT，确保多形态选区可复用同一条查询链路。
+  // ͳһԼתΪɷ͸˵ WKTȷ̬ѡɸͬһѯ·
   if (!constraint || typeof constraint !== 'object') {
     return null;
   }
@@ -696,7 +696,7 @@ function hasManualSpatialSelection() {
 }
 
 function syncLegacySpatialStateFromConstraints() {
-  // 兼容旧组件接口：当且仅当存在单个选区时回写到 legacy 字段，多个选区时清空单选区态。
+  // ݾӿڣҽڵѡʱд legacy ֶΣѡʱյѡ̬
   const constraints = resolveRegionConstraints();
 
   if (constraints.length !== 1) {
@@ -1046,7 +1046,7 @@ function filterFeaturesClientSide(features, categoryLeaves) {
     return Array.isArray(features) ? features : [];
   }
 
-  // 预提取 bounds 值避免循环体内重复索引
+  // Ԥȡ bounds ֵѭظ
   const [bMinLon, bMinLat, bMaxLon, bMaxLat] = bounds || [0, 0, 0, 0];
 
   return (Array.isArray(features) ? features : []).filter((feature) => {
@@ -1119,8 +1119,8 @@ async function refreshManualSelectionSource(options = {}) {
   const hasCategoryFilter = categoryLeaves.length > 0;
   const hasCustomArea = hasManualSpatialSelection();
 
-  // 业务约束：未选择“选区”且未选择“类别”时，手动筛选池必须保持空，
-  // 避免页面初始化时自动拉取整个视窗（例如 20000 条）导致计数与用户意图不一致。
+  // ҵԼδѡѡδѡʱֶɸѡر뱣ֿգ
+  // ҳʼʱԶȡӴ 20000 ¼ûͼһ¡
   if (!hasCustomArea && !hasCategoryFilter && !allowViewportFallback) {
     return applySelectionResults([], {
       updateTagCloud,
@@ -1180,9 +1180,9 @@ const globalAnalysisEnabled = ref(false);
 
 /**
  * 节流函数工具
- * 用于限制高频事件（如地图移动）的触发频率
+ * ƸƵ¼ͼƶĴƵ
  * @param {Function} func - 需要节流的函数
- * @param {number} limit - 时间间隔（毫秒）
+ * @param {number} limit - ʱ룩
  */
 function throttle(func, limit) {
   let inThrottle;
@@ -1206,7 +1206,7 @@ const filteredTagData = computed(() => {
   if (!filterEnabled.value || !mapBounds.value) {
     return tagData.value;
   }
-  // 预提取视野边界，避免循环体内重复索引
+  // ԤȡҰ߽磬ѭظ
   const [minLon, minLat, maxLon, maxLat] = mapBounds.value;
   return tagData.value.filter(f => {
     const coords = f.geometry.coordinates;
@@ -1228,7 +1228,7 @@ const mapPoiFeatures = computed(() => {
 watch(
   () => regions.value.map(region => `${region.id}:${region.type}:${region.boundaryWKT || ''}`).join('|'),
   () => {
-    // 多选区模式下维护单选区遗留状态，避免 boundary/圆形上下文与实际选区不一致。
+    // ѡģʽάѡ״̬ boundary/Բʵѡһ¡
     syncLegacySpatialStateFromConstraints();
   },
   { immediate: true }
@@ -1922,7 +1922,7 @@ const handleToggleDraw = (payload) => {
  */
 const handleToggleFilter = (enabled) => {
   filterEnabled.value = enabled;
-  console.log('[App] 实时过滤状态:', enabled ? '开启' : '关闭');
+  console.log('[App] ʵʱ״̬:', enabled ? '' : 'ر');
   if (!enabled) {
     // 关闭时重置或保持当前状态
   } else {
@@ -1939,7 +1939,7 @@ const handleToggleFilter = (enabled) => {
  */
 const handleGlobalAnalysisChange = (enabled) => {
   globalAnalysisEnabled.value = enabled;
-  console.log('[App] 全域感知模式:', enabled ? '开启' : '关闭');
+  console.log('[App] ȫ֪ģʽ:', enabled ? '' : 'ر');
 };
 
 /**
@@ -2038,7 +2038,7 @@ const handlePolygonCompleted = async (payload) => {
     controlPanelRefMobile.value.setDrawEnabled(false);
   }
 
-  // 使用统一约束重新拉取 POI，保证“选区 + 类别”按交集生效。
+  // ʹͳһԼȡ POI֤ѡ + 𡱰Ч
   const refreshed = await refreshManualSelectionSource({
     updateTagCloud: false,
     fitView: false,
@@ -2063,7 +2063,7 @@ const handlePolygonCompleted = async (payload) => {
 };
 
 const handleRegionRemoved = async () => {
-  // 删除任一选区后立刻重算并集约束，保持地图点位、词云来源和 AI 计数一致。
+  // ɾһѡ㲢ԼֵͼλԴ AI һ¡
   polygonCenter.value = null;
   syncLegacySpatialStateFromConstraints();
 
@@ -2076,7 +2076,7 @@ const handleRegionRemoved = async () => {
 };
 
 const handleRegionsCleared = async () => {
-  // 清空选区后回退到默认策略（视野 + 类别约束），不保留陈旧的边界状态。
+  // ѡ˵ĬϲԣҰ + Լ¾ɵı߽״̬
   polygonCenter.value = null;
   syncLegacySpatialStateFromConstraints();
 
@@ -2138,7 +2138,7 @@ function handleVectorPolygonUploaded(feature) {
   
   // 调用 MapContainer 来渲染多边形并触发筛选
   // 注意：MapContainer 内部现在会自动触发 onPolygonComplete，从而发射 polygon-completed 事件
-  // 所以这里不需要再手动计算筛选结果
+  // ﲻҪֶɸѡ
   if (mapComponent.value && mapComponent.value.addUploadedPolygon) {
     mapComponent.value.addUploadedPolygon(coordinates);
     // 移除重复提示
@@ -2162,7 +2162,7 @@ function handleRenderAIResult(data) {
     featuresToRender = data;
     console.log('[App] 渲染外部 POI 数据:', featuresToRender.length);
   } 
-  // 情况2: 传递的是名称数组 (遗留逻辑)
+  // 2: ݵ (߼)
   else if (typeof data[0] === 'string') {
     const nameSet = new Set(data);
     featuresToRender = allPoiFeatures.value.filter(p => 
@@ -2187,7 +2187,7 @@ function handleRenderAIResult(data) {
 
   // 联动地图高亮
   if (mapComponent.value) {
-    // 如果是外部数据，可能需要在地图上额外绘制
+    // ⲿݣҪڵͼ϶
     mapComponent.value.showHighlights(featuresToRender, { 
       fitView: true,
       clearPrevious: true 
@@ -2205,7 +2205,7 @@ function handleRenderAIResult(data) {
  */
 
 function handleReset() {
-  // 取消可能正在进行的筛选请求，避免重置后旧结果回写。
+  // ȡڽеɸѡ󣬱úɽд
   manualFilterRequestToken++;
 
   // 清空词云与 AI 分析数据源。
@@ -2234,7 +2234,7 @@ function handleReset() {
     mapComponent.value.closePolygonDraw();
   }
 
-  // 重置控制面板按钮态。
+  // ÿ尴ť̬
   if (controlPanelRefTag.value) {
     controlPanelRefTag.value.setDrawEnabled(false);
     controlPanelRefTag.value.setSearchResult(false);
@@ -2311,7 +2311,7 @@ html, body, #app {
 }
 
 .header-logo {
-  position: absolute; /* 固定在左侧，不参与 flex 分配以防重叠 */
+  position: absolute; /* ̶࣬ flex Էص */
   left: 40px;
   display: flex;
   align-items: center;
@@ -2322,7 +2322,7 @@ html, body, #app {
 /* --- 全新绝对定位布局系统 --- */
 
 /* 锚点1：数据发现组 */
-/* 核心逻辑：Right 对齐到 50% (屏幕中线)，内容从右向左生长 */
+/* ߼Right 뵽 50% (Ļ)ݴ */
 .layout-anchor-center-left {
   position: absolute;
   top: 0;
@@ -2332,13 +2332,13 @@ html, body, #app {
   align-items: center;
   padding-right: 24px; /* 距离中线分隔符的间距 */
   
-  /* 关键：限制向左生长的最大宽度，防止撞击 Logo (240px + some buffer) */
+  /* ؼȣֹײ Logo (240px + some buffer) */
   max-width: calc(50vw - 260px); 
   white-space: nowrap; /* 防止内容换行 */
 }
 
 /* 锚点2：空间指挥组 */
-/* 核心逻辑：Right 对齐到 0 (屏幕边缘)，内容从右向左生长 */
+/* ߼Right 뵽 0 (ĻԵ)ݴ */
 .layout-anchor-screen-right {
   position: absolute;
   top: 0;
@@ -2768,7 +2768,7 @@ html, body, #app {
     z-index: 1;
   }
   
-  /* 移动端标签云：功能逻辑保留，UI 层面暂时隐藏 */
+  /* ƶ˱ǩƣ߼UI ʱ */
   .tag-panel.mobile-hidden {
     display: none !important;
   }
@@ -2844,7 +2844,7 @@ html, body, #app {
 
 </style>
 
-<!-- 全局非隔离样式，强制覆盖 Element Plus 默认外观 -->
+<!-- ȫַǸʽǿƸ Element Plus Ĭ -->
 <style>
 /* 终极弹窗美化：科技极简，大道至简 */
 body .el-overlay .el-dialog.mirspatial-dialog {

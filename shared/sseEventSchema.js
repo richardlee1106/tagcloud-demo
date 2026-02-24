@@ -1,0 +1,205 @@
+export const SSE_EVENT_SCHEMAS = Object.freeze({
+  job: {
+    type: 'object',
+    required: ['mode'],
+    properties: {
+      mode: { type: 'string' }
+    },
+    additionalProperties: true
+  },
+  stage: {
+    type: 'object',
+    required: ['name'],
+    properties: {
+      name: { type: 'string' }
+    },
+    additionalProperties: true
+  },
+  progress: {
+    type: 'object',
+    required: ['progress'],
+    properties: {
+      progress: { type: 'number' }
+    },
+    additionalProperties: true
+  },
+  partial: {
+    type: 'object',
+    properties: {
+      text_chunk: { type: 'string' }
+    },
+    additionalProperties: true
+  },
+  pois: {
+    type: 'array',
+    items: { type: 'object' }
+  },
+  boundary: {
+    anyOf: [
+      { type: 'object' },
+      { type: 'array' },
+      { type: 'string' },
+      { type: 'null' }
+    ]
+  },
+  spatial_clusters: {
+    type: 'object',
+    properties: {
+      hotspots: { type: 'array', items: { type: 'object' } }
+    },
+    additionalProperties: true
+  },
+  vernacular_regions: {
+    type: 'array',
+    items: { type: 'object' }
+  },
+  fuzzy_regions: {
+    type: 'array',
+    items: { type: 'object' }
+  },
+  stats: {
+    type: 'object',
+    additionalProperties: true
+  },
+  refined_result: {
+    type: 'object',
+    additionalProperties: true
+  },
+  error: {
+    type: 'object',
+    required: ['message'],
+    properties: {
+      message: { type: 'string' }
+    },
+    additionalProperties: true
+  },
+  schema_error: {
+    type: 'object',
+    required: ['event', 'errors'],
+    properties: {
+      event: { type: 'string' },
+      errors: {
+        type: 'array',
+        items: { type: 'string' }
+      }
+    },
+    additionalProperties: true
+  }
+})
+
+function isObjectLike(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function matchesType(value, typeName) {
+  switch (typeName) {
+    case 'array':
+      return Array.isArray(value)
+    case 'object':
+      return isObjectLike(value)
+    case 'null':
+      return value === null
+    case 'number':
+      return Number.isFinite(value)
+    case 'string':
+      return typeof value === 'string'
+    case 'boolean':
+      return typeof value === 'boolean'
+    default:
+      return false
+  }
+}
+
+function validateSchema(value, schema, path, errors) {
+  if (!schema || typeof schema !== 'object') return
+
+  if (Array.isArray(schema.anyOf) && schema.anyOf.length > 0) {
+    const anyOfErrors = []
+    const matched = schema.anyOf.some((child) => {
+      const childErrors = []
+      validateSchema(value, child, path, childErrors)
+      if (childErrors.length === 0) return true
+      anyOfErrors.push(...childErrors)
+      return false
+    })
+    if (!matched) {
+      errors.push(`${path}: does not satisfy anyOf`)
+      errors.push(...anyOfErrors.slice(0, 3))
+    }
+    return
+  }
+
+  if (schema.type) {
+    const expectedTypes = Array.isArray(schema.type) ? schema.type : [schema.type]
+    const typeMatched = expectedTypes.some((typeName) => matchesType(value, typeName))
+    if (!typeMatched) {
+      errors.push(`${path}: expected type ${expectedTypes.join('|')}`)
+      return
+    }
+  }
+
+  if (schema.enum && Array.isArray(schema.enum) && !schema.enum.includes(value)) {
+    errors.push(`${path}: value is not in enum`)
+    return
+  }
+
+  if (schema.type === 'array' || (Array.isArray(schema.type) && schema.type.includes('array'))) {
+    if (schema.minItems && value.length < schema.minItems) {
+      errors.push(`${path}: expected at least ${schema.minItems} items`)
+    }
+    if (schema.items) {
+      value.forEach((item, index) => {
+        validateSchema(item, schema.items, `${path}[${index}]`, errors)
+      })
+    }
+  }
+
+  if (schema.type === 'object' || (Array.isArray(schema.type) && schema.type.includes('object'))) {
+    const obj = value
+    const properties = schema.properties || {}
+    const required = Array.isArray(schema.required) ? schema.required : []
+    required.forEach((key) => {
+      if (!(key in obj)) {
+        errors.push(`${path}.${key}: required`)
+      }
+    })
+    Object.keys(properties).forEach((key) => {
+      if (key in obj) {
+        validateSchema(obj[key], properties[key], `${path}.${key}`, errors)
+      }
+    })
+    if (schema.additionalProperties === false) {
+      Object.keys(obj).forEach((key) => {
+        if (!(key in properties)) {
+          errors.push(`${path}.${key}: additional property not allowed`)
+        }
+      })
+    }
+  }
+}
+
+export function normalizeSSEEventName(eventName) {
+  return String(eventName || '').trim()
+}
+
+export function validateSSEEventPayload(eventName, payload) {
+  const normalizedEventName = normalizeSSEEventName(eventName)
+  const schema = SSE_EVENT_SCHEMAS[normalizedEventName]
+  if (!schema) {
+    return {
+      ok: true,
+      event: normalizedEventName,
+      errors: [],
+      skipped: true
+    }
+  }
+
+  const errors = []
+  validateSchema(payload, schema, '$', errors)
+
+  return {
+    ok: errors.length === 0,
+    event: normalizedEventName,
+    errors
+  }
+}

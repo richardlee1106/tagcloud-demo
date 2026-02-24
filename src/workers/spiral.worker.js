@@ -82,7 +82,7 @@ function runSpiralLayout(tags, width, height, configOverrides) {
         };
     });
 
-    // 按权重降序排序（如果有权重），否则按字体大小排序
+    // ȨؽȨأС
     if (hasWeights) {
         processedTags.sort((a, b) => (b.weight || 0) - (a.weight || 0));
         console.log('[Worker Spiral] 已按权重排序, 前3个:', processedTags.slice(0, 3).map(t => `${t.name}(${(t.weight || 0).toFixed(1)})`).join(', '));
@@ -124,15 +124,15 @@ function runSpiralLayout(tags, width, height, configOverrides) {
 }
 
 // 寻找最佳位置的核心函数
-// 采用多阶段搜索策略，逐步减小间距以尝试放置标签，从而实现紧凑布局
+// ö׶ԣ𲽼СԳԷñǩӶʵֽղ
 
 function findBestPosition(tag, placedTags, centerX, centerY, canvasWidth, canvasHeight, config) {
     const originalMinGap = config.minGap;
     const maxAttempts = 100000;
     const maxRadius = Math.sqrt(canvasWidth * canvasWidth + canvasHeight * canvasHeight) * 5;
 
-    // 定义搜索阶段：逐步减小 minGap（最小间距）
-    // 如果在当前间距下无法放置，则尝试更小的间距，直到达到最小阈值
+    // ׶Σ𲽼С minGapСࣩ
+    // ڵǰ޷ãԸСļֱ࣬ﵽСֵ
     // 这种策略允许在布局外围或拥挤区域以更紧密的间距放置标签
     const searchPhases = [
         { factor: 1.0, maxAttempts: maxAttempts }, // 阶段 1：标准间距

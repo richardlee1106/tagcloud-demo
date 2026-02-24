@@ -47,8 +47,8 @@ fastify.get('/health', async () => {
 })
 
 /**
- * 优雅关闭：保证进程退出前尽量释放外部连接。
- * 注意：这里按依赖方向逆序关闭，减少“已关闭资源仍被调用”的概率。
+ * Źرգ֤˳ǰͷⲿӡ
+ * ע⣺ﰴرգ١ѹرԴԱáĸʡ
  */
 const gracefulShutdown = async (signal) => {
   console.log(`\nReceived ${signal}, shutting down...`)

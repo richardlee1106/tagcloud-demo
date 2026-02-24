@@ -253,16 +253,16 @@ class BlockAssemblerV5Test(unittest.TestCase):
                     "lon": 114.3203 + (idx % 4) * 0.0005,
                     "lat": 30.5603 + (idx // 4) * 0.0005,
                     "block_id": 3,
-                    "aoi_name": "婕椂鍖哄晢鍔″尯",
-                    "aoi_type": "鍟嗗姟鍖?",
-                    "land_type": "鍟嗕笟鏈嶅姟鐢ㄥ湴",
+                    "aoi_name": "漫时区商务区",
+                    "aoi_type": "商务?",
+                    "land_type": "商业服务用地",
                 }
             )
         for idx in range(2):
             pois.append(
                 {
                     "id": idx + 101,
-                    "name": f"婀栧寳澶у{idx + 1}鍙锋ゼ",
+                    "name": f"湖北大学{idx + 1}号楼",
                     "lon": 114.3216 + idx * 0.0002,
                     "lat": 30.5616 + idx * 0.0002,
                     "block_id": 3,

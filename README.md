@@ -2,7 +2,7 @@
 
 ## 1. 系统概览
 
-当前后端架构为 **Node 网关 + Python 空间计算**，目标是保证“空间约束 + 语义检索 + 方向问答”的最小闭环可用。
+ǰ˼ܹΪ **Node  + Python ռ**ĿǱ֤ռԼ +  + ʴ𡱵Сջá
 
 主要组成：
 
@@ -26,7 +26,7 @@ npm run dev:stack
 - 有 Redis 配置：启动独立 worker + backend
 - 无 Redis 配置：跳过独立 worker，backend 内联 worker
 
-这个策略用于避免 memory 队列的跨进程失效（入队后无人消费）。
+ڱ memory еĿʧЧӺѣ
 
 ### 2.2 前端启动
 
@@ -92,10 +92,10 @@ npm run drill:fallback -- --out=reports/rollout/fallback-drill-latest.json
 脚本用途：
 
 - `check:dualrun`：同一请求分别走 Python 主路径与 Node 回退路径，验证结构一致性与结果稳定性。
-- `drill:fallback`：强制开启 Node 回退，验证故障情况下的可恢复能力。
+- `drill:fallback`ǿƿ Node ˣ֤µĿɻָ
 
 ### 6.3 灰度建议
 
 - 发布前按顺序执行：`smoke:jobs` → `check:dualrun` → `drill:fallback`。
 - 灰度观察期可定时轮询 `/api/jobs/health`。
-- 若告警持续升高，可临时设置 `SPATIAL_FORCE_NODE_FALLBACK=true` 快速降级。
+- 澯ߣʱ `SPATIAL_FORCE_NODE_FALLBACK=true` ٽ

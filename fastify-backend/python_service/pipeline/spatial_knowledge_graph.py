@@ -27,7 +27,7 @@ def _normalize_text(value: Any) -> str:
 
 _NICHE_CATEGORY_KEYWORDS: Dict[str, Tuple[str, ...]] = {
     "ecology": ("生态", "公园", "绿地", "湿地", "景区", "water", "lake", "river"),
-    "commerce": ("商业", "餐饮", "零售", "购物", "商场", "综合体", "mall", "retail"),
+    "commerce": ("ҵ", "", "", "", "̳", "ۺ", "mall", "retail"),
     "education": ("教育", "高校", "大学", "学院", "校园", "school", "university", "campus"),
 }
 

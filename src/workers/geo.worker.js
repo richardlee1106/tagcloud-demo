@@ -4,7 +4,7 @@
  * 核心原则：
  * 1. 方位保持：标签必须保持在相对于中心的正确象限（东南西北）
  * 2. 距离保持：标签距离中心的远近应反映地理距离
- * 3. 碰撞避免：标签之间不重叠，但碰撞处理不能破坏象限约束
+ * 3. ײ⣺ǩ֮䲻صײƻԼ
  * 4. 不依赖地图视图：完全基于经纬度计算，不受拖拽/缩放影响
  */
 
@@ -39,7 +39,7 @@ function runGeoLayout(tags, width, height, center, config) {
     // ============ 配置 ============
     const fontMin = config?.fontMin || 14;
     const fontMax = config?.fontMax || 18;
-    const minGap = 2; // 标签之间的最小间隙
+    const minGap = 2; // ǩ֮С϶
 
     // ============ 画布和测量 ============
     const canvas = new OffscreenCanvas(width, height);
@@ -165,7 +165,7 @@ function runGeoLayout(tags, width, height, center, config) {
     });
 
     // ============ 按权重或距离排序 ============
-    // 如果有权重，按权重降序排序（高权重优先靠近中心）
+    // ȨأȨؽ򣨸Ȩȿģ
     // 否则按地理距离升序排序（近的先放）
     const hasWeights = processedTags.some(t => t.weight !== undefined && t.weight !== null && t.weight > 0);
     

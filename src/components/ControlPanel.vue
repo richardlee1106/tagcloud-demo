@@ -210,7 +210,7 @@
           />
         </div>
 
-        <!-- 筛选叠加开关已移除，功能集成到多选选择器中 -->
+        <!-- ɸѡӿƳܼɵѡѡ -->
         
         <!-- 下一个开关是权重分析，不做改动 -->
 
@@ -275,7 +275,7 @@
       <!-- 搜索控件已移动到左侧 -->
       <!-- <el-button type="success" @click="debugShow">调试显示</el-button> -->
       <div class="action-group">
-        <!-- 隐藏的矢量选区上传文件框 -->
+        <!-- صʸѡϴļ -->
         <input 
           type="file" 
           ref="vectorFileInput" 
@@ -417,10 +417,10 @@ const props = defineProps({
   selectedPolygon: { type: Array, default: null }
 });
 
-// 获取当前选中的类别名称（Header显示）- 适配多选
+// ȡǰѡеƣHeaderʾ- ѡ
 const getCategoryLabel = (paths) => {
   if (!paths || paths.length === 0) return '';
-  // 如果选了多个，显示 "X项已选"
+  // ѡ˶ʾ "Xѡ"
   if (Array.isArray(paths[0])) {
      return `${paths.length} 项已选`;
   }
@@ -569,7 +569,7 @@ const initWorker = () => {
     
    dataWorker.value.onerror = (e) => {
       console.error('Worker error:', e);
-      ElNotification.error({ title: '错误', message: `数据加载遇到错误！`, offset: 80 });
+      ElNotification.error({ title: '', message: `ݼ`, offset: 80 });
       emit('loading-change', false);
    };
 }
@@ -598,7 +598,7 @@ const getAllLeafPaths = (node, currentPath) => {
   return paths;
 };
 
-// 统一规范级联选择器返回值，兼容单选和多选两种结构。
+// ͳһ淶ѡֵݵѡͶѡֽṹ
 const normalizeCategoryPaths = (paths) => {
   if (!Array.isArray(paths) || paths.length === 0) return [];
 
@@ -675,7 +675,7 @@ const handleCascaderChange = () => {
   let searchBounds = null;
   let searchGeometry = null;
 
-  // 若已存在选区，优先发送 geometry WKT，避免仅用 bbox 造成范围放大。
+  // Ѵѡȷ geometry WKT bbox ɷΧŴ
   if (props.selectedPolygon) {
     searchGeometry = polygonToWKT(props.selectedPolygon);
     if (!searchGeometry) {
@@ -686,7 +686,7 @@ const handleCascaderChange = () => {
     searchBounds = [...props.mapBounds];
   }
 
-  // 3. 为新增类别发起增量请求（附带当前空间约束）
+  // 3. Ϊ󣨸ǰռԼ
   toAdd.forEach(item => {
     const fullName = item.path.join(' > ');
     console.log(`Loading new category: ${item.category}, bounds=`, searchBounds, 'geometry=', Boolean(searchGeometry));
@@ -753,7 +753,7 @@ const handleDrawModeChange = (mode) => {
   if (!mode) return;
   drawEnabled.value = true;
   emit('toggle-draw', { active: true, mode: mode });
-  // 重置选择，以便如果需要可以再次选择，
+  // ѡԱҪٴѡ
   // 尽管通常我们在停止之前保持绘制模式。
   // selectedDrawMode.value = ''; // 不要立即重置，否则选择框会消失
   showMobileMenu.value = false; // 选择后关闭菜单
@@ -774,7 +774,7 @@ const run = () => {
 };
 
 const reset = () => {
-  // 初始化时需要同时清理分类筛选状态，避免残留约束。
+  // ʼʱҪͬʱɸѡ״̬Լ
   const categoriesToRemove = Array.from(activeCategories.value);
   categoriesToRemove.forEach((category) => {
     emit('data-removed', category);
@@ -979,7 +979,7 @@ defineExpose({ setDrawEnabled, setSearchResult, setSearching, setCategorySelecti
   background: transparent;
   display: flex;
   align-items: center;
-  justify-content: flex-end; /* 统统靠右对齐：左组靠分隔线，右组靠屏幕边 */
+  justify-content: flex-end; /* ͳͳҶ룺鿿ָߣ鿿Ļ */
 }
 
 /* 地图控件 - 强制右对齐以靠近中线 */
@@ -1130,7 +1130,7 @@ defineExpose({ setDrawEnabled, setSearchResult, setSearching, setCategorySelecti
   min-width: 400px;
 }
 
-/* 下拉菜单高度：自适应内容，仅限制最大高度 */
+/* ˵߶ȣӦݣ߶ */
 :deep(.el-cascader-menu) {
   min-width: 200px;
   height: auto;
@@ -1142,7 +1142,7 @@ defineExpose({ setDrawEnabled, setSearchResult, setSearching, setCategorySelecti
   max-height: calc(60vh - 10px);
 }
 
-/* 彻底隐藏级联选择器中的单选圆圈 */
+/* ؼѡеĵѡԲȦ */
 :deep(.el-cascader-node .el-radio),
 :deep(.el-cascader-node .el-radio__input),
 :deep(.el-cascader-node .el-radio__inner) {
@@ -1200,7 +1200,7 @@ defineExpose({ setDrawEnabled, setSearchResult, setSearching, setCategorySelecti
 
 /* 移动端菜单样式 */
 .mobile-top-bar {
-  display: none; /* 桌面端默认隐藏 */
+  display: none; /* Ĭ */
   width: 100%;
   align-items: center;
   justify-content: space-between; /* 左右两端对齐 */
@@ -1338,13 +1338,13 @@ defineExpose({ setDrawEnabled, setSearchResult, setSearching, setCategorySelecti
   color: rgba(255, 255, 255, 0.8) !important;
 }
 
-/* 桌面端按钮通用类 */
+/* ˰ťͨ */
 .desktop-btn, .desktop-save-btn {
   height: 32px;
   line-height: 32px;
 }
 
-/* 移动端保存按钮样式 - 与选择器高度协调 */
+/* ƶ˱水ťʽ - ѡ߶Э */
 .save-btn {
   flex-shrink: 0;
   height: 32px; /* 与 el-cascader 默认高度一致 */
@@ -1377,7 +1377,7 @@ defineExpose({ setDrawEnabled, setSearchResult, setSearching, setCategorySelecti
   line-height: 32px;
 }
 
-/* 三点菜单按钮 - 与选择器高度协调 */
+/* ˵ť - ѡ߶Э */
 .more-btn {
   height: 32px;
   width: 40px;
@@ -1680,7 +1680,7 @@ defineExpose({ setDrawEnabled, setSearchResult, setSearching, setCategorySelecti
     align-items: center;
   }
 
-  /* 移动端顶部栏：选择器左侧自适应，按钮组右侧固定 */
+  /* ƶ˶ѡӦťҲ̶ */
   .mobile-top-bar {
     display: flex !important;
     width: 100%;
@@ -1784,7 +1784,7 @@ defineExpose({ setDrawEnabled, setSearchResult, setSearching, setCategorySelecti
   color: #fff !important;
 }
 
-/* 选中项高亮 */
+/* ѡ */
 :global(.category-drawer .el-cascader-node.is-active) {
   color: #818cf8 !important; /* Indigo-400 */
   font-weight: 600 !important;

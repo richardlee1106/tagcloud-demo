@@ -1,4 +1,4 @@
-"""快速验证 V5 空间查询能力。"""
+"""֤ V5 ռѯ"""
 import sys
 sys.path.insert(0, ".")
 from db.repository import POIRepository

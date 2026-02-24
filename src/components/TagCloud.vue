@@ -56,7 +56,7 @@ import { ElNotification } from 'element-plus';
 import { rasterExtractor } from '../utils/RasterExtractor.js';
 
 // 定义组件事件
-// hover-feature: 鼠标悬停在标签上时触发，通知地图高亮对应 POI
+// hover-feature: ͣڱǩʱ֪ͨͼӦ POI
 // locate-feature: 点击标签时触发，通知地图飞向对应 POI
 const emit = defineEmits(['hover-feature', 'locate-feature']);
 
@@ -83,7 +83,7 @@ const selectedWeight = ref(''); // 当前选中的权重类型
 const rasterLoading = ref(false); // 栅格加载状态
 const rasterLoaded = ref(false); // 栅格是否已加载
 
-// 权重选项
+// Ȩѡ
 const weightOptions = ref([
   { value: 'population', label: '人口密度' },
 ]);
@@ -195,7 +195,7 @@ function initWorker() {
   if (hasGeoData && props.algorithm !== 'spiral' && props.algorithm !== 'basic') {
     // 只要有坐标数据且未强制要求普通螺旋布局，就使用 GravityWorker
     worker = new GravityWorker();
-    console.log(`[TagCloud] 采用地理感知的 GravityWorker (${props.data?.length || 0}个标签)`);
+    console.log(`[TagCloud] õ֪ GravityWorker (${props.data?.length || 0}ǩ)`);
   } else if (props.algorithm === 'basic') {
     worker = new BasicWorker();
   } else {
@@ -236,11 +236,11 @@ function initWorker() {
       // 预计算样式值，减少函数调用
       const getFontSize = d => `${d.fontSize || 16}px`;
       
-      // 颜色函数：如果启用权重，使用 Jenks 分类颜色
+      // ɫȨأʹ Jenks ɫ
       const getFill = d => {
         if (d.isCenter) return '#FFA500';
         if (d.selected) return '#d23';
-        // 如果启用权重且有分类断点，使用权重颜色
+        // Ȩзϵ㣬ʹȨɫ
         if (props.weightEnabled && classBreaks.value.length > 0 && d.weight !== undefined) {
           return getWeightColor(d.weight);
         }
@@ -319,7 +319,7 @@ function makeCoordKey(lon, lat) {
 /**
  * 更新标签的高亮样式（性能优化版）
  * 同时考虑悬浮和点击状态，点击状态优先级更高（常亮）
- * 在权重模式下保持使用权重颜色
+ * Ȩģʽ±ʹȨɫ
  */
 function updateHighlight() {
   if (!rootGroupRef || rootGroupRef.empty()) return;
@@ -344,7 +344,7 @@ function updateHighlight() {
         return 'orange';
       }
       if (d.selected) return '#d23';
-      // 如果启用权重且有分类断点，使用权重颜色
+      // Ȩзϵ㣬ʹȨɫ
       if (props.weightEnabled && classBreaks.value.length > 0 && d.weight !== undefined) {
         return getWeightColor(d.weight);
       }
@@ -369,9 +369,9 @@ watch(() => props.clickedFeatureId, () => updateHighlight(), { flush: 'sync' });
  */
 async function handleWeightChange(value) {
   if (!value) {
-    // 清除权重选择
+    // Ȩѡ
     rasterLoaded.value = false;
-    console.log('[TagCloud] 已清除权重选择');
+    console.log('[TagCloud] Ȩѡ');
     return;
   }
 
@@ -424,7 +424,7 @@ async function handleWeightChange(value) {
  * @param {String} algorithm - 当前使用的算法名称
  */
 const runLayout = (algorithm) => {
-  console.log('[TagCloud] runLayout 被调用. 数据量:', props.data?.length); 
+  console.log('[TagCloud] runLayout . :', props.data?.length); 
   if (!props.data) {
     console.log('[TagCloud] runLayout 提前返回. Data 为空');
     return;
@@ -491,7 +491,7 @@ const runLayout = (algorithm) => {
   }
 
   // 计算标签位置和选择标记
-  // 提取需要的数据属性，构建轻量级对象发送给 Worker
+  // ȡҪԣ͸ Worker
   
   // 清空并重建 featureMap
   featureMap.clear();
@@ -506,7 +506,7 @@ const runLayout = (algorithm) => {
       [lon, lat] = feature.geometry.coordinates;
     }
 
-    // 权重处理：优先使用栅格提取的权重，其次使用属性中的权重
+    // ȨشʹդȡȨأʹеȨ
     let weight = feature?.properties?.weight ?? 0;
     
     // 如果启用了权重且栅格已加载，从栅格中提取权重
@@ -524,7 +524,7 @@ const runLayout = (algorithm) => {
       featureMap.set(coordKey, feature);
     }
 
-    // 如果启用显示权重值，将权重附加到名称后面
+    // ʾȨֵȨظӵƺ
     // 这样 Worker 可以正确测量完整文本的宽度
     let displayName = name;
     if (props.showWeightValue && weight > 0) {
@@ -556,12 +556,12 @@ const runLayout = (algorithm) => {
   tags = Array.from(dedupeMap.values());
   
   if (deduplicatedCount > 0) {
-    console.log(`[TagCloud] 去重：移除了 ${deduplicatedCount} 个重复标签，保留 ${tags.length} 个`);
+    console.log(`[TagCloud] ȥأƳ ${deduplicatedCount} ظǩ ${tags.length} `);
   }
 
   console.log('[TagCloud] 名称提取后数量:', tags.length, '映射表大小:', featureMap.size);
 
-  // 如果启用了权重，计算 Jenks 分类并按权重降序排序
+  // Ȩأ Jenks ಢȨؽ
   if (props.weightEnabled && rasterLoaded.value) {
     // 提取所有权重值
     const allWeights = tags.map(t => t.weight).filter(w => w > 0);
@@ -598,14 +598,14 @@ const runLayout = (algorithm) => {
 
   // 削减非常大的数据集以保持 DOM 大小可控
   if (tags.length > MAX_TAGS) {
-    // 如果有权重，按权重排序后选取（保留高权重的节点）
+    // ȨأȨѡȡȨصĽڵ㣩
     // 如果没有权重，按密度排序后选取
     if (props.weightEnabled && rasterLoaded.value) {
       // 权重模式：直接截取前 MAX_TAGS 个（已按权重排序）
       tags = tags.slice(0, MAX_TAGS);
       console.log('[TagCloud] 按权重削减至上限:', tags.length);
     } else {
-      // 原逻辑：按密度排序后选取前 MAX_TAGS 个，保留最重要的节点
+      // ԭ߼ܶѡȡǰ MAX_TAGS ҪĽڵ
       const tempTags = calculateDensityGrid(tags, 64, width, height);
       tempTags.sort((a, b) => b.normalizedDensity - a.normalizedDensity);
       tags = tempTags.slice(0, MAX_TAGS);
@@ -660,7 +660,7 @@ const runLayout = (algorithm) => {
     }
   }
   
-  // 净化数据以移除 Vue Proxies，防止 postMessage 克隆错误
+  // Ƴ Vue Proxiesֹ postMessage ¡
   const sanitizedTags = JSON.parse(JSON.stringify(tags));
   const sanitizedCenter = props.circleCenter ? JSON.parse(JSON.stringify(props.circleCenter)) : null;
 

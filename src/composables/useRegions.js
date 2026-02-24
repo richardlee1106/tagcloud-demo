@@ -24,7 +24,7 @@ export const REGION_COLORS = [
  * 选区数据结构
  * @typedef {Object} Region
  * @property {number} id - 选区编号 (1-6)
- * @property {string} name - 选区名称 ("选区1", "选区2"...)
+ * @property {string} name - ѡ ("ѡ1", "ѡ2"...)
  * @property {'Polygon'|'Circle'} type - 几何类型
  * @property {Object} geometry - GeoJSON 几何对象 (WGS84)
  * @property {[number, number]} center - 中心点 [lon, lat]
@@ -64,8 +64,8 @@ export function useRegions() {
   const addRegion = (regionData) => {
     if (regions.value.length >= MAX_REGIONS) {
       ElNotification({
-        title: '选区数量已达上限',
-        message: `最多只能绘制 ${MAX_REGIONS} 个选区，请先删除现有选区后再添加。`,
+        title: 'ѡѴ',
+        message: `ֻܻ ${MAX_REGIONS} ѡɾѡӡ`,
         type: 'warning',
         duration: 4000
       })
@@ -203,18 +203,18 @@ export function useRegions() {
   }
   
   /**
-   * 从用户问题中提取选区引用
+   * ûȡѡ
    * @param {string} question - 用户问题
    * @returns {number[]} - 提取到的选区 ID 数组
    */
   const extractRegionReferences = (question) => {
     const references = []
     
-    // 匹配 "选区1"、"选区 2"、"区域3"、"区域 4" 等模式
+    // ƥ "ѡ1""ѡ 2""3"" 4" ģʽ
     const patterns = [
       /选区\s*(\d+)/g,
       /区域\s*(\d+)/g,
-      /第\s*(\d+)\s*个?选区/g,
+      /\s*(\d+)\s*?ѡ/g,
       /第\s*(\d+)\s*个?区域/g,
       /region\s*(\d+)/gi
     ]

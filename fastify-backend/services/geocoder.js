@@ -30,7 +30,7 @@ function calculateDistance(lat1, lon1, lat2, lon2) {
  * 综合锚点解析
  * @param {string} placeName 地名
  * @param {string} gateName 门/入口名（可选）
- * @param {Object} viewportCenter 视野中心（可选，用于优先匹配靠近视野的结果）
+ * @param {Object} viewportCenter Ұģѡƥ俿ҰĽ
  * @returns {Promise<{lon: number, lat: number, source: string, name: string}|null>}
  */
 export async function resolveAnchor(placeName, gateName = null, viewportCenter = null) {
@@ -38,12 +38,12 @@ export async function resolveAnchor(placeName, gateName = null, viewportCenter =
   const searchTerm = gateName ? `${placeName}${gateName}` : placeName;
   const searchTermWithSpace = gateName ? `${placeName} ${gateName}` : placeName;
   
-  console.log(`[Geocoder] 解析锚点: "${searchTerm}"${viewportCenter ? ` (偏好视野中心: ${viewportCenter.lon.toFixed(4)}, ${viewportCenter.lat.toFixed(4)})` : ''}`);
+  console.log(`[Geocoder] ê: "${searchTerm}"${viewportCenter ? ` (ƫҰ: ${viewportCenter.lon.toFixed(4)}, ${viewportCenter.lat.toFixed(4)})` : ''}`);
   
   // 1. 尝试从 POI 库精确匹配（支持视野偏好）
   let result = await findInPOI(searchTerm, 'exact', viewportCenter);
   if (result) {
-    // 检查匹配结果是否距离视野过远（可能是错误数据）
+    // ƥǷҰԶǴݣ
     const distanceToViewport = viewportCenter ? 
       calculateDistance(viewportCenter.lat, viewportCenter.lon, result.lat, result.lon) : 0;
     
@@ -99,8 +99,8 @@ export async function resolveAnchor(placeName, gateName = null, viewportCenter =
   }
   
   // 5. (新增) 尝试利用向量数据库进行语义匹配
-  // 当精确匹配和模糊匹配都失败时，利用 Embedding 找语义最相似的 POI
-  // 例如：搜"湖北大学地铁站" -> 匹配库里的"地铁7号线湖北大学站"
+  // ȷƥģƥ䶼ʧʱ Embedding Ƶ POI
+  // 磺"ѧվ" -> ƥ"7ߺѧվ"
   result = await findInVectorDB(placeName);
   if (result) {
     console.log(`[Geocoder] S-RAG 向量语义匹配成功: ${result.name} (Score: ${result.score.toFixed(4)})`);
@@ -140,7 +140,7 @@ async function findInVectorDB(text) {
     
     const bestMatch = results[0];
     
-    // 4. 只有当相似度足够高时才采纳 (阈值可调，例如 0.6)
+    // 4. ֻеƶ㹻ʱŲ (ֵɵ 0.6)
     // 注意：Cosine Distance 范围 -1 到 1，越接近 1 越相似
     // 如果是 L2 距离，越小越好。milvus.js 里配置的是 COSINE。
     if (bestMatch.score < 0.65) {
@@ -303,7 +303,7 @@ async function findInPOI(term, mode = 'fuzzy', viewportCenter = null) {
  */
 async function findByClusterCentroid(term, viewportCenter) {
   try {
-    // 搜索所有包含该关键词的 POI（限制在视野附近 20km 内）
+    // аùؼʵ POIҰ 20km ڣ
     let sql = `
       SELECT 
         ST_X(geom) AS lon,
@@ -413,7 +413,7 @@ async function geocodeExternal(address) {
   const apiKey = process.env.AMAP_API_KEY;
   
   if (!apiKey || apiKey === '2b42a2f72ef6751f2cd7c7bd24139e72') {
-    console.log('[Geocoder] 高德 API Key 未配置，跳过外部地理编码');
+    console.log('[Geocoder] ߵ API Key δãⲿ');
     return null;
   }
   

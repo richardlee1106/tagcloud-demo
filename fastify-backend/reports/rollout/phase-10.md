@@ -2,7 +2,7 @@
 
 - 日期：2026-02-07
 - 配置：`SPATIAL_MIGRATE_PERCENT=10`
-- 目标：以小流量验证迁移链路稳定性与可回退性。
+- Ŀ꣺С֤Ǩ·ȶɻԡ
 
 ## 执行项
 
@@ -17,7 +17,7 @@
    - 结果：`all_within_expected=true`
    - 输出文件：`fastify-backend/reports/rollout/phase-10.json`
 
-3. 回退与数据库链路验证
+3. ݿ·֤
    - 在 `executeSpatialPlanWithFallback` 路径下，验证 Node 回退与 `region_comparison` 分支均返回 `success=true`。
 
 ## 观察结论

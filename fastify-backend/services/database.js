@@ -18,7 +18,7 @@ const POI_RATING_SELECT_SQL = "NULL::double precision AS rating";
 export async function initDatabase() {
   if (pool) return pool;
 
-  // 连接池大小通过环境变量控制，适配不同部署场景
+  // ӳشСͨƣ䲻ͬ𳡾
   // - 本地/Docker: POSTGRES_POOL_MAX=10~20（默认 10）
   // - Serverless（Vercel）: POSTGRES_POOL_MAX=3~5，建议搭配 PgBouncer
   const poolMax = Math.max(
@@ -52,7 +52,7 @@ export async function initDatabase() {
 
   pool = new Pool(dbConfig);
 
-  // 错误处理：防止 Pool 层面崩溃导致应用挂掉
+  // ֹ Pool Ӧùҵ
   pool.on("error", (err, client) => {
     console.error("Unexpected error on idle client", err);
     // don't throw error here to keep the process alive
@@ -183,13 +183,13 @@ export async function findPOIsWithinRadius(
   // 类别过滤
   if (category) {
     sql += ` AND (p.type ILIKE $${paramIndex} OR p.category_mid ILIKE $${paramIndex} OR p.category_small ILIKE $${paramIndex})`;
-    // 为模糊匹配前后都加 %，确保能搜到 "中餐厅" 即使数据库里是 "中餐" 也能尽量匹配（反之亦然）
+    // Ϊģƥǰ󶼼 %ȷѵ "в" ʹݿ "в" Ҳܾƥ䣨֮Ȼ
     params.push(`%${category}%`);
     paramIndex++;
   }
 
   sql += ` ORDER BY distance_meters LIMIT $${paramIndex}`;
-  // 核心修改：用户想要全量数据，我们将默认上限提升到 50万
+  // ޸ģûҪȫݣǽĬ 50
   // 只要前端敢要，后端就敢给
   const maxLimit = parseInt(process.env.POI_QUERY_MAX_LIMIT || "20000", 10);
   const normalizedLimit = Number(limit);
@@ -559,14 +559,14 @@ export async function getRepresentativeLandmarks(
       SELECT ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography AS g
     ),
     landmark_types AS (
-      SELECT unnest(ARRAY['大学', '医院', '地铁', '火车站', '机场', '学校', '商场', '广场', '公园', '博物馆', '银行', '办事大厅', '市政府', '区政府']) AS ltype
+      SELECT unnest(ARRAY['ѧ', 'ҽԺ', '', 'վ', '', 'ѧУ', '̳', '㳡', '԰', '', '', '´', '', '']) AS ltype
     ),
     candidates AS (
       SELECT 
         p.name,
         CASE 
           WHEN p.category_mid ILIKE '%大学%' OR p.category_small ILIKE '%大学%' THEN '大学'
-          WHEN p.category_mid ILIKE '%医院%' OR (p.category_mid ILIKE '%医疗%' AND p.name ILIKE '%医院%') THEN '医院'
+          WHEN p.category_mid ILIKE '%ҽԺ%' OR (p.category_mid ILIKE '%ҽ%' AND p.name ILIKE '%ҽԺ%') THEN 'ҽԺ'
           WHEN p.category_mid ILIKE '%地铁%' THEN '地铁站'
           WHEN p.category_mid ILIKE '%火车站%' OR p.category_mid ILIKE '%高铁%' THEN '火车站'
           WHEN p.category_mid ILIKE '%机场%' THEN '机场'
@@ -575,7 +575,7 @@ export async function getRepresentativeLandmarks(
           WHEN p.category_mid ILIKE '%广场%' THEN '广场'
           WHEN p.category_mid ILIKE '%公园%' THEN '公园'
           WHEN p.category_mid ILIKE '%博物馆%' OR p.category_mid ILIKE '%展览馆%' THEN '文化地标'
-          WHEN p.category_mid ILIKE '%银行%' AND (p.name ILIKE '%分行%' OR p.name ILIKE '%总部%') THEN '金融机构'
+          WHEN p.category_mid ILIKE '%%' AND (p.name ILIKE '%%' OR p.name ILIKE '%ܲ%') THEN 'ڻ'
           WHEN p.category_mid ILIKE '%政府%' OR p.category_mid ILIKE '%机关%' THEN '行政机构'
           ELSE p.category_mid
         END AS landmark_type,
@@ -655,7 +655,7 @@ export async function findPOIsFiltered(options) {
   let paramIndex = 1;
   let geometryParamIndex = null;
 
-  // 中文注释：锚点存在时返回真实距离，便于“附近”类请求按距离排序。
+  // עͣêʱʵ룬ڡ󰴾
   if (anchor) {
     sql += `, ST_Distance(p.geom::geography, ST_SetSRID(ST_MakePoint($${paramIndex}, $${paramIndex + 1}), 4326)::geography) AS distance_meters`;
     params.push(anchor.lon, anchor.lat);
@@ -666,7 +666,7 @@ export async function findPOIsFiltered(options) {
 
   sql += ` FROM pois p WHERE 1=1 `;
 
-  // 中文注释：优先使用几何边界，避免仅凭半径导致候选范围外扩。
+  // עͣʹüα߽磬ƾ뾶ºѡΧ
   if (geometry) {
     geometryParamIndex = paramIndex;
     sql += ` AND ST_Within(p.geom, ST_GeomFromText($${geometryParamIndex}, 4326))`;
@@ -711,7 +711,7 @@ export async function findPOIsFiltered(options) {
   }
   */
 
-  // 中文注释：无锚点时不能按常量 distance_meters 排序，否则 LIMIT 会被导入顺序锁定成单一类目。
+  // עͣêʱܰ distance_meters 򣬷 LIMIT ᱻ˳ɵһĿ
   let orderClause = "distance_meters";
   if (!anchor) {
     if (geometryParamIndex !== null) {
@@ -847,13 +847,13 @@ export async function quickSearch(options) {
 }
 
 /**
- * 两阶段空间过滤查询（用于 "X附近的Y" 类型查询）
+ * ׶οռ˲ѯ "XY" Ͳѯ
  *
- * 阶段1: 在视野范围内按关键词/类别初筛
+ * ׶1: ҰΧڰؼ/ɸ
  * 阶段2: 通过地标缓冲区精筛
  *
  * @param {Object} options
- *   @param {string[]} terms - 搜索关键词 (如 ["火锅", "涮锅"])
+ *   @param {string[]} terms - ؼ ( ["", "̹"])
  *   @param {string} viewportWKT - 视野边界 WKT (阶段1使用)
  *   @param {Object} anchor - 地标坐标 {lon, lat} (阶段2使用)
  *   @param {number} bufferRadius - 缓冲区半径（米，默认 2000）
@@ -877,7 +877,7 @@ export async function findPOIsTwoStageFilter(options) {
   const startTime = Date.now();
 
   // =============================================
-  // 阶段1: 视野范围 + 关键词初筛
+  // ׶1: ҰΧ + ؼʳɸ
   // =============================================
   let stage1SQL = `
     SELECT 

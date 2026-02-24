@@ -8,10 +8,10 @@
 ## 默认判定规则
 
 1. 两条路径都必须返回 HTTP 200
-2. 两条路径都必须满足关键 schema（results/mode/stats/spatial_clusters + 对应场景字段）
+2. ·ؼ schemaresults/mode/stats/spatial_clusters + ӦֶΣ
 3. `graph_reasoning`：两侧图节点不允许同时为 0
-4. `region_comparison`：两侧有效选区数都必须 >= 2
-5. 若 Python 返回 POI，则 TopK 重叠率需不低于阈值 `min_poi_overlap`（默认 0.1）
+4. `region_comparison`Чѡ >= 2
+5.  Python  POI TopK ص費ֵ `min_poi_overlap`Ĭ 0.1
 
 ## 运行示例
 

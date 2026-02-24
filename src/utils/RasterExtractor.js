@@ -177,7 +177,7 @@ class RasterExtractor {
     const nonZeroCount = weights.filter(w => w > 0).length;
     const maxWeight = Math.max(...weights);
     const avgWeight = weights.reduce((a, b) => a + b, 0) / weights.length;
-    console.log('  - 非零权重数量:', nonZeroCount);
+    console.log('  - Ȩ:', nonZeroCount);
     console.log('  - 最大权重:', maxWeight.toFixed(2));
     console.log('  - 平均权重:', avgWeight.toFixed(2));
 
@@ -218,7 +218,7 @@ class RasterExtractor {
   /**
    * 获取指定范围内的栅格点数据（用于热力图）
    * @param {Array<number>} bounds - [minLon, minLat, maxLon, maxLat]
-   * @param {number} maxPoints - 最大点数量（用于降采样）
+   * @param {number} maxPoints - ڽ
    * @returns {Array<{lon: number, lat: number, weight: number}>} - 点数据数组
    */
   getPointsInBounds(bounds, maxPoints = 5000) {
@@ -258,7 +258,7 @@ class RasterExtractor {
 
     console.log(`[RasterExtractor] 范围内像素: ${rangeWidth}x${rangeHeight} = ${totalPixels}`);
 
-    // 计算采样步长（降采样）
+    // 
     const sampleRate = Math.max(1, Math.ceil(Math.sqrt(totalPixels / maxPoints)));
     console.log(`[RasterExtractor] 采样步长: ${sampleRate}`);
 

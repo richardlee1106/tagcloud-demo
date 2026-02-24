@@ -18,10 +18,10 @@ self.onmessage = async (e) => {
     // 这里最简单的做法是：无论单数数，都传给后端，后端兼容性更好。
     const finalCategories = categories || (category ? [category] : []);
     
-    // 或者，我们利用后端 findPOIsWithinRadius 的逻辑（如果是半径搜），但这里是全都没中心点的fetch。
+    // ߣú findPOIsWithinRadius ߼ǰ뾶ѣȫûĵfetch
     // 关键：后端 /fetch 路由是用 findPOIsFiltered(req.body)
     // 而 services/database.js 的 findPOIsFiltered 是接受 { categories: [] } 的。
-    // 所以我们这里只要把 "中餐厅" 塞进一个数组 ["中餐厅"] 传过去，
+    // ֻҪ "в" һ ["в"] ȥ
     // 后端就会生成 ILIKE '%中餐厅%' 的 SQL，这正是我们想要的！
 
     const response = await fetch(`${baseUrl}/api/spatial/fetch`, {

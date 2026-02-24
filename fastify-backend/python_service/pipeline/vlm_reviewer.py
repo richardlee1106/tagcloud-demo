@@ -2,7 +2,7 @@
 """视觉形态审查器（VLM ready）。
 
 设计目标：
-1. 默认采用低开销启发式评分，保证稳定与低延迟；
+1. ĬϲõͿʽ֣֤ȶӳ٣
 2. 当提供视口截图（data URL）时，可调用本地 qwen3-vl-4b 做视觉复核；
 3. 输出统一结构，供 composite_v5 置信度融合。
 """
@@ -63,7 +63,7 @@ def _boundary_compactness(boundary_geojson: Dict[str, Any] | None) -> float | No
     area = float(getattr(polygon, "area", 0.0) or 0.0)
     if perimeter <= 0 or area <= 0:
         return None
-    # 归一化紧凑度：圆形接近 1，锯齿/狭长接近 0。
+    # һնȣԲνӽ 1/ӽ 0
     compactness = 4.0 * math.pi * area / (perimeter * perimeter)
     return _clamp01(compactness)
 

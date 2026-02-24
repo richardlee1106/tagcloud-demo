@@ -140,7 +140,7 @@ export function resolveSpatialMigrationDecision({
   const hitMigratePercent = sampleHit(seed, config.migratePercent)
 
   // 强制使用Python服务，不再支持Node.js回退。
-  // 所有空间计算逻辑必须由Python处理。
+  // пռ߼Python
   // 注意：forceNodeFallback配置已被废弃，强制使用Python作为唯一计算引擎。
 
   const pyDataSource = String(options.pyDataSource || config.pyDataSource).trim().toLowerCase()

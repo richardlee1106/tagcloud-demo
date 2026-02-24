@@ -1,181 +1,160 @@
-# Spatial-RAG Migration Status and Performance Notes
+# Spatial-RAG 迁移状态与性能说明
 
-Updated: 2026-02-08
+更新时间：2026-02-08
 
-## 1) Quick takeaways
+## 1. 结论摘要
 
-- The backend is now mostly aligned with the target architecture: **Node as gateway + Python as compute engine**.
-- Performance is **not uniformly better** in every query type yet:
-  - Core POI retrieval is faster on Python.
-  - Some advanced analytics are still slower on Python because the Python path currently runs richer logic than the lightweight Node fallback.
-- Major wins today are maintainability, deterministic outputs, and controlled fallback behavior.
+- 后端已基本对齐目标架构：**Node 作为网关 + Python 作为空间计算引擎**。
+- 性能并非所有查询类型都统一提升：
+  - 核心 POI 检索路径 Python 更快；
+  - 部分高级分析在 Python 侧仍偏慢，主要因为 Python 当前执行了更完整的分析链路。
+- 现阶段主要收益：可维护性提升、输出更稳定、回退策略更可控。
 
----
+## 1.1 2026-02-08 性能更新
 
+- 图推理已启用 Python fast path（跳过部分高开销区域建模链路）。
+- 图算法由全对扫描优化为网格邻域裁剪 + haversine 校验。
+- 空间 SQL 在 polygon/viewport/WKT 路由增加 `&&` bbox 预过滤，再执行 `ST_Within`。
+- 图查询未显式限量时，通过 `graphMaxNodes` 限制候选规模以降低传输与计算成本。
 
-### 1.1 2026-02-08 performance update
+本地环境（`POST /api/ai/execute`，5 次采样）：
 
-- Graph reasoning now uses Python fast path (skip heavy region modeling chain).
-- Graph algorithm moved from all-pair scan to grid-neighbor pruning + haversine verify.
-- Repository spatial SQL now uses `&&` bbox prefilter before `ST_Within` for polygon/viewport/WKT routes.
-- For graph queries without explicit limit, candidate fetch is clamped by `graphMaxNodes` to cut transfer and compute overhead.
-
-Measured on local stack (`POST /api/ai/execute`, 5 samples):
-
-| Scenario | Avg | P95 |
+| 场景 | 平均耗时 | P95 |
 |---|---:|---:|
-| Python primary (`graph_reasoning`) | 102.2 ms | 126 ms |
-| Node fallback (`graph_reasoning`) | 2.0 ms | 3 ms |
+| Python 主路径（`graph_reasoning`） | 102.2 ms | 126 ms |
+| Node 回退路径（`graph_reasoning`） | 2.0 ms | 3 ms |
 
-> Node fallback remains lighter but less complete; Python result carries richer graph payload and deterministic diagnostics.
+说明：Node 回退更轻，但结果语义较简化；Python 输出更完整且诊断信息更稳定。
 
-### 1.2 2026-02-08 parity and boundary-performance update
+## 1.2 2026-02-08 一致性与边界建模更新
 
-- `dual_run_parity_check` now uses **graph-structure-first** checks for `graph_reasoning`:
-  - hard alerts focus on Python graph validity and critical schema,
-  - low POI overlap is downgraded to warning under lightweight Node fallback mode.
-- Alpha-shape pipeline now includes deterministic point downsampling and adaptive simplify:
-  - reduces heavy geometry cost on large clusters,
-  - keeps outputs reproducible.
-- Pipeline boundary modeling adds small-cluster convex-hull shortcut and preview-boundary sampling.
+- `dual_run_parity_check` 对 `graph_reasoning` 改为“图结构优先”校验：
+  - 硬告警聚焦 Python 图结构有效性与关键 schema；
+  - 在 Node 轻量回退模式下，POI 重叠率偏低降级为 warning。
+- Alpha-shape 管线增加确定性降采样与自适应简化：
+  - 降低大簇几何开销；
+  - 保持输出可复现。
+- 边界建模增加小簇凸包捷径与预览边界采样。
 
-### 1.3 2026-02-08 full closeout update (all remaining blocks)
+## 1.3 2026-02-08 迁移收口更新
 
-- Python clustering now supports adaptive parameter resolution (`clusterMinClusterSize` / `clusterMinSamples` / `clusterMaxHdbscanPoints`) to reduce heavy-scene overhead.
-- Node fallback is slimmed to a SQL-only lightweight executor (`node_sql_fallback`) by default; legacy Node heavy executor is now opt-in (`SPATIAL_NODE_LEGACY_EXECUTOR=true`).
-- Residual direct `executeQuery` usage in `spatial-rag-pipeline` is replaced by `spatialJobRunner` wrapper, so old pipeline paths no longer hard-depend on legacy executor internals.
-- Rollout policy checks for 10/30/60/100 all passed expected sampling ranges (`all_within_expected=true`).
-- Dual-run parity now reports `warning_count` for lightweight fallback divergence while preserving hard-fail checks on schema and Python graph validity.
+- Python 聚类支持自适应参数（`clusterMinClusterSize` / `clusterMinSamples` / `clusterMaxHdbscanPoints`），改善重场景性能。
+- Node 回退默认收敛为 SQL 轻量执行器（`node_sql_fallback`）；旧版重逻辑改为显式可选（`SPATIAL_NODE_LEGACY_EXECUTOR=true`）。
+- `spatial-rag-pipeline` 中残余直接 `executeQuery` 已迁移至 `spatialJobRunner`，旧路径不再硬依赖 legacy executor。
+- 10/30/60/100 分阶段 rollout 校验通过（`all_within_expected=true`）。
+- 双跑一致性报告新增 `warning_count`，在保留硬失败条件的同时识别轻量回退差异。
 
-Latest regression status:
-- `smoke:jobs` pass
-- `dual_run_parity_check` pass (`all_passed=true`)
-- `drill_node_fallback` pass (`all_passed=true`)
+最新回归状态：
 
-## 2) Measured performance snapshots
+- `smoke:jobs` 通过
+- `dual_run_parity_check` 通过（`all_passed=true`）
+- `drill_node_fallback` 通过（`all_passed=true`）
 
-> Measurements were run locally on 2026-02-07. Absolute values will vary by machine load.
+## 2. 已测性能快照
 
-### 2.1 Compute-only benchmark (`POST /api/ai/execute`, 6 samples)
+> 数据采自 2026-02-07 本地环境，绝对值会受机器负载影响。
 
-| Scenario | Python avg | Node avg | Observation |
+### 2.1 纯计算基准（`POST /api/ai/execute`，6 次采样）
+
+| 场景 | Python 平均 | Node 平均 | 观察 |
 |---|---:|---:|---|
-| `poi_search` | 187.83 ms | 498.67 ms | Python is ~62.3% faster |
-| `graph_reasoning` | 1017.17 ms | 104.50 ms | Python is slower (richer pipeline vs simplified Node fallback) |
-| `region_comparison` | 2.33 ms | 1.17 ms | Python is slower, but both are low-latency |
+| `poi_search` | 187.83 ms | 498.67 ms | Python 约快 62.3% |
+| `graph_reasoning` | 1017.17 ms | 104.50 ms | Python 偏慢（执行链路更完整） |
+| `region_comparison` | 2.33 ms | 1.17 ms | 两者都属低延迟 |
 
-### 2.2 End-to-end benchmark (`POST /api/jobs/narrative`, 4 samples)
+### 2.2 端到端基准（`POST /api/jobs/narrative`，4 次采样）
 
-- `poi_search` with Python primary: avg 9669.00 ms
-- `poi_search` with Node fallback: avg 5319.50 ms
+- Python 主路径：`poi_search` 平均 9669.00 ms
+- Node 回退路径：`poi_search` 平均 5319.50 ms
 
-Important: this includes planner/writer/LLM latency, so it is not a pure spatial-compute metric.
+说明：此指标包含 planner/writer/LLM 延迟，不属于纯空间计算指标。
 
-### 2.3 Regression checks
+### 2.3 回归检查
 
 - `npm --prefix fastify-backend run check:dualrun -- --samples=2 --out=reports/rollout/dual-run-latest.json`
-  - Result: `all_passed = true`
+  - 结果：`all_passed = true`
 - `npm --prefix fastify-backend run drill:fallback -- --out=reports/rollout/fallback-drill-latest.json`
-  - Result: Python primary + Node fallback both passed
+  - 结果：Python 主路径与 Node 回退均通过
 
----
+## 3. Python 目录职责（`fastify-backend/python_service`）
 
-## 3) What each Python file does (`fastify-backend/python_service`)
-
-## 3.1 Entry layer
+### 3.1 入口层
 
 - `fastify-backend/python_service/grpc_server.py`
-  - gRPC entrypoint for spatial compute.
-  - Loads proto stubs, accepts Node requests, streams STAGE/PROGRESS/PARTIAL/FINAL/ERROR events.
+  - 空间计算 gRPC 入口，接收 Node 请求并输出 STAGE/PROGRESS/PARTIAL/FINAL/ERROR 流事件。
 
 - `fastify-backend/python_service/app.py`
-  - Lightweight HTTP service for health and metrics endpoints.
+  - 轻量 HTTP 服务（健康检查与指标）。
 
-## 3.2 Pipeline layer
+### 3.2 Pipeline 层
 
 - `fastify-backend/python_service/pipeline/spatial_pipeline.py`
-  - Main Python orchestration pipeline.
-  - Handles request parsing, candidate loading, direction filtering, clustering, boundary generation, fuzzy membership, H3 aggregation, graph analysis, and region comparison.
+  - Python 主编排管线，负责请求解析、候选加载、方向筛选、聚类、边界建模、模糊归属、H3 聚合、图分析、区域对比。
 
-## 3.3 Algorithm layer
+### 3.3 算法层
 
 - `fastify-backend/python_service/algorithms/hdbscan_cluster.py`
-  - HDBSCAN clustering wrapper with DBSCAN fallback.
-
+  - HDBSCAN 聚类封装（含 DBSCAN 回退）。
 - `fastify-backend/python_service/algorithms/alpha_shape.py`
-  - Alpha-shape boundary generation with convex-hull fallback.
-
+  - Alpha-shape 边界生成（含凸包回退）。
 - `fastify-backend/python_service/algorithms/direction_filter.py`
-  - Direction normalization and directional POI filtering (E/W/N/S semantics).
-
+  - 方位语义归一与方向筛选。
 - `fastify-backend/python_service/algorithms/h3_aggregate.py`
-  - H3 aggregation (with deterministic grid fallback if H3 package is missing).
-
+  - H3 聚合（缺包时用确定性网格回退）。
 - `fastify-backend/python_service/algorithms/membership.py`
-  - Multi-factor membership scoring model (density/purity/centrality/compactness/scale).
-
+  - 多因子归属评分（密度/纯度/中心性/紧致度/尺度）。
 - `fastify-backend/python_service/algorithms/graph_reasoning.py`
-  - Spatial graph construction and graph metrics extraction.
-
+  - 空间图构建与图指标提取。
 - `fastify-backend/python_service/algorithms/region_comparison.py`
-  - Region-level aggregation and cross-region comparison output.
+  - 区域级聚合与跨区对比。
 
-## 3.4 Data access layer
+### 3.4 数据访问层
 
 - `fastify-backend/python_service/db/repository.py`
-  - PostGIS repository abstraction.
-  - Provides viewport/boundary/multi-region/category constrained queries.
-  - Keeps SQL aligned with existing `pois` schema.
+  - PostGIS 访问抽象，提供视口/边界/多区/分类过滤查询，并与现有 `pois` 表结构保持一致。
 
-## 3.5 Generated protocol files
+### 3.5 协议生成文件
 
 - `fastify-backend/python_service/generated/spatial_compute_pb2.py`
-  - Generated message types from proto.
-
 - `fastify-backend/python_service/generated/spatial_compute_pb2_grpc.py`
-  - Generated gRPC service stubs from proto.
 
-## 3.6 Package markers
+### 3.6 包标记文件
 
 - `fastify-backend/python_service/__init__.py`
 - `fastify-backend/python_service/algorithms/__init__.py`
 - `fastify-backend/python_service/db/__init__.py`
 - `fastify-backend/python_service/pipeline/__init__.py`
 
----
+## 4. 本轮 Node 瘦身改动
 
-## 4) Node slimming changes applied in this round
+### 4.1 Legacy 执行器改为懒加载
 
-### 4.1 Legacy executor is now lazy-loaded
+文件：`fastify-backend/services/spatialJobRunner.js`
 
-File: `fastify-backend/services/spatialJobRunner.js`
+- 旧行为：模块加载时就引入 `routes/ai/executor.js`
+- 新行为：仅在回退确实发生时再动态引入 legacy 执行器
+- 收益：Python 主路径健康时，网关启动与运行时负担更小
 
-- Previous behavior: `routes/ai/executor.js` was imported at module load time.
-- New behavior: legacy Node executor is imported only when fallback is actually needed.
-- Benefit: lower gateway startup/runtime footprint when Python primary path is healthy.
+### 4.2 高级查询回退策略
 
-### 4.2 Advanced query fallback policy added
+文件：`fastify-backend/services/spatialJobRunner.js`
 
-File: `fastify-backend/services/spatialJobRunner.js`
+新增环境变量：`SPATIAL_NODE_ADVANCED_FALLBACK`
 
-- New env flag: `SPATIAL_NODE_ADVANCED_FALLBACK`
-  - `minimal` (default): advanced query fallback returns minimal safe structure on Node side
-  - `legacy`: allow old Node heavy compute fallback
-  - `disabled`: always use minimal Node fallback for advanced types
-- Explicit `forceNodeFallback=true` still allows legacy fallback for drills/regression checks.
+- `minimal`（默认）：高级查询在 Node 侧返回最小安全结构
+- `legacy`：允许旧版 Node 重计算回退
+- `disabled`：高级类型仅使用最小回退
 
----
+说明：`forceNodeFallback=true` 仍可用于 drill/回归场景强制 legacy 回退。
 
-## 5) Next slimming plan (toward pure gateway Node)
+## 5. 下一阶段瘦身计划
 
-1. Move remaining core fallback logic to thin SQL-only wrappers (remove Node-side spatial reasoning).
-2. Remove direct legacy `executeQuery` usage in residual old routes; keep `spatialJobRunner` as single orchestration entry.
-3. Keep Python as default for all advanced query types; retain Node only as emergency compatibility layer.
-4. Complete staged rollout (10% -> 30% -> 60% -> 100%), then remove redundant Node compute branches after stabilization window.
+1. 将剩余回退逻辑继续收敛到 SQL 轻量包装，移除 Node 侧空间推理分支。
+2. 清理旧路由中残余 `executeQuery` 直连，统一经由 `spatialJobRunner`。
+3. 保持 Python 作为所有高级查询默认路径，Node 仅作为应急兼容层。
+4. 完成 10% -> 30% -> 60% -> 100% 分阶段发布，稳定窗口后下线冗余 Node 计算分支。
 
----
-
-## 6) Daily regression commands
+## 6. 每日回归命令
 
 ```bash
 npm --prefix fastify-backend run smoke:jobs

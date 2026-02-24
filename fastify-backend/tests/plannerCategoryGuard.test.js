@@ -27,7 +27,7 @@ test('keeps mobility categories when transport intent is explicit', () => {
 
   const guarded = applyAreaAnalysisCategoryGuard(
     queryPlan,
-    '请评估这片区15分钟交通可达性和地铁换乘便利度'
+    'Ƭ15ӽͨɴԺ͵˱'
   )
 
   assert.deepEqual(guarded.categories, ['商场', '停车场', '地铁站'])

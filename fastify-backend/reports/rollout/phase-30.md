@@ -17,8 +17,8 @@
    - 结果：`all_within_expected=true`
    - 输出文件：`fastify-backend/reports/rollout/phase-30.json`
 
-3. 回退通路验证
-   - 在 `executeSpatialPlanWithFallback` 路径下配合 `SPATIAL_FORCE_NODE_FALLBACK=true` 进行回退演练并通过。
+3. ͨ·֤
+   -  `executeSpatialPlanWithFallback` · `SPATIAL_FORCE_NODE_FALLBACK=true` лͨ
 
 ## 观察结论
 

@@ -10,6 +10,7 @@
 // 后端 API 基础路径
 // 后端 API 基础路径
 import { API_BASE_URL } from '../config';
+import { validateSSEEventPayload } from '../../shared/sseEventSchema.js';
 const API_BASE = `${API_BASE_URL}/api/ai`;
 
 // 当前服务商信息（从后端获取）
@@ -184,11 +185,30 @@ export async function sendChatMessageStream(messages, onChunk, options = {}, poi
           const META_EVENT_TYPES = new Set([
             'pois', 'stage', 'boundary', 'spatial_clusters',
             'vernacular_regions', 'fuzzy_regions', 'stats', 'progress',
-            'partial', 'refined_result'
+            'partial', 'refined_result', 'schema_error'
           ])
 
           if (currentEvent && META_EVENT_TYPES.has(currentEvent)) {
             const payload = JSON.parse(data)
+            const validation = validateSSEEventPayload(currentEvent, payload)
+            if (!validation.ok) {
+              console.warn('[AI Frontend] SSE payload schema mismatch:', {
+                event: currentEvent,
+                errors: validation.errors.slice(0, 5)
+              })
+              if (onMeta) {
+                try {
+                  onMeta('schema_error', {
+                    event: currentEvent,
+                    errors: validation.errors
+                  })
+                } catch (metaErr) {
+                  console.error('[AI Meta Handler Error]', metaErr)
+                }
+              }
+              currentEvent = null
+              continue
+            }
             if (currentEvent === 'pois') {
               console.log('[AI Frontend] 收到后端下发的 POI 数据:', payload.length)
             } else if (currentEvent === 'stage') {
@@ -272,9 +292,9 @@ export async function quickSearch(keyword, options = {}) {
   const params = new URLSearchParams({ q: kw, limit: '100' });
   
   // ========== 核心业务逻辑 ==========
-  // 1. 有选区（多边形/圆形）→ 必须在选区内搜索
+  // 1. ѡ/ԲΣ ѡ
   // 2. 无选区 → 使用当前地图视野 (viewport) 作为边界
-  // 3. 任何情况都必须有空间约束，不允许全库搜索
+  // 3. κпռԼȫ
   
   let hasGeometry = false;
   

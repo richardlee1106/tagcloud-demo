@@ -41,4 +41,30 @@ describe('normalizeRefinedResultEvidence', () => {
     expect(normalized.stats?.total_candidates).toBe(88)
     expect(normalized.hasEvidence).toBe(true)
   })
+
+  it('extracts intent metadata from refined_result envelope', () => {
+    const input = {
+      query_plan: {
+        query_type: 'poi_search',
+        intent_mode: 'local_search',
+        anchor: '湖北大学',
+        categories: ['咖啡厅']
+      },
+      results: {
+        stats: { cluster_count: 2 }
+      }
+    }
+
+    const normalized = normalizeRefinedResultEvidence(input)
+    expect(normalized.intent).toEqual({
+      queryType: 'poi_search',
+      intentMode: 'local_search',
+      queryPlan: {
+        query_type: 'poi_search',
+        intent_mode: 'local_search',
+        anchor: '湖北大学',
+        categories: ['咖啡厅']
+      }
+    })
+  })
 })

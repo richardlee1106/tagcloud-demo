@@ -157,16 +157,16 @@ block_assembler.assemble_block_boundaries(
 ```
 聚类 POI → 提取 block_id 集合 → 查找对应地块 Polygon
            → shapely.unary_union(block_polygons)
-           → 若为 MultiPolygon → 取面积最大的连通部分
+            Ϊ MultiPolygon  ȡͨ
            → 验证有效性
 ```
 
-**核心优势**：边界自然贴合道路网络（因为 road_block 本身就是由道路围合形成的闭合面）。
+****߽Ȼϵ·磨Ϊ road_block ɵ·Χγɵıպ棩
 
 ### 4.4 审计要点
 
-- STRtree 空间索引用于 AOI/EULUC 回退查询（O(log N) 替代 O(N) 线性遍历）
-- MultiPolygon 聚合时只取最大连通部分，可能丢失离散小块 → 需要监控
+- STRtree ռ AOI/EULUC ˲ѯO(log N)  O(N) Ա
+- MultiPolygon ۺʱֻȡ֣ͨܶʧɢС  Ҫ
 
 ---
 
@@ -177,7 +177,7 @@ block_assembler.assemble_block_boundaries(
 | 优先级 | 来源 | 示例 | 置信度 |
 |--------|------|------|--------|
 | 1 | AOI.name + EULUC 后缀 | "沙湖生态片区" | 0.75-0.90 |
-| 2 | POI 高频子串（语义锚点）| "光谷商业片区" | 0.45-0.85 |
+| 2 | POI ƵӴê㣩| "ҵƬ" | 0.45-0.85 |
 | 3 | EULUC 用地类型 | "教育用地片区" | 0.40 |
 | 4 | AOI type 兜底 | "公园片区" | 0.30 |
 | 5 | 无信息 | "未命名片区" | 0.10 |
@@ -190,7 +190,7 @@ block_assembler.assemble_block_boundaries(
 
 #### 宏观地名黑名单（v5.1 新增）
 
-省级名称（湖北、湖南、广东……）、市级名称（武汉、汉口、武昌……）、通用名称（中国、有限公司、集团……）
+ʡƣϡ㶫мƣ人ڡͨƣй޹˾š
 
 **作用**：避免出现"湖北湖北片区"等语义错误。
 
@@ -230,7 +230,7 @@ composite_v5_score = weighted_sum(
 | 方法 | 先验值 | 依据 |
 |------|--------|------|
 | road_block_union_v5 | 0.93 | 边界天然贴合路网 |
-| aoi_fallback_v5 | 0.85 | AOI 面本身是人工标注的高质量数据 |
+| aoi_fallback_v5 | 0.85 | AOI 汾˹עĸ |
 | euluc_fallback_v5 | 0.82 | 基于遥感影像分类 |
 | convex_hull_last_resort_v5 | 0.70 | 数学凸包，不贴合实际边界 |
 
@@ -269,7 +269,7 @@ V5 的路网地块边界只有一个 polygon（不像 V1-V4 的三层 outer/tran
 前端判断 `region.layers` 是否有真正的多层结构：
 
 - **有多层**：渲染 3 层（外层/过渡层/核心层）
-- **无多层（V5）**：只渲染 1 层，避免 3x 重复渲染导致拖拽卡顿
+- **޶㣨V5**ֻȾ 1 㣬 3x ظȾק
 
 ### 8.2 渲染样式
 
@@ -319,6 +319,6 @@ Frontend (MapContainer.vue)
 |---|------|------|--------|
 | 1 | 大型设施跨多个地块时被拆分为多个聚类 | TODO | 中 |
 | 2 | MultiPolygon 只取最大连通部分可能丢失离散小块 | 已知 | 低 |
-| 3 | 宏观地名黑名单需要针对不同城市动态扩展 | TODO | 低 |
+| 3 | ۵ҪԲͬж̬չ | TODO |  |
 | 4 | VLM 地图 OCR 集成（截图→提取地名→Writer） | 规划中 | 中 |
 | 5 | 语义聚合：同一 AOI name 下的多聚类应当合并 | TODO | 高 |

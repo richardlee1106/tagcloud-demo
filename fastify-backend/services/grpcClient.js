@@ -50,7 +50,7 @@ function loadGrpcClient() {
     GRPC_ENDPOINT,
     grpc.credentials.createInsecure(),
     {
-      // 限制消息大小与 keepalive，降低长流断开概率。
+      // ϢС keepaliveͳϿʡ
       'grpc.max_receive_message_length': 10 * 1024 * 1024,
       'grpc.keepalive_time_ms': 20_000,
       'grpc.keepalive_timeout_ms': 5_000

@@ -143,7 +143,7 @@
       
       <!-- 右下角设置与返回 -->
       <div class="action-buttons">
-        <button class="round-tool-btn" @click="scriptVisible = !scriptVisible" :title="scriptVisible ? '隐藏面板' : '显示面板'">
+        <button class="round-tool-btn" @click="scriptVisible = !scriptVisible" :title="scriptVisible ? '' : 'ʾ'">
           <el-icon><View v-if="scriptVisible" /><Hide v-else /></el-icon>
         </button>
         <button class="round-tool-btn danger" @click="goBack" title="返回主页">
@@ -155,12 +155,29 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount, shallowRef, watch, nextTick } from 'vue';
+import { ref, computed, onBeforeUnmount, shallowRef, watch, nextTick, defineAsyncComponent } from 'vue';
 import { useRouter } from 'vue-router';
-import * as THREE from 'three';
 import { marked } from 'marked';
-import MapContainer from '../components/MapContainer.vue';
+import { ArrowLeft, Close, Hide, Loading, MagicStick, VideoPlay, View } from '@element-plus/icons-vue';
 import { fromLonLat, toLonLat } from 'ol/proj';
+
+const MapContainer = defineAsyncComponent(() => import('../components/MapContainer.vue'));
+
+let THREE = null;
+let threeRuntimePromise = null;
+
+async function ensureThreeRuntime() {
+  if (THREE) return THREE;
+  if (!threeRuntimePromise) {
+    threeRuntimePromise = import('three').then((mod) => {
+      THREE = mod;
+      return THREE;
+    }).finally(() => {
+      threeRuntimePromise = null;
+    });
+  }
+  return threeRuntimePromise;
+}
 
 /**
  * ==========================================
@@ -227,7 +244,7 @@ watch(currentVoiceText, (newVal) => {
 const scene = shallowRef(null);
 const camera = shallowRef(null);
 const renderer = shallowRef(null);
-const clock = shallowRef(new THREE.Clock());
+const clock = shallowRef(null);
 const boundaryMesh = shallowRef(null);
 const boundaryMaterial = shallowRef(null);
 const maskMesh = shallowRef(null); // 背景遮罩
@@ -253,10 +270,15 @@ let boundaryDashStart = 0;
 let boundaryDashTotal = 0;
 const BOUNDARY_DASH_DURATION = 3.6;
 
+function getElapsedClockTime() {
+  if (!clock.value) return 0;
+  return clock.value.getElapsedTime();
+}
+
 const formattedAiResponse = computed(() => {
   // 1. 移除 JSON 代码块 (包括 ```json ... ``` 和 纯 JSON 文本)
   let cleanText = aiResponse.value
-    .replace(/```json[\s\S]*?```/g, '') // 移除 markdown json 块
+    .replace(/```json[\s\S]*?```/g, '') // Ƴ markdown json 
     .replace(/\{[\s\S]*"narrative_flow"[\s\S]*\}/, ''); // 移除裸 json
   
   // 2. 也是为了隐藏可能的残留思考过程
@@ -274,8 +296,12 @@ watch(aiResponse, () => {
   });
 });
 
-const initThree = () => {
+const initThree = async () => {
+  await ensureThreeRuntime();
   if (!canvasRef.value) return;
+  if (!clock.value) {
+    clock.value = new THREE.Clock();
+  }
 
   const width = window.innerWidth;
   const height = window.innerHeight;
@@ -387,7 +413,7 @@ const syncThreeWithMap = () => {
     const array = positions.array;
     let needsUpdate = false;
     
-    // 如果点数不一致（极少情况，除非数据变了），则重新生成几何体
+    // һ£ݱˣɼ
     // 这里我们假设点数在 updateBoundaryLine 初始化后不变，只更新位置
     
     ring.forEach((coord, i) => {
@@ -415,7 +441,7 @@ const syncThreeWithMap = () => {
           if (boundaryMaterial.value?.uniforms) {
             boundaryMaterial.value.uniforms.uDashSize.value = total;
             boundaryMaterial.value.uniforms.uTotalSize.value = total * 2.0;
-            const elapsed = clock.value.getElapsedTime() - boundaryDashStart;
+            const elapsed = getElapsedClockTime() - boundaryDashStart;
             const t = (elapsed % BOUNDARY_DASH_DURATION) / BOUNDARY_DASH_DURATION;
             boundaryMaterial.value.uniforms.uDashOffset.value = total * (1.0 - t);
           }
@@ -449,9 +475,9 @@ const animate = () => {
   frameId = requestAnimationFrame(animate);
   
   if (renderer.value && scene.value && camera.value) {
-    const time = clock.value.getElapsedTime();
+    const time = getElapsedClockTime();
     
-    // 1. 每一帧都强制同步坐标 (解决拖动地图没动画的问题)
+    // 1. ÿһ֡ǿͬ (϶ͼû)
     syncThreeWithMap();
     
     // 2. 同步聚类边界坐标
@@ -521,7 +547,7 @@ const updateBoundaryLine = () => {
 
   const mesh = new THREE.LineLoop(geometry, boundaryMaterial.value);
   mesh.computeLineDistances();
-  boundaryDashStart = clock.value.getElapsedTime();
+  boundaryDashStart = getElapsedClockTime();
   const lineDistance = mesh.geometry.attributes.lineDistance;
   if (lineDistance && lineDistance.array && lineDistance.array.length > 0) {
     boundaryDashTotal = lineDistance.array[lineDistance.array.length - 1];
@@ -531,7 +557,7 @@ const updateBoundaryLine = () => {
       boundaryMaterial.value.uniforms.uDashOffset.value = boundaryDashTotal;
     }
   }
-  // 不再 frustumCulled，避免因为点在屏幕外被剔除导致的闪烁
+  //  frustumCulledΪĻⱻ޳µ˸
   mesh.frustumCulled = false; 
   boundaryMesh.value = mesh;
   scene.value.add(mesh);
@@ -545,9 +571,9 @@ const updateBoundaryLine = () => {
  * 4. 业务逻辑
  * ==========================================
  */
-const onMapReady = (olMap) => {
+const onMapReady = async (olMap) => {
   mapInstance.value = olMap;
-  initThree();
+  await initThree();
   window.addEventListener('resize', handleResize);
 };
 
@@ -741,7 +767,7 @@ const drawFuzzyRegions = async (regions) => {
       }
     }
     
-    // 3. 核心区（最上层，小范围，高透明度，高亮）
+    // 3. ϲ㣬СΧ͸ȣ
     if (region.layers.core?.boundary) {
       regionMeshGroup.core = createAuroraBoundary(
         region.layers.core.boundary,
@@ -892,7 +918,7 @@ const startAuroraAnimation = () => {
   const animate = () => {
     auroraAnimationId = requestAnimationFrame(animate);
     
-    const time = clock.value.getElapsedTime();
+    const time = getElapsedClockTime();
     const elapsed = performance.now() - drawStartTime;
     const drawProgress = Math.min(elapsed / DRAW_DURATION, 1); // 0 -> 1
     
@@ -1108,7 +1134,7 @@ const syncClusterBoundaries = () => {
     
     // 更新材质时间
     if (mesh.material.uniforms) {
-      mesh.material.uniforms.uTime.value = clock.value.getElapsedTime();
+      mesh.material.uniforms.uTime.value = getElapsedClockTime();
     }
   });
 };
@@ -1278,7 +1304,7 @@ const identifySemanticRegions = async (userQuery) => {
 
 /**
  * 模糊边界生成（GIS拓扑构造）
- * 基于POI点集生成连续密度表面，提取矢量轮廓线
+ * POI㼯ܶȱ棬ȡʸ
  */
 const generateFuzzyBoundaries = async (regionCandidates) => {
   if (!regionCandidates || regionCandidates.length === 0) return;
@@ -1370,7 +1396,7 @@ const renderAINarrative = async (script, boundaries) => {
 
 /**
  * 生成区域解说（新入口）
- * 三阶段通道：语义识别 -> 边界生成 -> 动画渲染
+ * ׶ͨʶ -> ߽ -> Ⱦ
  * 优化：添加超时处理和错误恢复
  */
 const generateRegionNarrative = async () => {
@@ -1437,7 +1463,7 @@ const generateRegionNarrative = async () => {
       const { done, value } = await reader.read();
       if (done) break;
       
-      // 检查是否长时间没有数据（延长至60秒，因为大数据集处理需要时间）
+      // Ƿʱûݣӳ60룬ΪݼҪʱ䣩
       if (Date.now() - lastActivityTime > 60000) {
         console.warn('[Narrative] 响应流超时');
         break;
@@ -1565,9 +1591,6 @@ const generateRegionBasedSteps = (regions) => {
   return steps;
 };
 
-onMounted(() => {
-  window.addEventListener('resize', handleResize);
-});
 onBeforeUnmount(() => {
   cleanupThree();
   clearClusterBoundaries();
@@ -2026,7 +2049,7 @@ onBeforeUnmount(() => {
 .response-body :deep(p) { margin-bottom: 12px; }
 .response-body :deep(ul) { padding-left: 20px; margin-bottom: 12px; }
 
-/* 滚动条隐藏适配 */
+/*  */
 .script-content {
     -ms-overflow-style: none; /* IE and Edge */
 }

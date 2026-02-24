@@ -356,7 +356,7 @@ export async function initQueueServices() {
         try {
           await redisConnection.quit()
         } catch {
-                    // 忽略关闭阶段的次要错误，避免影响主退出流程
+                    // Թرս׶εĴҪ󣬱Ӱ˳
         }
       }
       redisConnection = null
@@ -429,7 +429,7 @@ function buildSnapshotStatusStats() {
 }
 
 /**
- * 解析健康检查阈值，保证环境变量异常时仍有安全默认值。
+ * ֵ֤쳣ʱаȫĬֵ
  */
 function parseHealthThreshold(rawValue, fallback) {
   const parsed = Number(rawValue)
@@ -541,7 +541,7 @@ export async function getQueueHealthSnapshot(options = {}) {
     alerts.push(createQueueAlert(
       'queue_backlog_high',
       'warning',
-      '队列积压已超过预警阈值。',
+      'лѹѳԤֵ',
       { value: backlog, threshold: thresholds.backlog_warn }
     ))
   }
@@ -550,7 +550,7 @@ export async function getQueueHealthSnapshot(options = {}) {
     alerts.push(createQueueAlert(
       'queue_failed_high',
       'warning',
-      '失败任务数量已超过预警阈值。',
+      'ʧѳԤֵ',
       { value: failed, threshold: thresholds.failed_warn }
     ))
   }

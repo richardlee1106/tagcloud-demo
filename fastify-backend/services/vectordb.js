@@ -3,7 +3,7 @@
  * 用于 POI 语义搜索和 Embedding 管理
  *
  * 替代 Milvus，使用 PostgreSQL + pgvector 扩展
- * 优势：统一数据库架构，更轻量，不需要额外容器
+ * ƣͳһݿܹҪ
  */
 
 import { getPool, query } from "./database.js";
@@ -335,9 +335,9 @@ export async function parallelHybridSearch(options) {
 
   // 并行执行两个独立的检索
   const [spatialResults, semanticResults] = await Promise.all([
-    // 通道 1: 纯空间检索（基于距离）
+    // ͨ 1: ռھ룩
     executeSpatialQuery(anchor, radius, viewportWKT, categories, topK * 2),
-    // 通道 2: 纯语义检索（基于向量相似度）
+    // ͨ 2: ƶȣ
     executeSemanticQuery(vectorStr, topK * 2, viewportWKT)
   ]);
 
@@ -364,12 +364,12 @@ export async function parallelHybridSearch(options) {
     const semanticScore = poi.semantic_score || 0;
     
     if (fusionMap.has(poi.id)) {
-      // 两个通道都检索到：融合分数
+      // ͨںϷ
       const existing = fusionMap.get(poi.id);
       existing.semantic_score = semanticScore;
       existing.hybrid_score = spatialWeight * existing.spatial_score + semanticWeight * semanticScore;
     } else {
-      // 仅语义通道检索到：计算与锚点的距离作为空间分数
+      // ͨêľΪռ
       const distance = poi.distance_m || calculateApproxDistance(anchor, poi);
       const spatialScore = distance <= radius ? 1 - distance / maxDistance : 0;
       

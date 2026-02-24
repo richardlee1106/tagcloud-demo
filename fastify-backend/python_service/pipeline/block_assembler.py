@@ -5,7 +5,7 @@
   1. 接收 BBOX，从 PostGIS 获取三层面（地块/AOI/EULUC）和空间连接后的 POI
   2. 对 POI_final 进行 HDBSCAN 聚类
   3. 每个聚类 → 提取所属地块 ID → ST_Union 地块面 → 贴合路网的片区边界
-  4. 回退策略：地块面 → AOI 面 → EULUC 面
+  4. ˲ԣؿ  AOI   EULUC 
   5. 片区命名：AOI.name > semantic_anchor > EULUC.类别 > LLM
   6. 低置信度名称黑名单过滤
 """
@@ -26,7 +26,7 @@ from shapely.strtree import STRtree
 
 
 # ────────────────────────────────────────────────────────────
-# 低置信度名称黑名单（不适合作为"片区名"的 POI 名称/AOI 名称关键词）
+# ŶƺʺΪ"Ƭ" POI /AOI ƹؼʣ
 # ────────────────────────────────────────────────────────────
 _LOW_CONFIDENCE_NAME_KEYWORDS: frozenset = frozenset((
     "停车场", "公厠", "公共厠所", "卫生间", "垃圾站", "垃圾回收",
@@ -43,7 +43,7 @@ _MACRO_GEO_NAMES: frozenset = frozenset((
     "湖北", "湖南", "广东", "江苏", "浙江", "山东", "四川", "河南", "河北",
     "安徽", "福建", "江西", "陕西", "山西", "吉林", "辽宁", "云南", "贵州",
     "甘肃", "青海", "内蒙古", "广西", "西藏", "新疆", "宁夏", "海南",
-    "黑龙江", "北京", "上海", "天津", "重庆",
+    "", "", "Ϻ", "", "",
     # 武汉相关
     "武汉", "武汉市", "汉口", "武昌", "汉阳",
     "洪山", "青山", "江夏", "汉南", "硅口",
@@ -173,7 +173,7 @@ def _extract_dominant(values: List[str], blacklist: Set[str] | None = None) -> T
     ]
     counter = Counter(cleaned)
     if blacklist:
-        # 先尝试排除黑名单，若排除后无候选则保留全部
+        # ȳųų޺ѡȫ
         filtered = {k: v for k, v in counter.items() if k not in blacklist}
         if filtered:
             counter = Counter(filtered)
@@ -184,7 +184,7 @@ def _extract_dominant(values: List[str], blacklist: Set[str] | None = None) -> T
 
 
 def _extract_name_fragments(poi_names: List[str], *, min_len: int = 2, max_len: int = 6, max_names: int = 100) -> Counter:
-    """从 POI 名称中提取 CJK 子串频次统计，限制最多处理 max_names 个名称以避免大聚类性能问题。"""
+    """ POI ȡ CJK ӴƵͳƣദ max_names Ա⡣"""
     fragment_counter: Counter = Counter()
     for raw_name in poi_names[:max_names]:
         if not raw_name:
@@ -233,11 +233,11 @@ def _resolve_district_name(
         name = f"{dominant_aoi_name}{suffix}"
         return name, "aoi_name", min(1.0, 0.75 + 0.15 * (1 if dominant_land_type else 0))
 
-    # 优先级 2：POI 名称高频子串（语义锚点）
+    # ȼ 2POI ƸƵӴê㣩
     poi_names = [str(p.get("name", "")).strip() for p in cluster_pois if str(p.get("name", "")).strip()]
     fragments = _extract_name_fragments(poi_names)
     if fragments:
-        # 取出现次数 >= 3 且长度 >= 2 的最高频片段
+        # ȡִ >= 3 ҳ >= 2 ƵƬ
         candidates = [(frag, count) for frag, count in fragments.most_common(10) if count >= 3 and len(frag) >= 2]
         if candidates:
             best_frag, best_count = candidates[0]

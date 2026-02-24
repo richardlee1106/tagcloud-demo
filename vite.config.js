@@ -1,5 +1,8 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
+import AutoImport from 'unplugin-auto-import/vite'
+import Components from 'unplugin-vue-components/vite'
+import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 import { fileURLToPath, URL } from 'node:url'
 
 const childProcessShimPath = fileURLToPath(
@@ -8,7 +11,22 @@ const childProcessShimPath = fileURLToPath(
 
 // d:\AAA_Edu\TagCloud\vite-project\vite.config.js
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [
+    vue(),
+    AutoImport({
+      resolvers: [ElementPlusResolver()],
+      dts: false
+    }),
+    Components({
+      resolvers: [
+        ElementPlusResolver({
+          importStyle: 'css',
+          directives: true
+        })
+      ],
+      dts: false
+    })
+  ],
   resolve: {
     alias: {
       'child_process': childProcessShimPath,
@@ -20,21 +38,28 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id) {
-          if (!id.includes('node_modules')) return
-          if (id.includes('/@vue/') || id.includes('/vue/')) return 'vendor-vue'
-          if (id.includes('vue-router')) return 'vendor-vue-router'
-          if (id.includes('/ol/')) return 'vendor-ol'
-          if (id.includes('three')) return 'vendor-three'
-          if (id.includes('@deck.gl') || id.includes('@luma.gl')) return 'vendor-deckgl'
-          if (id.includes('element-plus')) return 'vendor-element-plus'
-          if (id.includes('vuetify')) return 'vendor-vuetify'
-          if (id.includes('/d3') || id.includes('d3-cloud')) return 'vendor-d3'
-          if (id.includes('geotiff') || id.includes('@loaders.gl') || id.includes('pako')) return 'vendor-raster'
-          if (id.includes('fabric')) return 'vendor-fabric'
-          if (id.includes('pixi.js')) return 'vendor-pixi'
-          if (id.includes('axios')) return 'vendor-axios'
-          if (id.includes('marked')) return 'vendor-marked'
-          if (id.includes('rbush') || id.includes('regl')) return 'vendor-geo-utils'
+          const normalizedId = id.replace(/\\/g, '/')
+          if (!normalizedId.includes('node_modules')) {
+            if (normalizedId.includes('/src/views/NarrativeMode.vue')) return 'route-narrative'
+            return
+          }
+
+          if (normalizedId.includes('/@vue/') || normalizedId.includes('/vue/')) return 'vendor-vue'
+          if (normalizedId.includes('vue-router')) return 'vendor-vue-router'
+          if (normalizedId.includes('/ol/')) return 'vendor-ol'
+          if (normalizedId.includes('three')) return 'vendor-narrative-three'
+          if (normalizedId.includes('@element-plus/icons-vue')) return 'vendor-narrative-icons'
+          if (normalizedId.includes('@deck.gl') || normalizedId.includes('@luma.gl')) return 'vendor-deckgl'
+          if (normalizedId.includes('element-plus')) return 'vendor-element-plus'
+          if (normalizedId.includes('vuetify')) return 'vendor-vuetify'
+          if (normalizedId.includes('/d3') || normalizedId.includes('d3-cloud')) return 'vendor-d3'
+          if (normalizedId.includes('geotiff') || normalizedId.includes('@loaders.gl') || normalizedId.includes('pako')) return 'vendor-raster'
+          if (normalizedId.includes('fabric')) return 'vendor-fabric'
+          if (normalizedId.includes('pixi.js')) return 'vendor-pixi'
+          if (normalizedId.includes('axios')) return 'vendor-axios'
+          if (normalizedId.includes('html2canvas')) return 'vendor-capture'
+          if (normalizedId.includes('marked')) return 'vendor-marked'
+          if (normalizedId.includes('rbush') || normalizedId.includes('regl')) return 'vendor-geo-utils'
           return 'vendor'
         }
       }

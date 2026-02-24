@@ -783,7 +783,7 @@ async function computeSpatialWithFallback({
 
       throw new Error('Python compute stream ended without FINAL payload')
     } catch (err) {
-      // 重构目标：Python失败时不再回退到Node.js，直接抛出错误
+      // عĿ꣺Pythonʧʱٻ˵Node.jsֱ׳
       // 这样可以确保空间计算始终由Python处理，符合"Python见长"的设计原则
       fallbackReasons.push(`python_error:${err.message}`)
       await reporter.reportStage('python_fallback_error', {
@@ -798,7 +798,7 @@ async function computeSpatialWithFallback({
   // 如果Python路径没有被选择（不应该发生），则抛出错误
   if (!usePythonPrimary) {
     console.error('[SpatialJobRunner] Python未被选为主路径，但系统配置要求仅使用Python计算')
-    throw new Error('配置错误：空间计算仅支持Python服务')
+    throw new Error('ô󣺿ռ֧Python')
   }
 
   // 正常情况下不会执行到这里，因为Python失败会直接抛出错误
@@ -1071,7 +1071,7 @@ export async function runNarrativeSpatialJob(payload, reporter = {}) {
   let normalizedExecutor = null
   let migrationDecision = null
 
-  // 先尝试命中空间结果缓存，命中后跳过重计算阶段。
+  // ȳпռ棬кؼ׶Ρ
   if (shouldUseCache && spatialCacheFingerprint) {
     const cachedEnvelope = queryCache.getFromCache(spatialCacheFingerprint)
     if (cachedEnvelope) {

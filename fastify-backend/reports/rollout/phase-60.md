@@ -18,7 +18,7 @@
    - 输出文件：`fastify-backend/reports/rollout/phase-60.json`
 
 3. 端到端调用验证
-   - `/api/ai/execute` 通过 `executeSpatialPlanWithFallback` 路径完成 Python 主执行 + Node 回退兜底验证。
+   - `/api/ai/execute` ͨ `executeSpatialPlanWithFallback` · Python ִ + Node ˶֤
 
 ## 观察结论
 

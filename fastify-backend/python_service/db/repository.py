@@ -128,7 +128,7 @@ class POIRepository:
 
     @classmethod
     def _region_spatial_clauses(cls, regions: Any) -> Tuple[List[str], List[Any]]:
-        """将多选区上下文转换为 SQL 空间子句（OR 并集）。"""
+        """ѡתΪ SQL ռӾ䣨OR """
         if not isinstance(regions, (list, tuple)):
             return [], []
 
@@ -139,7 +139,7 @@ class POIRepository:
             if not isinstance(region, dict):
                 continue
 
-            # 中文注释：优先使用前端预生成的 boundaryWKT，避免重复几何序列化导致精度漂移。
+            # עͣʹǰԤɵ boundaryWKTظл¾Ươ
             region_wkt = region.get("boundaryWKT", region.get("wkt"))
             if isinstance(region_wkt, str) and region_wkt.strip():
                 clauses.append("ST_Within(p.geom, ST_GeomFromText(%s, 4326))")
@@ -215,7 +215,7 @@ class POIRepository:
         print(f"[POSTGIS_DEBUG] spatial_context: {spatial_context}", flush=True, file=sys.stderr)
         print(f"[POSTGIS_DEBUG] categories: {categories}", flush=True, file=sys.stderr)
         print(f"[POSTGIS_DEBUG] terms: {terms}", flush=True, file=sys.stderr)
-        # 兜底保护：spatial_context 非字典时重置，避免后续 .get 调用异常
+        # ױspatial_context ֵʱã .get 쳣
         if not isinstance(spatial_context, dict):
             print(f"[POSTGIS_DEBUG] Warning: spatial_context is not dict, resetting to {{}}", flush=True, file=sys.stderr)
             spatial_context = {}
@@ -239,7 +239,7 @@ class POIRepository:
             if order_by_distance:
                 order_sql = "ORDER BY p.id ASC"
         elif boundary_wkt:
-            # 先走 bbox 预过滤（&&），再用 ST_Within 精确过滤以降低 CPU 开销
+            #  bbox Ԥˣ&& ST_Within ȷԽ CPU 
             where_parts.append("p.geom && ST_GeomFromText(%s, 4326)")
             params.append(boundary_wkt)
             where_parts.append("ST_Within(p.geom, ST_GeomFromText(%s, 4326))")
@@ -686,7 +686,7 @@ class POIRepository:
             where_parts.append("(" + " OR ".join(term_parts) + ")")
 
         # 注意：三层面使用 LEFT JOIN LATERAL + LIMIT 1 确保每个 POI 只
-        # 匹配一个最佳面（面积最小的包含面 = 语义最精确的面）。
+        # ƥһ棨Сİ = ȷ棩
         sql = """
             SELECT
                 p.id,
