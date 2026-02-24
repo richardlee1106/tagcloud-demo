@@ -56,7 +56,8 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, watch, toRaw } from 'vue'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { buildPlaceTagsFromPois } from '../utils/placeTagExtractor'
 
 const props = defineProps({
   // 后端返回的 POI 数据
@@ -165,13 +166,11 @@ function calculateLayout() {
     }))
   }
   
-  const tags = rawPois.map((poi, index) => ({
-    id: poi.id || poi.poiid || index,
-    name: poi.name || poi.名称 || '未知',
-    type: poi.type || poi.小类 || poi.大类 || '',
-    weight: poi.score || poi.relevance_score || (topK - index),
-    originalPoi: poi
-  }))
+  const tags = buildPlaceTagsFromPois(rawPois, {
+    mode: currentMode.value,
+    intentMode: props.intentMode,
+    maxCount: topK
+  })
   
   // 发送到 Worker 计算 (使用 canvasWidth.value)
   worker.postMessage({

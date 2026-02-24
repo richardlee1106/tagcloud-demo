@@ -6,72 +6,70 @@ function createProps() {
     clusters: {
       hotspots: [
         {
-          name: '沙湖热点',
+          name: '沙湖热区',
           dominantCategories: [{ category: '生态' }],
           poiCount: 36,
-          density: 12.3,
           center: [114.33, 30.58],
-          boundary_confidence: 0.74,
-          confidence_explain: { model: 'composite_v5' },
-          boundary_geojson: {
-            type: 'Polygon',
-            coordinates: [[[114.3, 30.5], [114.4, 30.5], [114.4, 30.6], [114.3, 30.6], [114.3, 30.5]]]
-          },
-          semantic_anchor: { name: '沙湖' },
-          niche_profile: { niche_type: 'ecology', confidence: 0.82 },
-          semantic_reasoning: { evidence: [{ type: 'anchor' }, { type: 'water_context' }] }
+          boundary_confidence: 0.74
+        },
+        {
+          name: '中北路热区',
+          dominantCategories: [{ category: '商业' }],
+          poiCount: 30,
+          center: [114.31, 30.59],
+          boundary_confidence: 0.68
         }
       ]
     },
     vernacularRegions: [
       {
-        name: '销品茂商圈',
+        name: '徐东商圈',
         membership: { score: 0.78, level: 'core' },
         center: [114.32, 30.57],
-        boundary_confidence: 0.69,
-        semantic_anchor: { name: '销品茂' },
-        niche_profile: { niche_type: 'commerce', confidence: 0.75 },
-        semantic_reasoning: { evidence: [{ type: 'anchor' }, { type: 'landuse' }] },
-        boundary_geojson: {
-          type: 'Polygon',
-          coordinates: [[[114.31, 30.56], [114.33, 30.56], [114.33, 30.58], [114.31, 30.58], [114.31, 30.56]]]
-        }
+        boundary_confidence: 0.69
+      },
+      {
+        name: '岳家嘴片区',
+        membership: { score: 0.72, level: 'transition' },
+        center: [114.34, 30.58],
+        boundary_confidence: 0.63
       }
     ],
     fuzzyRegions: [
       {
+        name: '沙湖缓冲带',
         level: 'transition',
-        boundary_confidence: 0.66
+        ambiguity: { score: 0.61 },
+        center: [114.30, 30.60]
       }
     ],
-    boundary: {
-      type: 'Polygon',
-      coordinates: [[[114.2, 30.5], [114.5, 30.5], [114.5, 30.7], [114.2, 30.7], [114.2, 30.5]]]
-    }
+    analysisStats: {
+      avg_boundary_confidence: 0.66,
+      boundary_confidence_model: 'composite_v5',
+      cluster_count: 4
+    },
+    intentMode: 'macro_overview',
+    queryType: 'area_analysis'
   }
 }
 
-describe('SpatialEvidenceCard semantic rendering', () => {
-  it('renders semantic summary and confidence labels', async () => {
+describe('SpatialEvidenceCard intent templates', () => {
+  it('renders 1-3 intent-driven widgets', () => {
     const wrapper = mount(SpatialEvidenceCard, { props: createProps() })
-    const fuzzyHeader = wrapper.findAll('.section-header').find((node) => node.text().includes('渐变边界'))
-    if (fuzzyHeader) {
-      await fuzzyHeader.trigger('click')
-    }
-    const text = wrapper.text()
 
-    expect(text).toContain('锚点 沙湖')
-    expect(text).toContain('生态位 生态 82%')
-    expect(text).toContain('约束 关键词')
-    expect(text).toContain('边界 74%')
-    expect(text).toContain('边界可信 66%')
-    expect(text).toContain('模型 composite_v5')
+    const cards = wrapper.findAll('.template-card')
+    expect(cards.length).toBeGreaterThanOrEqual(1)
+    expect(cards.length).toBeLessThanOrEqual(3)
+    expect(wrapper.text()).toContain('意图驱动组件')
+    expect(wrapper.text()).toContain('宏观意图')
   })
 
-  it('emits locate when hotspot chip is clicked', async () => {
+  it('emits locate when clicking locate action', async () => {
     const wrapper = mount(SpatialEvidenceCard, { props: createProps() })
-    const hotspotChip = wrapper.find('.hotspot-chip')
-    await hotspotChip.trigger('click')
+    const locateAction = wrapper.findAll('.template-action').find((node) => node.text().includes('定位'))
+
+    expect(locateAction).toBeTruthy()
+    await locateAction.trigger('click')
 
     const events = wrapper.emitted('locate')
     expect(events).toBeTruthy()

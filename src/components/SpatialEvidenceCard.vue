@@ -1,939 +1,601 @@
 <template>
-  <div class="spatial-evidence-card" v-if="hasEvidence">
-    <section v-if="topHotspots.length" class="evidence-section clusters-section">
-      <button type="button" class="section-header" @click="toggleSection('clusters')">
-        <span class="section-icon">{{ copy.hotspots.icon }}</span>
-        <div class="section-title-group">
-          <span class="section-title">{{ copy.hotspots.title }} ({{ topHotspots.length }})</span>
-          <span class="section-subtitle">{{ copy.hotspots.subtitle }}</span>
-        </div>
-        <span class="toggle-arrow" :class="{ expanded: expandedSections.clusters }">></span>
-      </button>
+  <section v-if="hasEvidence" class="evidence-board">
+    <header class="board-head">
+      <div>
+        <p class="board-kicker">空间证据聚合</p>
+        <h3 class="board-title">意图驱动组件</h3>
+      </div>
+      <span class="board-intent">{{ intentLabel }}</span>
+    </header>
 
-      <div v-if="expandedSections.clusters" class="section-body">
-        <div class="section-actions">
-          <button type="button" class="mini-action-btn" @click.stop="askHotspotCause">
-            {{ copy.hotspots.actions.cause }}
-          </button>
-          <button type="button" class="mini-action-btn" @click.stop="askHotspotOpportunity">
-            {{ copy.hotspots.actions.opportunity }}
-          </button>
+    <div class="template-grid">
+      <article
+        v-for="widget in selectedWidgets"
+        :key="widget.key"
+        class="template-card"
+      >
+        <div class="template-head">
+          <span class="template-icon">{{ widget.icon }}</span>
+          <div class="template-title-wrap">
+            <h4 class="template-title">{{ widget.title }}</h4>
+            <p class="template-subtitle">{{ widget.subtitle }}</p>
+          </div>
         </div>
 
+        <ul class="template-list">
+          <li
+            v-for="(line, lineIndex) in widget.lines"
+            :key="`${widget.key}-line-${lineIndex}`"
+            class="template-line"
+          >
+            {{ line }}
+          </li>
+        </ul>
+
+        <div v-if="widget.actions.length" class="template-actions">
+          <button
+            v-for="action in widget.actions"
+            :key="`${widget.key}-${action.label}`"
+            type="button"
+            class="template-action"
+            @click="runAction(action)"
+          >
+            {{ action.label }}
+          </button>
+        </div>
+      </article>
+    </div>
+
+    <details v-if="detailRows.length" class="detail-panel">
+      <summary>查看详细片区列表</summary>
+      <div class="detail-list">
         <button
-          v-for="(h, i) in topHotspots"
-          :key="`hotspot-${i}`"
+          v-for="item in detailRows"
+          :key="item.key"
           type="button"
-          class="hotspot-chip"
-          :style="{ '--stagger': i }"
-          @click="handleHotspotClick(h)"
+          class="detail-row"
+          @click="handleLocate(item.center)"
         >
-          <div class="chip-top-line">
-            <span class="chip-rank">#{{ i + 1 }}</span>
-            <span class="chip-label">{{ formatHotspotLabel(h) }}</span>
-            <span
-              v-if="hasBoundaryConfidence(h)"
-              class="chip-confidence"
-              :class="confidenceClass(resolveBoundaryConfidence(h))"
-            >
-              边界 {{ formatConfidencePercent(resolveBoundaryConfidence(h)) }}
-            </span>
-          </div>
-
-          <div class="chip-bottom-line">
-            <span class="chip-meta">{{ formatHotspotMeta(h) }}</span>
-            <span v-if="formatSemanticSummary(h)" class="chip-semantic">
-              {{ formatSemanticSummary(h) }}
-            </span>
-          </div>
-
-          <div v-if="buildHoverDetail(h)" class="chip-hover-panel">
-            {{ buildHoverDetail(h) }}
-          </div>
+          <span class="detail-rank">{{ item.rank }}</span>
+          <span class="detail-name">{{ item.name }}</span>
+          <span class="detail-metric">{{ item.metric }}</span>
         </button>
       </div>
-    </section>
-
-    <section v-if="topRegions.length" class="evidence-section regions-section">
-      <button type="button" class="section-header" @click="toggleSection('regions')">
-        <span class="section-icon">{{ copy.regions.icon }}</span>
-        <div class="section-title-group">
-          <span class="section-title">{{ copy.regions.title }} ({{ topRegions.length }})</span>
-          <span class="section-subtitle">{{ copy.regions.subtitle }}</span>
-        </div>
-        <span class="toggle-arrow" :class="{ expanded: expandedSections.regions }">></span>
-      </button>
-
-      <div v-if="expandedSections.regions" class="section-body">
-        <div class="section-actions">
-          <button type="button" class="mini-action-btn" @click.stop="askRegionCompare">
-            {{ copy.regions.actions.compare }}
-          </button>
-          <button type="button" class="mini-action-btn" @click.stop="askRegionStrategy">
-            {{ copy.regions.actions.strategy }}
-          </button>
-        </div>
-
-        <button
-          v-for="(vr, i) in topRegions"
-          :key="`region-${i}`"
-          type="button"
-          class="region-chip"
-          :style="{ '--stagger': i }"
-          @click="handleRegionClick(vr)"
-        >
-          <div class="chip-top-line">
-            <span class="chip-rank">#{{ i + 1 }}</span>
-            <span class="chip-label">{{ formatRegionLabel(vr) }}</span>
-            <span v-if="vr.membership?.score" class="chip-confidence" :class="confidenceClass(vr.membership.score)">
-              {{ Math.round(vr.membership.score * 100) }}%
-            </span>
-            <span
-              v-if="hasBoundaryConfidence(vr)"
-              class="chip-boundary-confidence"
-              :class="confidenceClass(resolveBoundaryConfidence(vr))"
-            >
-              边界 {{ formatConfidencePercent(resolveBoundaryConfidence(vr)) }}
-            </span>
-            <span v-if="vr.membership?.level" class="chip-level">{{ levelLabel(vr.membership.level) }}</span>
-          </div>
-
-          <div class="chip-bottom-line">
-            <span v-if="formatSemanticSummary(vr)" class="chip-semantic">
-              {{ formatSemanticSummary(vr) }}
-            </span>
-          </div>
-
-          <div v-if="buildHoverDetail(vr)" class="chip-hover-panel">
-            {{ buildHoverDetail(vr) }}
-          </div>
-        </button>
-      </div>
-    </section>
-
-    <section v-if="fuzzyRegions?.length" class="evidence-section fuzzy-section">
-      <button type="button" class="section-header" @click="toggleSection('fuzzy')">
-        <span class="section-icon">{{ copy.fuzzy.icon }}</span>
-        <div class="section-title-group">
-          <span class="section-title">{{ copy.fuzzy.title }} ({{ fuzzyRegions.length }})</span>
-          <span class="section-subtitle">{{ copy.fuzzy.subtitle }}</span>
-        </div>
-        <span class="toggle-arrow" :class="{ expanded: expandedSections.fuzzy }">></span>
-      </button>
-
-      <div v-if="expandedSections.fuzzy" class="section-body">
-        <div class="fuzzy-summary">
-          <span v-for="level in fuzzyLevelSummary" :key="level.key" class="fuzzy-level-badge" :class="level.key">
-            {{ level.label }} {{ level.count }}
-          </span>
-        </div>
-        <div v-if="fuzzyBoundaryConfidence.avg !== null" class="confidence-row">
-          <span class="fuzzy-confidence-badge" :class="confidenceClass(fuzzyBoundaryConfidence.avg)">
-            边界可信 {{ formatConfidencePercent(fuzzyBoundaryConfidence.avg) }}
-          </span>
-          <span class="confidence-model-note">模型 {{ confidenceModel || 'composite_v5' }}</span>
-        </div>
-
-        <button
-          v-for="(region, i) in topFuzzyRegions"
-          :key="`fuzzy-${i}`"
-          type="button"
-          class="fuzzy-chip"
-          :style="{ '--stagger': i }"
-          @click="handleFuzzyClick(region)"
-        >
-          <div class="chip-top-line">
-            <span class="chip-rank">#{{ i + 1 }}</span>
-            <span class="chip-label">{{ formatFuzzyRegionTitle(region) }}</span>
-            <span class="chip-level">{{ levelLabel(resolveFuzzyLevel(region)) }}</span>
-            <span
-              v-if="resolveFuzzyAmbiguityScore(region) !== null"
-              class="chip-confidence"
-              :class="ambiguityClass(resolveFuzzyAmbiguityScore(region))"
-            >
-              歧义 {{ formatConfidencePercent(resolveFuzzyAmbiguityScore(region)) }}
-            </span>
-          </div>
-          <div class="chip-bottom-line">
-            <span class="chip-meta">{{ formatFuzzyHierarchyMeta(region) }}</span>
-            <span v-if="formatFuzzyAmbiguityFlags(region)" class="chip-semantic">
-              {{ formatFuzzyAmbiguityFlags(region) }}
-            </span>
-          </div>
-        </button>
-      </div>
-    </section>
-
-  </div>
+    </details>
+  </section>
 </template>
 
 <script setup>
-import { computed, reactive } from 'vue'
+import { computed } from 'vue'
 
 const props = defineProps({
   clusters: { type: Object, default: null },
   vernacularRegions: { type: Array, default: null },
-  fuzzyRegions: { type: Array, default: null }
+  fuzzyRegions: { type: Array, default: null },
+  analysisStats: { type: Object, default: null },
+  intentMode: { type: String, default: 'macro_overview' },
+  queryType: { type: String, default: 'area_analysis' }
 })
 
 const emit = defineEmits(['locate', 'ask-followup'])
 
-const copy = {
-  hotspots: {
-    icon: '🔥',
-    title: '高活力片区',
-    subtitle: '按 POI 密度聚类，识别人流/业态聚集核心',
-    actions: {
-      cause: '追问成因',
-      opportunity: '找机会点'
-    }
-  },
-  regions: {
-    icon: '🧭',
-    title: '主导业态片区',
-    subtitle: '按主导类别与空间连续性构建可解释分区',
-    actions: {
-      compare: '做相邻对比',
-      strategy: '给经营建议'
-    }
-  },
-  fuzzy: {
-    icon: '🌫️',
-    title: '渐变边界',
-    subtitle: '展示核心-过渡-边缘层级'
-  }
-}
-
-const expandedSections = reactive({
-  clusters: true,
-  regions: true,
-  fuzzy: false
-})
-
-const hasEvidence = computed(() => {
-  return (
-    props.clusters?.hotspots?.length > 0 ||
-    props.vernacularRegions?.length > 0 ||
-    props.fuzzyRegions?.length > 0
-  )
-})
-
 const topHotspots = computed(() => {
-  if (!Array.isArray(props.clusters?.hotspots)) return []
-  return [...props.clusters.hotspots]
+  const hotspots = Array.isArray(props.clusters?.hotspots) ? props.clusters.hotspots : []
+  return [...hotspots]
     .sort((a, b) => Number(b?.poiCount || b?.poi_count || 0) - Number(a?.poiCount || a?.poi_count || 0))
-    .slice(0, 5)
+    .slice(0, 6)
 })
 
 const topRegions = computed(() => {
-  if (!Array.isArray(props.vernacularRegions)) return []
-  return [...props.vernacularRegions]
+  const regions = Array.isArray(props.vernacularRegions) ? props.vernacularRegions : []
+  return [...regions]
     .sort((a, b) => Number(b?.membership?.score || 0) - Number(a?.membership?.score || 0))
     .slice(0, 6)
 })
 
-const fuzzyLevelSummary = computed(() => {
-  if (!props.fuzzyRegions?.length) return []
-  const counts = { core: 0, transition: 0, periphery: 0 }
-  props.fuzzyRegions.forEach((fr) => {
-    const level = fr.level || fr.membership?.level || 'transition'
-    if (counts[level] !== undefined) counts[level] += 1
-  })
-  return [
-    { key: 'core', label: '核心', count: counts.core },
-    { key: 'transition', label: '过渡', count: counts.transition },
-    { key: 'periphery', label: '边缘', count: counts.periphery }
-  ].filter((item) => item.count > 0)
-})
-
-const confidenceModel = computed(() => {
-  const extractModel = (item) => item?.confidence_explain?.model || item?.confidenceExplain?.model || null
-  const pools = [
-    ...(Array.isArray(props.clusters?.hotspots) ? props.clusters.hotspots : []),
-    ...(Array.isArray(props.vernacularRegions) ? props.vernacularRegions : []),
-    ...(Array.isArray(props.fuzzyRegions) ? props.fuzzyRegions : [])
-  ]
-  for (const item of pools) {
-    const model = extractModel(item)
-    if (model) return String(model)
-  }
-  return null
-})
-
-const fuzzyBoundaryConfidence = computed(() => {
-  if (!Array.isArray(props.fuzzyRegions) || props.fuzzyRegions.length === 0) {
-    return { avg: null, count: 0 }
-  }
-  const values = props.fuzzyRegions
-    .map((region) => resolveBoundaryConfidence(region))
-    .filter((score) => Number.isFinite(score))
-  if (values.length === 0) {
-    return { avg: null, count: 0 }
-  }
-  const avg = values.reduce((sum, value) => sum + value, 0) / values.length
-  return {
-    avg: Number(avg.toFixed(4)),
-    count: values.length
-  }
-})
-
 const topFuzzyRegions = computed(() => {
-  if (!Array.isArray(props.fuzzyRegions)) return []
-  return [...props.fuzzyRegions]
+  const regions = Array.isArray(props.fuzzyRegions) ? props.fuzzyRegions : []
+  return [...regions]
     .sort((a, b) => Number(b?.score ?? b?.membership?.score ?? 0) - Number(a?.score ?? a?.membership?.score ?? 0))
     .slice(0, 6)
 })
 
-function toggleSection(key) {
-  expandedSections[key] = !expandedSections[key]
-}
+const fuzzyLevelSummary = computed(() => {
+  const counter = { core: 0, transition: 0, periphery: 0 }
+  topFuzzyRegions.value.forEach((item) => {
+    const level = String(item?.level || item?.membership?.level || 'transition')
+    if (counter[level] !== undefined) counter[level] += 1
+  })
+  return counter
+})
 
-function formatHotspotLabel(hotspot) {
-  const categories = hotspot?.dominantCategories || hotspot?.dominant_categories
-  const category = Array.isArray(categories) && categories[0]?.category ? categories[0].category : '综合'
-  return `${category}活力带`
-}
+const derivedBoundaryConfidence = computed(() => {
+  const fromStats = Number(props.analysisStats?.avg_boundary_confidence)
+  if (Number.isFinite(fromStats)) return clamp01(fromStats)
 
-function formatHotspotMeta(hotspot) {
-  const poiCount = Number(hotspot?.poiCount || hotspot?.poi_count || 0)
-  const density = Number(hotspot?.density || 0)
-  if (density > 0) {
-    return `${poiCount} POI / 密度 ${density.toFixed(2)}`
+  const values = [
+    ...topHotspots.value.map((item) => resolveBoundaryConfidence(item)),
+    ...topRegions.value.map((item) => resolveBoundaryConfidence(item)),
+    ...topFuzzyRegions.value.map((item) => resolveBoundaryConfidence(item))
+  ].filter((value) => Number.isFinite(value))
+
+  if (!values.length) return null
+  return clamp01(values.reduce((sum, value) => sum + value, 0) / values.length)
+})
+
+const intentType = computed(() => {
+  const merged = `${props.intentMode || ''}|${props.queryType || ''}`.toLowerCase()
+  if (merged.includes('comparison') || merged.includes('region_comparison')) return 'comparison'
+  if (merged.includes('local_search') || merged.includes('poi_search') || merged.includes('micro')) return 'micro'
+  return 'macro'
+})
+
+const intentLabel = computed(() => {
+  if (intentType.value === 'comparison') return '对比意图'
+  if (intentType.value === 'micro') return '微观意图'
+  return '宏观意图'
+})
+
+const widgetPriority = {
+  macro: {
+    hotspot_overview: 100,
+    industry_pattern: 90,
+    confidence_watch: 82,
+    opportunity_window: 74,
+    fuzzy_risk: 68,
+    comparison_digest: 60
+  },
+  micro: {
+    opportunity_window: 100,
+    confidence_watch: 94,
+    hotspot_overview: 88,
+    fuzzy_risk: 84,
+    industry_pattern: 70,
+    comparison_digest: 58
+  },
+  comparison: {
+    comparison_digest: 100,
+    confidence_watch: 92,
+    fuzzy_risk: 88,
+    industry_pattern: 82,
+    hotspot_overview: 76,
+    opportunity_window: 66
   }
-  return `${poiCount} POI`
 }
 
-function formatRegionLabel(region) {
-  const raw = region?.name || region?.dominant_category || region?.theme || '区域'
-  return String(raw).replace(/区域$/u, '') + '片区'
-}
+const selectedWidgets = computed(() => {
+  const widgets = buildWidgets()
+    .filter((widget) => widget.available)
+    .map((widget) => ({
+      ...widget,
+      priority: (widgetPriority[intentType.value] || {})[widget.key] || 50
+    }))
+    .sort((a, b) => b.priority - a.priority)
+    .slice(0, 3)
+  return widgets
+})
 
-function resolveSemanticAnchorName(entity) {
-  const raw = entity?.semantic_anchor?.name || entity?.semanticAnchor?.name || ''
-  return String(raw || '').trim()
-}
+const detailRows = computed(() => {
+  const rows = []
 
-function resolveNicheType(entity) {
-  const raw = entity?.niche_profile?.niche_type || entity?.nicheProfile?.nicheType || ''
-  return String(raw || '').trim().toLowerCase()
-}
+  topHotspots.value.slice(0, 3).forEach((item, index) => {
+    rows.push({
+      key: `hotspot-${index}`,
+      rank: `热区 #${index + 1}`,
+      name: formatHotspotLabel(item),
+      metric: `${Number(item?.poiCount || item?.poi_count || 0)} POI`,
+      center: item?.center
+    })
+  })
 
-function resolveNicheConfidence(entity) {
-  const candidates = [entity?.niche_profile?.confidence, entity?.nicheProfile?.confidence]
-  for (const candidate of candidates) {
-    const value = Number(candidate)
-    if (Number.isFinite(value)) {
-      if (value < 0) return 0
-      if (value > 1) return 1
-      return value
-    }
-  }
-  return null
-}
+  topRegions.value.slice(0, 3).forEach((item, index) => {
+    rows.push({
+      key: `region-${index}`,
+      rank: `业态 #${index + 1}`,
+      name: formatRegionLabel(item),
+      metric: `隶属度 ${formatPercent(item?.membership?.score)}`,
+      center: item?.center
+    })
+  })
 
-function nicheTypeLabel(nicheType) {
-  const map = {
-    ecology: '生态',
-    commerce: '商业',
-    education: '科教',
-    mixed: '复合'
-  }
-  return map[nicheType] || nicheType || '复合'
-}
+  topFuzzyRegions.value.slice(0, 2).forEach((item, index) => {
+    rows.push({
+      key: `fuzzy-${index}`,
+      rank: `边界 #${index + 1}`,
+      name: formatFuzzyLabel(item),
+      metric: `歧义 ${formatPercent(item?.ambiguity?.score)}`,
+      center: item?.center
+    })
+  })
 
-function resolveSemanticReasonText(entity) {
-  const reasoning = entity?.semantic_reasoning || entity?.semanticReasoning
-  const evidence = Array.isArray(reasoning?.evidence) ? reasoning.evidence : []
-  if (!evidence.length) return ''
+  return rows
+})
 
-  const typeSet = new Set(
-    evidence
-      .map((item) => String(item?.type || '').trim())
-      .filter(Boolean)
-  )
+const hasEvidence = computed(() => {
+  return topHotspots.value.length > 0 || topRegions.value.length > 0 || topFuzzyRegions.value.length > 0
+})
 
-  const parts = []
-  if (typeSet.has('anchor')) parts.push('关键词')
-  if (typeSet.has('landuse')) parts.push('用地')
-  if (typeSet.has('water_context')) parts.push('水域')
+function buildWidgets() {
+  const bestHotspot = topHotspots.value[0]
+  const bestRegion = topRegions.value[0]
+  const firstFuzzy = topFuzzyRegions.value[0]
+  const secondRegion = topRegions.value[1]
+  const secondHotspot = topHotspots.value[1]
 
-  return parts.length ? `约束 ${parts.join('/')}` : ''
-}
-
-function formatSemanticSummary(entity) {
-  const parts = []
-  const anchorName = resolveSemanticAnchorName(entity)
-  if (anchorName) {
-    parts.push(`锚点 ${anchorName}`)
-  }
-
-  const nicheType = resolveNicheType(entity)
-  if (nicheType) {
-    const nicheConfidence = resolveNicheConfidence(entity)
-    if (nicheConfidence === null) {
-      parts.push(`生态位 ${nicheTypeLabel(nicheType)}`)
-    } else {
-      parts.push(`生态位 ${nicheTypeLabel(nicheType)} ${formatConfidencePercent(nicheConfidence)}`)
-    }
-  }
-
-  const reasonText = resolveSemanticReasonText(entity)
-  if (reasonText) {
-    parts.push(reasonText)
+  const hotspotWidget = {
+    key: 'hotspot_overview',
+    icon: '🔥',
+    title: '高活力片区',
+    subtitle: '识别人流与业态聚集中心',
+    available: topHotspots.value.length > 0,
+    lines: topHotspots.value.slice(0, 3).map((item, index) => {
+      const poiCount = Number(item?.poiCount || item?.poi_count || 0)
+      return `${index + 1}. ${formatHotspotLabel(item)} · ${poiCount} POI`
+    }),
+    actions: [
+      { type: 'locate', label: '定位最高活力', payload: bestHotspot?.center },
+      { type: 'followup', label: '追问热区成因', payload: buildHotspotFollowup(bestHotspot) }
+    ]
   }
 
-  return parts.join(' / ')
-}
-
-function buildHoverDetail(entity) {
-  if (!entity || typeof entity !== 'object') return ''
-  const quality = entity.boundary_quality || entity.boundaryQuality || {}
-  const generation = entity.boundary_generation || entity.boundaryGeneration || {}
-  const parts = []
-
-  const qualityScore = Number(quality.quality_score)
-  if (Number.isFinite(qualityScore)) {
-    parts.push(`质量 ${formatConfidencePercent(qualityScore)}`)
-  }
-  const roadAlignment = Number(quality.road_alignment_score)
-  if (Number.isFinite(roadAlignment)) {
-    parts.push(`路网贴合 ${formatConfidencePercent(roadAlignment)}`)
-  }
-  const landuseAlignment = Number(quality.landuse_alignment_score)
-  if (Number.isFinite(landuseAlignment)) {
-    parts.push(`用地贴合 ${formatConfidencePercent(landuseAlignment)}`)
+  const industryWidget = {
+    key: 'industry_pattern',
+    icon: '🧭',
+    title: '主导业态片区',
+    subtitle: '主导类别与空间连续性',
+    available: topRegions.value.length > 0,
+    lines: topRegions.value.slice(0, 3).map((item, index) => {
+      return `${index + 1}. ${formatRegionLabel(item)} · 隶属度 ${formatPercent(item?.membership?.score)}`
+    }),
+    actions: [
+      { type: 'locate', label: '定位主导业态', payload: bestRegion?.center },
+      { type: 'followup', label: '生成经营策略', payload: buildStrategyFollowup(bestRegion) }
+    ]
   }
 
-  const refinement = generation.refinement || {}
-  if (refinement?.model) {
-    const appliedText = refinement.applied ? '已应用' : '未应用'
-    parts.push(`后处理 ${appliedText}`)
+  const fuzzyWidget = {
+    key: 'fuzzy_risk',
+    icon: '🫧',
+    title: '渐变边界风险',
+    subtitle: '核心/过渡/边缘层级诊断',
+    available: topFuzzyRegions.value.length > 0,
+    lines: [
+      `核心 ${fuzzyLevelSummary.value.core} · 过渡 ${fuzzyLevelSummary.value.transition} · 边缘 ${fuzzyLevelSummary.value.periphery}`,
+      firstFuzzy ? `首要风险片区：${formatFuzzyLabel(firstFuzzy)}` : '暂无模糊片区风险',
+      firstFuzzy ? `歧义得分：${formatPercent(firstFuzzy?.ambiguity?.score)}` : '歧义得分：--'
+    ],
+    actions: [
+      { type: 'locate', label: '定位风险片区', payload: firstFuzzy?.center },
+      { type: 'followup', label: '追问边界不确定性', payload: buildFuzzyFollowup(firstFuzzy) }
+    ]
   }
 
-  return parts.join(' · ')
+  const confidenceWidget = {
+    key: 'confidence_watch',
+    icon: '📈',
+    title: '可信度看板',
+    subtitle: '边界质量与模型稳定性',
+    available: derivedBoundaryConfidence.value !== null,
+    lines: [
+      `边界平均可信度：${formatPercent(derivedBoundaryConfidence.value)}`,
+      `模型：${props.analysisStats?.boundary_confidence_model || 'composite_v5'}`,
+      `聚合片区数：${Number(props.analysisStats?.cluster_count || topRegions.value.length || 0)}`
+    ],
+    actions: []
+  }
+
+  const opportunityWidget = {
+    key: 'opportunity_window',
+    icon: '💡',
+    title: '机会窗口',
+    subtitle: '组合热区与业态给出落点建议',
+    available: Boolean(bestHotspot || bestRegion),
+    lines: [
+      bestHotspot ? `优先观察：${formatHotspotLabel(bestHotspot)}` : '缺少活力热区数据',
+      bestRegion ? `业态切入：${formatRegionLabel(bestRegion)}` : '缺少主导业态数据',
+      `建议动作：${intentType.value === 'micro' ? '先做单点验证，再扩张覆盖' : '先做分层选址，再做业态组合'}`
+    ],
+    actions: [
+      { type: 'followup', label: '输出机会清单', payload: buildOpportunityFollowup(bestHotspot, bestRegion) }
+    ]
+  }
+
+  const comparisonWidget = {
+    key: 'comparison_digest',
+    icon: '⚖️',
+    title: '结构对比摘要',
+    subtitle: '快速比较两个候选片区差异',
+    available: Boolean((bestRegion && secondRegion) || (bestHotspot && secondHotspot)),
+    lines: buildComparisonLines(bestRegion, secondRegion, bestHotspot, secondHotspot),
+    actions: [
+      { type: 'followup', label: '展开差异解读', payload: buildComparisonFollowup(bestRegion, secondRegion, bestHotspot, secondHotspot) }
+    ]
+  }
+
+  return [hotspotWidget, industryWidget, fuzzyWidget, confidenceWidget, opportunityWidget, comparisonWidget]
 }
 
-function confidenceClass(score) {
-  const value = Number(score)
-  if (!Number.isFinite(value)) return 'low'
-  if (value >= 0.7) return 'high'
-  if (value >= 0.4) return 'medium'
-  return 'low'
+function runAction(action) {
+  if (!action || !action.type) return
+  if (action.type === 'locate') {
+    handleLocate(action.payload)
+    return
+  }
+  if (action.type === 'followup' && action.payload) {
+    emit('ask-followup', action.payload)
+  }
 }
 
-function ambiguityClass(score) {
-  const value = Number(score)
-  if (!Number.isFinite(value)) return 'low'
-  if (value >= 0.65) return 'low'
-  if (value >= 0.4) return 'medium'
-  return 'high'
+function handleLocate(center) {
+  if (!center) return
+  emit('locate', center)
 }
 
-function levelLabel(level) {
-  const map = { core: '核心', transition: '过渡', periphery: '边缘' }
-  return map[level] || level
+function formatHotspotLabel(item) {
+  const category = item?.dominantCategories?.[0]?.category || item?.dominant_categories?.[0]?.category || '综合业态'
+  return `${category}活力区`
 }
 
-function resolveFuzzyLevel(region) {
-  return region?.level || region?.membership?.level || 'transition'
+function formatRegionLabel(item) {
+  const raw = String(item?.name || item?.dominant_category || item?.theme || '片区')
+  return raw.replace(/片区$/u, '') + '片区'
 }
 
-function resolveFuzzyAmbiguityScore(region) {
-  const value = Number(region?.ambiguity?.score)
-  if (!Number.isFinite(value)) return null
+function formatFuzzyLabel(item) {
+  return String(item?.hierarchy?.micro_name || item?.name || item?.theme || '模糊片区')
+}
+
+function formatPercent(value) {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return '--'
+  return `${Math.round(clamp01(numeric) * 100)}%`
+}
+
+function clamp01(value) {
+  if (!Number.isFinite(value)) return 0
   if (value < 0) return 0
   if (value > 1) return 1
   return value
 }
 
-function formatFuzzyRegionTitle(region) {
-  const hierarchy = region?.hierarchy || {}
-  return hierarchy.micro_name || region?.name || region?.theme || '模糊片区'
-}
-
-function formatFuzzyHierarchyMeta(region) {
-  const hierarchy = region?.hierarchy || {}
-  const macroName = hierarchy.macro_name ? `母区 ${hierarchy.macro_name}` : ''
-  const rank = Number(hierarchy.rank_in_macro)
-  const macroSize = Number(hierarchy.macro_size)
-  const rankText = Number.isFinite(rank) && Number.isFinite(macroSize) && macroSize > 0
-    ? `层级 ${rank}/${macroSize}`
-    : ''
-  const layerMode = hierarchy.layer_mode === 'multi_layer' ? '多层边界' : '单层边界'
-  return [macroName, rankText, layerMode].filter(Boolean).join(' · ')
-}
-
-function formatFuzzyAmbiguityFlags(region) {
-  const flags = Array.isArray(region?.ambiguity?.flags) ? region.ambiguity.flags : []
-  if (!flags.length) return ''
-  const labels = flags.map((flag) => {
-    if (flag === 'missing_anchor') return '缺锚点'
-    if (flag === 'mixed_niche') return '生态位混合'
-    if (flag === 'low_boundary_confidence') return '边界低置信'
-    if (flag === 'missing_boundary_confidence') return '边界置信缺失'
-    if (flag === 'weak_landuse_alignment') return '多源对齐弱'
-    if (flag === 'category_competition') return '业态竞争强'
-    return flag
-  })
-  return `提示 ${labels.join(' / ')}`
-}
-
 function resolveBoundaryConfidence(entity) {
-  if (!entity || typeof entity !== 'object') return null
-
   const candidates = [
-    entity.boundary_confidence,
-    entity.boundaryConfidence,
-    entity.layers?.transition?.confidence,
-    entity.layers?.outer?.confidence
+    entity?.boundary_confidence,
+    entity?.boundaryConfidence,
+    entity?.layers?.core?.confidence,
+    entity?.layers?.transition?.confidence,
+    entity?.layers?.outer?.confidence
   ]
   for (const candidate of candidates) {
-    const value = Number(candidate)
-    if (Number.isFinite(value)) {
-      if (value < 0) return 0
-      if (value > 1) return 1
-      return value
-    }
+    const score = Number(candidate)
+    if (Number.isFinite(score)) return clamp01(score)
   }
   return null
 }
 
-function hasBoundaryConfidence(entity) {
-  return resolveBoundaryConfidence(entity) !== null
+function buildHotspotFollowup(item) {
+  if (!item) return '请解释当前片区形成高活力的关键原因，并给出可验证指标。'
+  return `请解释「${formatHotspotLabel(item)}」形成高活力的原因，并给出3个可验证指标。`
 }
 
-function formatConfidencePercent(score) {
-  const value = Number(score)
-  if (!Number.isFinite(value)) return '--'
-  return `${Math.round(value * 100)}%`
+function buildStrategyFollowup(item) {
+  if (!item) return '请给出当前片区的经营策略：目标客群、业态组合与投入优先级。'
+  return `请围绕「${formatRegionLabel(item)}」输出经营策略：目标客群、业态组合、投入优先级。`
 }
 
-function handleHotspotClick(hotspot) {
-  if (hotspot?.center) {
-    emit('locate', hotspot.center)
+function buildFuzzyFollowup(item) {
+  if (!item) return '请解释当前模糊边界风险的来源，并给出降低不确定性的办法。'
+  return `请解释「${formatFuzzyLabel(item)}」边界不确定性的来源，并给出降低风险的办法。`
+}
+
+function buildOpportunityFollowup(hotspot, region) {
+  const hotspotText = hotspot ? formatHotspotLabel(hotspot) : '高活力片区'
+  const regionText = region ? formatRegionLabel(region) : '主导业态片区'
+  return `请基于「${hotspotText}」与「${regionText}」输出3个可执行机会点，并说明适配业态。`
+}
+
+function buildComparisonLines(regionA, regionB, hotspotA, hotspotB) {
+  if (regionA && regionB) {
+    return [
+      `业态对比：${formatRegionLabel(regionA)} vs ${formatRegionLabel(regionB)}`,
+      `隶属度：${formatPercent(regionA?.membership?.score)} vs ${formatPercent(regionB?.membership?.score)}`,
+      '建议：对比客群结构、坪效与竞争密度'
+    ]
   }
+
+  return [
+    `活力对比：${formatHotspotLabel(hotspotA)} vs ${formatHotspotLabel(hotspotB)}`,
+    `${Number(hotspotA?.poiCount || hotspotA?.poi_count || 0)} POI vs ${Number(hotspotB?.poiCount || hotspotB?.poi_count || 0)} POI`,
+    '建议：核验时间分布、客流峰谷与业态互补'
+  ]
 }
 
-function handleRegionClick(region) {
-  if (region?.center) {
-    emit('locate', region.center)
+function buildComparisonFollowup(regionA, regionB, hotspotA, hotspotB) {
+  if (regionA && regionB) {
+    return `请对比「${formatRegionLabel(regionA)}」与「${formatRegionLabel(regionB)}」的结构差异、风险和策略。`
   }
-}
-
-function handleFuzzyClick(region) {
-  if (region?.center) {
-    emit('locate', region.center)
+  if (hotspotA && hotspotB) {
+    return `请对比「${formatHotspotLabel(hotspotA)}」与「${formatHotspotLabel(hotspotB)}」的活力结构与商业机会。`
   }
-}
-
-function emitFollowup(prompt) {
-  if (!prompt) return
-  emit('ask-followup', prompt)
-}
-
-function askHotspotCause() {
-  const top = topHotspots.value[0]
-  const label = top ? formatHotspotLabel(top) : '高活力片区'
-  emitFollowup(`请解释「${label}」为什么会成为活力热点，并给出 3 个可验证指标。`)
-}
-
-function askHotspotOpportunity() {
-  const top = topHotspots.value[0]
-  const label = top ? formatHotspotLabel(top) : '高活力片区'
-  emitFollowup(`围绕「${label}」帮我找 3 个低供给高需求的机会点，说明原因和适合业态。`)
-}
-
-function askRegionCompare() {
-  const [first, second] = topRegions.value
-  const firstName = first ? formatRegionLabel(first) : '片区 A'
-  const secondName = second ? formatRegionLabel(second) : '片区 B'
-  emitFollowup(`请对比「${firstName}」和「${secondName}」的业态结构差异与潜在风险。`)
-}
-
-function askRegionStrategy() {
-  const top = topRegions.value[0]
-  const name = top ? formatRegionLabel(top) : '主导业态片区'
-  emitFollowup(`针对「${name}」输出一份可执行经营策略：目标人群、业态组合、投入优先级。`)
+  return '请给出两个片区的差异化运营策略。'
 }
 </script>
 
 <style scoped>
-.spatial-evidence-card {
+.evidence-board {
   margin: 12px 0;
-  border-radius: 16px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(15, 23, 42, 0.65);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.05);
-  color: rgba(248, 250, 252, 0.95);
+  border-radius: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: linear-gradient(145deg, rgba(15, 23, 42, 0.88), rgba(7, 18, 40, 0.92));
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.22);
   overflow: hidden;
-  font-family: "Manrope", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
-  letter-spacing: 0.01em;
 }
 
-.evidence-section + .evidence-section {
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
-}
-
-.section-header {
-  width: 100%;
-  border: 0;
-  background: transparent;
-  color: inherit;
+.board-head {
   display: flex;
-  align-items: center;
-  gap: 12px;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
   padding: 14px 16px;
-  cursor: pointer;
-  text-align: left;
-  transition: background 0.2s ease;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+  background: linear-gradient(120deg, rgba(15, 23, 42, 0.52), rgba(2, 132, 199, 0.08));
 }
 
-.section-header:hover {
-  background: rgba(255, 255, 255, 0.04);
-}
-
-.section-header.static {
-  cursor: default;
-}
-
-.section-header.static:hover {
-  background: transparent;
-}
-
-.boundary-section .section-header.static {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  column-gap: 12px;
-}
-
-.section-icon {
-  font-size: 16px;
-  line-height: 1;
-  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.2));
-}
-
-.section-title-group {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-
-.section-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: #fff;
-}
-
-.section-subtitle {
-  color: rgba(255, 255, 255, 0.55);
-  font-size: 12px;
-  line-height: 1.4;
-}
-
-.section-subtitle.boundary-model {
-  color: rgba(56, 189, 248, 0.85);
+.board-kicker {
+  margin: 0;
   font-size: 11px;
+  letter-spacing: 0.08em;
+  color: rgba(125, 211, 252, 0.86);
 }
 
-.toggle-arrow {
-  color: rgba(255, 255, 255, 0.4);
+.board-title {
+  margin: 4px 0 0;
+  font-size: 16px;
+  color: #f8fafc;
+}
+
+.board-intent {
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  background: rgba(2, 132, 199, 0.18);
+  color: #dbeafe;
   font-size: 12px;
-  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  font-weight: 600;
+  white-space: nowrap;
 }
 
-.toggle-arrow.expanded {
-  transform: rotate(90deg);
+.template-grid {
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
-.section-body {
-  padding: 0 16px 16px;
+.template-card {
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: linear-gradient(145deg, rgba(15, 23, 42, 0.76), rgba(15, 23, 42, 0.5));
+  padding: 12px;
   display: grid;
   gap: 10px;
 }
 
-.section-actions {
+.template-head {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 4px;
+  gap: 10px;
+  align-items: flex-start;
 }
 
-.mini-action-btn {
-  border-radius: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.05);
-  color: rgba(255, 255, 255, 0.85);
-  font-size: 12px;
-  font-weight: 500;
-  padding: 6px 12px;
-  cursor: pointer;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.mini-action-btn:hover {
-  border-color: rgba(255, 255, 255, 0.2);
-  background: rgba(255, 255, 255, 0.1);
-  color: #fff;
-}
-
-.mini-action-btn:hover {
-  transform: translateY(-1px);
-  border-color: rgba(94, 234, 212, 0.82);
-  background: rgba(13, 148, 136, 0.28);
-}
-
-.hotspot-chip,
-.region-chip,
-.fuzzy-chip {
-  position: relative;
-  width: 100%;
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  background: rgba(255, 255, 255, 0.03);
-  color: inherit;
-  text-align: left;
-  border-radius: 12px;
-  padding: 12px 14px;
-  cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  overflow: hidden;
-  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-  animation: chipFadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
-  animation-delay: calc(var(--stagger, 0) * 45ms);
-}
-
-.hotspot-chip:hover,
-.region-chip:hover,
-.fuzzy-chip:hover {
-  transform: translateY(-2px);
-  border-color: rgba(255, 255, 255, 0.15);
-  background: rgba(255, 255, 255, 0.06);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-}
-
-.chip-top-line {
-  position: relative;
-  z-index: 1;
-  display: flex;
+.template-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  display: inline-flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
+  justify-content: center;
+  background: rgba(14, 116, 144, 0.25);
+  border: 1px solid rgba(34, 211, 238, 0.3);
 }
 
-.chip-bottom-line {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
+.template-title-wrap {
+  min-width: 0;
 }
 
-.chip-rank {
-  font-size: 11px;
-  font-weight: 700;
-  color: rgba(255, 255, 255, 0.9);
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 6px;
-  padding: 3px 6px;
-}
-
-.chip-label {
+.template-title {
+  margin: 0;
   font-size: 14px;
-  font-weight: 600;
-  color: #fff;
+  color: #f8fafc;
 }
 
-.chip-meta {
+.template-subtitle {
+  margin: 2px 0 0;
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.5);
-}
-
-.chip-semantic {
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.7);
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 6px;
-  padding: 3px 8px;
-  max-width: 100%;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.chip-confidence,
-.chip-boundary-confidence {
-  font-size: 11px;
-  font-weight: 600;
-  border-radius: 6px;
-  padding: 3px 8px;
-}
-
-.chip-confidence.high,
-.chip-boundary-confidence.high {
-  background: rgba(34, 197, 94, 0.2);
-  color: #86efac;
-}
-
-.chip-confidence.medium,
-.chip-boundary-confidence.medium {
-  background: rgba(251, 191, 36, 0.24);
-  color: #fde68a;
-}
-
-.chip-confidence.low,
-.chip-boundary-confidence.low {
-  background: rgba(239, 68, 68, 0.22);
-  color: #fca5a5;
-}
-
-.chip-level {
-  font-size: 10px;
-  color: rgba(226, 232, 240, 0.82);
-}
-
-.chip-hover-panel {
-  position: absolute;
-  right: 10px;
-  top: calc(100% + 6px);
-  max-width: min(84vw, 320px);
-  border-radius: 10px;
-  border: 1px solid rgba(45, 212, 191, 0.34);
-  background: rgba(2, 44, 34, 0.94);
-  color: rgba(204, 251, 241, 0.95);
-  font-size: 10px;
+  color: rgba(203, 213, 225, 0.72);
   line-height: 1.4;
-  padding: 7px 8px;
-  z-index: 3;
-  opacity: 0;
-  transform: translateY(5px);
-  pointer-events: none;
-  transition: opacity 0.2s ease, transform 0.2s ease;
 }
 
-.hotspot-chip:hover .chip-hover-panel,
-.region-chip:hover .chip-hover-panel,
-.fuzzy-chip:hover .chip-hover-panel {
-  opacity: 1;
-  transform: translateY(0);
-}
-
-.fuzzy-summary {
-  display: flex;
+.template-list {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
   gap: 6px;
-  flex-wrap: wrap;
 }
 
-.fuzzy-level-badge {
-  font-size: 11px;
-  border-radius: 999px;
-  padding: 3px 9px;
+.template-line {
+  font-size: 12px;
+  color: rgba(226, 232, 240, 0.9);
+  line-height: 1.45;
 }
 
-.fuzzy-level-badge.core {
-  background: rgba(20, 184, 166, 0.24);
-  color: #99f6e4;
-}
-
-.fuzzy-level-badge.transition {
-  background: rgba(251, 191, 36, 0.22);
-  color: #fde68a;
-}
-
-.fuzzy-level-badge.periphery {
-  background: rgba(148, 163, 184, 0.22);
-  color: #d1d5db;
-}
-
-.confidence-row {
+.template-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  align-items: center;
 }
 
-.fuzzy-confidence-badge {
-  font-size: 11px;
-  font-weight: 700;
+.template-action {
+  border: 1px solid rgba(125, 211, 252, 0.32);
   border-radius: 999px;
-  padding: 4px 10px;
-}
-
-.fuzzy-confidence-badge.high {
-  background: rgba(34, 197, 94, 0.2);
-  color: #86efac;
-}
-
-.fuzzy-confidence-badge.medium {
-  background: rgba(251, 191, 36, 0.22);
-  color: #fde68a;
-}
-
-.fuzzy-confidence-badge.low {
-  background: rgba(239, 68, 68, 0.2);
-  color: #fda4af;
-}
-
-.confidence-model-note {
-  font-size: 10px;
-  color: rgba(186, 230, 253, 0.86);
-}
-
-.boundary-btn {
-  border: 1px solid rgba(34, 211, 238, 0.56);
-  background: rgba(6, 182, 212, 0.2);
-  color: rgba(224, 242, 254, 0.98);
+  background: rgba(14, 116, 144, 0.16);
+  color: #e0f2fe;
   font-size: 11px;
-  border-radius: 999px;
-  padding: 4px 11px;
+  padding: 5px 10px;
   cursor: pointer;
-  transition: background 0.2s ease, border-color 0.2s ease;
 }
 
-.boundary-btn:hover {
-  background: rgba(6, 182, 212, 0.34);
-  border-color: rgba(103, 232, 249, 0.88);
+.template-action:hover {
+  background: rgba(14, 116, 144, 0.3);
+  border-color: rgba(56, 189, 248, 0.5);
 }
 
-@media (max-width: 640px) {
-  .spatial-evidence-card {
-    border-radius: 12px;
-  }
-
-  .section-header {
-    padding: 9px 10px;
-  }
-
-  .section-body {
-    padding: 7px 8px 10px;
-  }
-
-  .boundary-section .section-header.static {
-    grid-template-columns: auto minmax(0, 1fr);
-    row-gap: 6px;
-  }
-
-  .boundary-btn {
-    grid-column: 1 / -1;
-    justify-self: start;
-  }
+.detail-panel {
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
+  padding: 10px 14px 14px;
 }
 
-@keyframes chipFadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+.detail-panel > summary {
+  cursor: pointer;
+  color: rgba(186, 230, 253, 0.92);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.detail-list {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.detail-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.5);
+  color: rgba(226, 232, 240, 0.94);
+  font-size: 12px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.detail-row:hover {
+  border-color: rgba(56, 189, 248, 0.42);
+}
+
+.detail-rank {
+  color: rgba(125, 211, 252, 0.92);
+  font-weight: 700;
+}
+
+.detail-name {
+  text-align: left;
+}
+
+.detail-metric {
+  color: rgba(203, 213, 225, 0.72);
 }
 </style>

@@ -32,7 +32,31 @@ export function normalizeRefinedResultEvidence(payload) {
     root.fuzzy_regions,
     root.fuzzyRegions
   )
-  const stats = pickObject(results.stats, results.analysisStats, root.stats, root.analysisStats)
+  const stats = pickObject(results.stats, results.analysisStats, root.stats, root.analysisStats) || {}
+  const queryPlan = pickObject(
+    root.query_plan,
+    root.queryPlan,
+    results.query_executed,
+    results.queryExecuted
+  ) || {}
+  const intentMode = String(
+    queryPlan.intent_mode ||
+      queryPlan.intentMode ||
+      stats.intent_mode ||
+      stats.intentMode ||
+      ''
+  )
+    .trim()
+    .toLowerCase()
+  const queryType = String(
+    queryPlan.query_type ||
+      queryPlan.queryType ||
+      stats.query_type ||
+      stats.queryType ||
+      ''
+  )
+    .trim()
+    .toLowerCase()
 
   const hotspotCount = Array.isArray(spatialClusters?.hotspots) ? spatialClusters.hotspots.length : 0
   const hasEvidence = Boolean(
@@ -48,7 +72,9 @@ export function normalizeRefinedResultEvidence(payload) {
     vernacularRegions,
     fuzzyRegions,
     stats,
+    queryPlan,
+    intentMode: intentMode || null,
+    queryType: queryType || null,
     hasEvidence
   }
 }
-

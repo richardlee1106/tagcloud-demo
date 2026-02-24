@@ -168,7 +168,7 @@ import Polygon from 'ol/geom/Polygon';
 import Overlay from 'ol/Overlay';
 import { fromLonLat, toLonLat } from 'ol/proj';
 import { Style, Fill, Stroke, Circle as CircleStyle, RegularShape, Text as TextStyle } from 'ol/style';
-import { isEmpty as isEmptyExtent } from 'ol/extent';
+import { getCenter as getExtentCenter, isEmpty as isEmptyExtent } from 'ol/extent';
 
 
 import { useRegions, REGION_COLORS, MAX_REGIONS } from '../composables/useRegions';
@@ -246,7 +246,9 @@ const poiPopup = ref(null); // DOM 相关说明
 const popupVisible = ref(false);
 const popupName = ref('');
 const popupDetailLines = ref([]);
+let popupAnchor = null;
 let popupHideTimer = null;
+let popupPositionRafId = null;
 
 
 const weightOptions = ref([
@@ -269,9 +271,9 @@ const aiBoundaryLegend = ref({
 const MAP_MIN_ZOOM = 4;
 const MAP_MAX_ZOOM = 18;
 const VECTOR_LAYER_RUNTIME_OPTIONS = {
-  updateWhileAnimating: true,
-  updateWhileInteracting: true,
-  renderBuffer: 280
+  updateWhileAnimating: false,
+  updateWhileInteracting: false,
+  renderBuffer: 140
 };
 
 // ============  ============
@@ -449,6 +451,10 @@ let ScatterplotLayerClass = null;
 let DeckHeatmapLayerClass = null;
 let deckRuntimePromise = null;
 let html2canvasModulePromise = null;
+let deckViewSyncAnimationId = null;
+let deckLayerRefreshAnimationId = null;
+let pointerMoveAnimationId = null;
+let pendingPointerEvent = null;
 
 // deck.gl 相关说明
 let currentLocatedPoi = null;
@@ -515,16 +521,20 @@ async function ensureDeckInitialized() {
   });
 
   const view = map.value.getView();
-  view.on('change:resolution', scheduleDeckSync);
-  view.on('change:center', scheduleDeckSync);
-  view.on('change:rotation', scheduleDeckSync);
+  view.on('change:center', scheduleDeckViewSync);
+  view.on('change:rotation', scheduleDeckViewSync);
+  view.on('change:resolution', () => {
+    scheduleDeckViewSync();
+    scheduleDeckLayerRefresh();
+  });
 
   nextTick(() => {
     const canvas = deckContainer?.querySelector?.('canvas');
     if (canvas) canvas.style.pointerEvents = 'none';
   });
 
-  scheduleDeckSync();
+  scheduleDeckViewSync();
+  scheduleDeckLayerRefresh();
   return deckInstance;
 }
 
@@ -663,13 +673,18 @@ function syncDeckView() {
   deckInstance.setProps({ viewState: getDeckViewState() });
 }
 
-let deckSyncAnimationId = null;
-
-function scheduleDeckSync() {
-  if (deckSyncAnimationId !== null) return;
-  deckSyncAnimationId = requestAnimationFrame(() => {
-    deckSyncAnimationId = null;
+function scheduleDeckViewSync() {
+  if (deckViewSyncAnimationId !== null) return;
+  deckViewSyncAnimationId = requestAnimationFrame(() => {
+    deckViewSyncAnimationId = null;
     syncDeckView();
+  });
+}
+
+function scheduleDeckLayerRefresh() {
+  if (deckLayerRefreshAnimationId !== null) return;
+  deckLayerRefreshAnimationId = requestAnimationFrame(() => {
+    deckLayerRefreshAnimationId = null;
     updateDeckLayers();
   });
 }
@@ -700,6 +715,9 @@ onMounted(() => {
   map.value.on('moveend', onMapMoveEnd);
   map.value.on('pointermove', onPointerMove);
   map.value.on('singleclick', onMapClick);
+  map.value.getView().on('change:center', schedulePopupPositionSync);
+  map.value.getView().on('change:resolution', schedulePopupPositionSync);
+  map.value.getView().on('change:rotation', schedulePopupPositionSync);
 
   // POI 相关说明
   rebuildPoiOlFeatures();
@@ -735,6 +753,7 @@ function onMapMoveEnd() {
   const tr = toLonLat([extent[2], extent[3]]);
   // [   ]
   emit('map-move-end', [bl[0], bl[1], tr[0], tr[1]]);
+  schedulePopupPositionSync();
 }
 
 const AI_BOUNDARY_KIND_PRIORITY = Object.freeze({
@@ -768,7 +787,8 @@ function findAiBoundaryAtCoordinate(coordinate) {
       bestMatch = {
         score,
         label,
-        meta: feature.get('__aiBoundaryMeta') || null
+        meta: feature.get('__aiBoundaryMeta') || null,
+        feature
       };
     }
   });
@@ -798,8 +818,10 @@ const emitHover = debounce((feature) => {
 function onMapClick(evt) {
   const pixel = map.value.getEventPixel(evt.originalEvent);
   let foundRaw = null;
+  let rawAnchorCoordinate = null;
   let boundaryLabel = '';
   let boundaryMeta = null;
+  let boundaryFeature = null;
 
   // 注释说明
   map.value.forEachFeatureAtPixel(
@@ -809,6 +831,7 @@ function onMapClick(evt) {
       if (typeof label === 'string' && label.trim()) {
         boundaryLabel = label.trim();
         boundaryMeta = feature.get('__aiBoundaryMeta') || null;
+        boundaryFeature = feature;
         return true;
       }
       return false;
@@ -824,6 +847,7 @@ function onMapClick(evt) {
     if (fallbackBoundary) {
       boundaryLabel = fallbackBoundary.label;
       boundaryMeta = fallbackBoundary.meta;
+      boundaryFeature = fallbackBoundary.feature || null;
     }
   }
 
@@ -835,6 +859,7 @@ function onMapClick(evt) {
         const raw = feature.get('__raw');
         if (raw) {
           foundRaw = raw;
+          rawAnchorCoordinate = resolveFeatureAnchorCoordinate(feature, evt.coordinate);
           return true;
         }
         return false;
@@ -856,6 +881,11 @@ function onMapClick(evt) {
       });
       if (pickInfo && pickInfo.object && pickInfo.object.raw) {
         foundRaw = pickInfo.object.raw;
+        const lon = Number(pickInfo.object.raw?.geometry?.coordinates?.[0]);
+        const lat = Number(pickInfo.object.raw?.geometry?.coordinates?.[1]);
+        if (Number.isFinite(lon) && Number.isFinite(lat)) {
+          rawAnchorCoordinate = fromLonLat([lon, lat]);
+        }
       }
     } catch (e) {
       // deck.gl 相关说明
@@ -863,36 +893,159 @@ function onMapClick(evt) {
   }
   
   if (boundaryLabel) {
-    showBoundaryPopup(boundaryLabel, pixel, boundaryMeta);
+    const boundaryAnchor = normalizePopupAnchor(
+      {
+        coordinate: resolveFeatureAnchorCoordinate(boundaryFeature, evt.coordinate),
+        pixel
+      },
+      evt.coordinate
+    );
+    showBoundaryPopup(boundaryLabel, boundaryAnchor, boundaryMeta);
   } else if (foundRaw) {
     console.log('[MapContainer] 点击要素:', foundRaw);
     emit('click-feature', foundRaw);
 
     // POI 相关说明
-    showPoiPopup(foundRaw, pixel);
+    const poiAnchor = normalizePopupAnchor(
+      {
+        coordinate: rawAnchorCoordinate,
+        pixel
+      },
+      evt.coordinate
+    );
+    showPoiPopup(foundRaw, poiAnchor);
   } else {
 
     hidePoiPopup();
   }
 }
 
-function positionPopup(anchor) {
-  if (!poiPopup.value || !mapContainer.value) return;
-  let x = null;
-  let y = null;
+function toFinitePair(value) {
+  if (!Array.isArray(value) || value.length < 2) return null;
+  const x = Number(value[0]);
+  const y = Number(value[1]);
+  return Number.isFinite(x) && Number.isFinite(y) ? [x, y] : null;
+}
 
-  if (Array.isArray(anchor) && anchor.length >= 2) {
-    x = Number(anchor[0]);
-    y = Number(anchor[1]);
-  } else if (anchor && typeof anchor === 'object') {
-    const mapRect = mapContainer.value.getBoundingClientRect();
-    x = Number(anchor.clientX) - mapRect.left;
-    y = Number(anchor.clientY) - mapRect.top;
+function resolveFeatureAnchorCoordinate(feature, fallbackCoordinate = null) {
+  const geometry = feature?.getGeometry?.();
+  if (!geometry) return Array.isArray(fallbackCoordinate) ? fallbackCoordinate : null;
+
+  if (typeof geometry.getType === 'function' && geometry.getType() === 'Point') {
+    const pointCoords = toFinitePair(geometry.getCoordinates?.());
+    if (pointCoords) return pointCoords;
   }
 
+  if (typeof geometry.getInteriorPoint === 'function') {
+    const interior = geometry.getInteriorPoint();
+    const coord = toFinitePair(interior?.getCoordinates?.());
+    if (coord) return coord;
+  }
+
+  if (Array.isArray(fallbackCoordinate) && typeof geometry.getClosestPoint === 'function') {
+    const closest = toFinitePair(geometry.getClosestPoint(fallbackCoordinate));
+    if (closest) return closest;
+  }
+
+  if (typeof geometry.getExtent === 'function') {
+    const extent = geometry.getExtent();
+    if (Array.isArray(extent) && extent.length === 4 && !isEmptyExtent(extent)) {
+      return getExtentCenter(extent);
+    }
+  }
+
+  return Array.isArray(fallbackCoordinate) ? fallbackCoordinate : null;
+}
+
+function normalizePopupAnchor(anchor, fallbackCoordinate = null) {
+  if (!map.value) return null;
+
+  let coordinate = null;
+  let pixel = null;
+
+  if (anchor && typeof anchor === 'object') {
+    coordinate = toFinitePair(anchor.coordinate);
+    pixel = toFinitePair(anchor.pixel);
+    if (!pixel && Number.isFinite(anchor.clientX) && Number.isFinite(anchor.clientY) && mapContainer.value) {
+      const mapRect = mapContainer.value.getBoundingClientRect();
+      pixel = [Number(anchor.clientX) - mapRect.left, Number(anchor.clientY) - mapRect.top];
+    }
+  } else {
+    pixel = toFinitePair(anchor);
+  }
+
+  if (!coordinate) {
+    coordinate = toFinitePair(fallbackCoordinate);
+  }
+
+  if (!pixel && coordinate) {
+    pixel = toFinitePair(map.value.getPixelFromCoordinate(coordinate));
+  }
+
+  if (!coordinate && pixel) {
+    coordinate = toFinitePair(map.value.getCoordinateFromPixel(pixel));
+  }
+
+  if (!coordinate && !pixel) return null;
+  return { coordinate, pixel };
+}
+
+function getPopupPixelFromAnchor(anchor) {
+  if (!anchor || !map.value) return null;
+  if (anchor.coordinate) {
+    return toFinitePair(map.value.getPixelFromCoordinate(anchor.coordinate));
+  }
+  return toFinitePair(anchor.pixel);
+}
+
+function schedulePopupPositionSync() {
+  if (popupPositionRafId !== null) return;
+  popupPositionRafId = requestAnimationFrame(() => {
+    popupPositionRafId = null;
+    syncPopupPosition();
+  });
+}
+
+function syncPopupPosition() {
+  if (!popupVisible.value || !popupAnchor) return;
+  positionPopup(popupAnchor);
+}
+
+function positionPopup(anchor) {
+  if (!poiPopup.value || !mapContainer.value || !anchor) return;
+  const pixel = getPopupPixelFromAnchor(anchor);
+  if (!pixel) return;
+
+  const mapRect = mapContainer.value.getBoundingClientRect();
+  const popupRect = poiPopup.value.getBoundingClientRect();
+  const popupWidth = popupRect.width || 0;
+  const popupHeight = popupRect.height || 0;
+
+  let x = Number(pixel[0]);
+  let y = Number(pixel[1]);
   if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+
+  const halfWidth = popupWidth * 0.5;
+  const leftBoundary = Math.max(halfWidth + 8, 8);
+  const rightBoundary = Math.max(leftBoundary, mapRect.width - halfWidth - 8);
+  x = Math.min(Math.max(x, leftBoundary), rightBoundary);
+
+  let flipped = false;
+  let anchorTop = y - 12;
+  if (anchorTop - popupHeight < 8) {
+    flipped = true;
+    anchorTop = y + 12;
+  }
+
+  if (flipped) {
+    anchorTop = Math.min(Math.max(anchorTop, 8), Math.max(8, mapRect.height - popupHeight - 8));
+  } else {
+    anchorTop = Math.min(Math.max(anchorTop, popupHeight + 8), Math.max(popupHeight + 8, mapRect.height - 8));
+  }
+
+  poiPopup.value.classList.toggle('flip-vertical', flipped);
   poiPopup.value.style.left = `${x}px`;
-  poiPopup.value.style.top = `${y - 10}px`;
+  poiPopup.value.style.top = `${anchorTop}px`;
 }
 
 function showTextPopup(label, anchor, autoHideMs = 2800, detailLines = []) {
@@ -900,10 +1053,15 @@ function showTextPopup(label, anchor, autoHideMs = 2800, detailLines = []) {
   popupDetailLines.value = Array.isArray(detailLines)
     ? detailLines.map((line) => String(line || '').trim()).filter(Boolean).slice(0, 4)
     : [];
+  popupAnchor = normalizePopupAnchor(anchor);
+  if (!popupAnchor) {
+    popupVisible.value = false;
+    return;
+  }
   popupVisible.value = true;
 
   nextTick(() => {
-    positionPopup(anchor);
+    positionPopup(popupAnchor);
   });
 
   if (popupHideTimer) {
@@ -942,6 +1100,10 @@ function hidePoiPopup() {
     popupHideTimer = null;
   }
   popupVisible.value = false;
+  popupAnchor = null;
+  if (poiPopup.value) {
+    poiPopup.value.classList.remove('flip-vertical');
+  }
   popupDetailLines.value = [];
 }
 
@@ -950,8 +1112,22 @@ function hidePoiPopup() {
  * deck.gl 相关说明
  */
 function onPointerMove(evt) {
-  if (evt.dragging) return;
-  
+  pendingPointerEvent = evt;
+  if (pointerMoveAnimationId !== null) return;
+  pointerMoveAnimationId = requestAnimationFrame(() => {
+    pointerMoveAnimationId = null;
+    processPointerMove(pendingPointerEvent);
+  });
+}
+
+function processPointerMove(evt) {
+  if (!evt || !map.value) return;
+  if (evt.dragging) {
+    map.value.getTargetElement().style.cursor = '';
+    emitHover(null);
+    return;
+  }
+
   const pixel = map.value.getEventPixel(evt.originalEvent);
   let hitRaw = null;
   
@@ -972,7 +1148,7 @@ function onPointerMove(evt) {
       const pickInfo = deckInstance.pickObject({
         x: pixel[0],
         y: pixel[1],
-        radius: 8,
+        radius: 6,
       });
       if (pickInfo && pickInfo.object && pickInfo.object.raw) {
         hitRaw = pickInfo.object.raw;
@@ -993,9 +1169,24 @@ function onPointerMove(evt) {
 
 onBeforeUnmount(() => {
 
-  if (deckSyncAnimationId !== null) {
-    cancelAnimationFrame(deckSyncAnimationId);
-    deckSyncAnimationId = null;
+  if (deckViewSyncAnimationId !== null) {
+    cancelAnimationFrame(deckViewSyncAnimationId);
+    deckViewSyncAnimationId = null;
+  }
+
+  if (deckLayerRefreshAnimationId !== null) {
+    cancelAnimationFrame(deckLayerRefreshAnimationId);
+    deckLayerRefreshAnimationId = null;
+  }
+
+  if (pointerMoveAnimationId !== null) {
+    cancelAnimationFrame(pointerMoveAnimationId);
+    pointerMoveAnimationId = null;
+  }
+
+  if (popupPositionRafId !== null) {
+    cancelAnimationFrame(popupPositionRafId);
+    popupPositionRafId = null;
   }
 
   if (popupHideTimer) {
@@ -1113,7 +1304,7 @@ function flyTo(target, options = {}) {
   } else {
     currentLocatedPoi = null;
   }
-  updateDeckLayers();
+  scheduleDeckLayerRefresh();
 
   hoverLayerSource.clear();
   locateLayerSource.clear();
@@ -1630,7 +1821,7 @@ function clearHighlights() {
   highlightData.value = [];
   heatmapData.value = [];
   if (deckInstance) {
-    updateDeckLayers();
+    scheduleDeckLayerRefresh();
   }
 }
 
@@ -2071,7 +2262,7 @@ function showHighlights(features, options = {}) {
   if (!features || !features.length) {
     clearHighlights();
     if (deckInstance) {
-      updateDeckLayers();
+      scheduleDeckLayerRefresh();
     }
     return;
   }
@@ -2098,8 +2289,8 @@ function showHighlights(features, options = {}) {
   heatmapData.value = deckData;
   ensureDeckInitialized().then((instance) => {
     if (!instance) return;
-    updateDeckLayers();
-    scheduleDeckSync();
+    scheduleDeckLayerRefresh();
+    scheduleDeckViewSync();
   });
   
 
@@ -2135,12 +2326,12 @@ watch(heatmapEnabled, (enabled) => {
   if (enabled) {
     ensureDeckInitialized().then((instance) => {
       if (!instance) return;
-      updateDeckLayers();
-      scheduleDeckSync();
+      scheduleDeckLayerRefresh();
+      scheduleDeckViewSync();
     });
     return;
   }
-  updateDeckLayers();
+  scheduleDeckLayerRefresh();
 });
 
 /**
@@ -2619,9 +2810,13 @@ async function captureMapScreenshot() {
   pointer-events: none;
   border: 1px solid rgba(99, 102, 241, 0.5);
   transform: translate(-50%, -100%);
-  margin-top: -10px;
+  margin-top: 0;
   z-index: 2000;
   backdrop-filter: blur(4px);
+}
+
+.poi-popup.flip-vertical {
+  transform: translate(-50%, 0);
 }
 
 .popup-content {
@@ -2661,6 +2856,10 @@ async function captureMapScreenshot() {
   border-right: 8px solid transparent;
   border-top: 8px solid #16213e;
   margin: 0 auto;
+}
+
+.poi-popup.flip-vertical .popup-arrow {
+  display: none;
 }
 
 @keyframes popupFadeIn {
