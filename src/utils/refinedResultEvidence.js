@@ -25,8 +25,12 @@ function normalizeIntentMeta(root, results) {
   const queryPlan = pickObject(
     results.query_plan,
     results.queryPlan,
+    results.stats?.query_plan,
+    results.stats?.queryPlan,
     root.query_plan,
     root.queryPlan,
+    root.stats?.query_plan,
+    root.stats?.queryPlan,
     results.query_executed,
     root.query_executed
   )
@@ -36,8 +40,12 @@ function normalizeIntentMeta(root, results) {
     queryPlan?.queryType,
     results.query_type,
     results.queryType,
+    results.stats?.query_type,
+    results.stats?.queryType,
     root.query_type,
-    root.queryType
+    root.queryType,
+    root.stats?.query_type,
+    root.stats?.queryType
   ).toLowerCase()
 
   const intentMode = pickString(
@@ -45,8 +53,12 @@ function normalizeIntentMeta(root, results) {
     queryPlan?.intentMode,
     results.intent_mode,
     results.intentMode,
+    results.stats?.intent_mode,
+    results.stats?.intentMode,
     root.intent_mode,
-    root.intentMode
+    root.intentMode,
+    root.stats?.intent_mode,
+    root.stats?.intentMode
   ).toLowerCase()
 
   if (!queryPlan && !queryType && !intentMode) {
@@ -58,6 +70,12 @@ function normalizeIntentMeta(root, results) {
     intentMode: intentMode || null,
     queryPlan: queryPlan || null
   }
+}
+
+export function resolveIntentMeta(payload) {
+  const root = pickObject(payload) || {}
+  const results = pickObject(root.results) || root
+  return normalizeIntentMeta(root, results)
 }
 
 export function normalizeRefinedResultEvidence(payload) {
@@ -81,7 +99,7 @@ export function normalizeRefinedResultEvidence(payload) {
     root.fuzzyRegions
   )
   const stats = pickObject(results.stats, results.analysisStats, root.stats, root.analysisStats)
-  const intent = normalizeIntentMeta(root, results)
+  const intent = resolveIntentMeta(payload)
 
   const hotspotCount = Array.isArray(spatialClusters?.hotspots) ? spatialClusters.hotspots.length : 0
   const hasEvidence = Boolean(

@@ -9,6 +9,26 @@ export function useAiStreamDispatcher({
     return messagesRef.value?.[aiMessageIndex] || null
   }
 
+  function applyIntentMetaToMessage(message, intent) {
+    if (!message || !intent) return null
+
+    const mergedIntent = {
+      ...(message.intentMeta || {}),
+      ...intent
+    }
+
+    message.intentMeta = mergedIntent
+    if (mergedIntent.queryType) message.queryType = mergedIntent.queryType
+    if (mergedIntent.queryPlan) message.queryPlan = mergedIntent.queryPlan
+
+    const resolvedMode = toEmbeddedIntentMode(mergedIntent.intentMode, mergedIntent.queryType)
+    if (resolvedMode) {
+      message.intentMode = resolvedMode
+    }
+
+    return mergedIntent
+  }
+
   function dispatchRefinedResult(data, aiMessageIndex) {
     const normalized = normalizeRefinedResultEvidence(data)
     const currentMsg = getMessage(aiMessageIndex)
@@ -19,18 +39,7 @@ export function useAiStreamDispatcher({
       if (normalized.vernacularRegions.length > 0) currentMsg.vernacularRegions = normalized.vernacularRegions
       if (normalized.fuzzyRegions.length > 0) currentMsg.fuzzyRegions = normalized.fuzzyRegions
       if (normalized.stats) currentMsg.analysisStats = normalized.stats
-      if (normalized.intent) {
-        currentMsg.intentMeta = normalized.intent
-        if (normalized.intent.queryType) currentMsg.queryType = normalized.intent.queryType
-        if (normalized.intent.queryPlan) currentMsg.queryPlan = normalized.intent.queryPlan
-        const resolvedMode = toEmbeddedIntentMode(
-          normalized.intent.intentMode,
-          normalized.intent.queryType
-        )
-        if (resolvedMode) {
-          currentMsg.intentMode = resolvedMode
-        }
-      }
+      applyIntentMetaToMessage(currentMsg, normalized.intent)
     }
 
     if (normalized.boundary) emit('ai-boundary', normalized.boundary)
@@ -88,6 +97,14 @@ export function useAiStreamDispatcher({
       const currentMsg = getMessage(aiMessageIndex)
       if (currentMsg) currentMsg.analysisStats = data
       emit('ai-analysis-stats', data)
+
+      const statsIntent = normalizeRefinedResultEvidence({
+        results: { stats: data }
+      })?.intent
+      const resolvedIntent = applyIntentMetaToMessage(currentMsg, statsIntent)
+      if (resolvedIntent) {
+        emit('ai-intent-meta', resolvedIntent)
+      }
       return {}
     }
 

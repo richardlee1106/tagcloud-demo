@@ -45,101 +45,118 @@
       </div>
     </div>
 
-    <!-- 消息列表 -->
+    <div class="chat-body">
+      <div class="chat-messages" ref="messagesContainer">
+        <!-- 欢迎消息 -->
+        <div v-if="messages.length === 0" class="welcome-message">
+          <h3>欢迎使用地名标签云智能分析助手</h3>
+          <p>我具备地理感知能力，可以帮您分析选中区域内的 POI 数据，并提供地理分析与洞察参考。</p>
+          <div class="quick-actions">
+            <button v-for="action in quickActions" :key="action.text" 
+                    @click="sendQuickAction(action.prompt)"
+                    class="quick-action-btn">
+              {{ action.text }}
+            </button>
+          </div>
+        </div>
 
-    <div class="chat-messages" ref="messagesContainer">
-      <!-- 欢迎消息 -->
-      <div v-if="messages.length === 0" class="welcome-message">
-        <h3>欢迎使用地名标签云智能分析助手</h3>
-        <p>我具备地理感知能力，可以帮您分析选中区域内的 POI 数据，并提供地理分析与洞察参考。</p>
-        <div class="quick-actions">
-          <button v-for="action in quickActions" :key="action.text" 
-                  @click="sendQuickAction(action.prompt)"
-                  class="quick-action-btn">
-            {{ action.text }}
-          </button>
+        <!-- 消息列表 -->
+        <div v-for="(msg, index) in messages" :key="index" class="message" :class="msg.role">
+          <div class="message-avatar">
+            <template v-if="msg.role === 'user'">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/>
+              </svg>
+            </template>
+            <template v-else>
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+              </svg>
+            </template>
+          </div>
+          <div class="message-content">
+            <div
+              v-if="msg.role === 'assistant' && (msg.pipelineCompleted || (isTyping && index === messages.length - 1))"
+              class="pipeline-tracker-inline"
+            >
+              <div class="pipeline-trace-inline">
+                <template v-for="(step, idx) in stageSteps" :key="step.key">
+                  <div
+                    class="trace-step-inline"
+                    :class="{
+                      active: !msg.pipelineCompleted && stageActiveIndex === idx,
+                      completed: msg.pipelineCompleted || stageActiveIndex > idx
+                    }"
+                  >
+                    <div class="step-icon-wrapper">
+                      <svg v-if="!msg.pipelineCompleted && stageActiveIndex === idx" class="step-spinner" viewBox="0 0 24 24" width="14" height="14">
+                        <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none" stroke-dasharray="32" stroke-linecap="round"/>
+                      </svg>
+                      <svg v-else-if="msg.pipelineCompleted || stageActiveIndex > idx" class="step-check" viewBox="0 0 16 16" width="12" height="12">
+                        <path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z" fill="currentColor"/>
+                      </svg>
+                      <span v-else class="step-number">{{ idx + 1 }}</span>
+                    </div>
+                    <span class="step-label-inline">{{ step.label }}</span>
+                  </div>
+                </template>
+              </div>
+              <div v-if="!msg.pipelineCompleted && currentStageHint" class="pipeline-hint-inline">{{ currentStageHint }}</div>
+              <div v-if="msg.queryType || msg.intentMeta?.intentMode" class="pipeline-intent-inline">
+                <span v-if="msg.queryType" class="intent-pill">Type: {{ msg.queryType }}</span>
+                <span v-if="msg.intentMeta?.intentMode" class="intent-pill">Mode: {{ msg.intentMeta.intentMode }}</span>
+              </div>
+            </div>
+
+            <div v-if="msg.content && msg.content.trim()" class="message-text" v-html="renderMessageHtml(msg)"></div>
+
+            <EmbeddedTagCloud 
+              v-if="msg.role === 'assistant' && msg.pois && msg.pois.length > 0"
+              :pois="msg.pois"
+              :intent-mode="resolveEmbeddedIntentMode(msg)"
+              :intent-meta="msg.intentMeta || null"
+              :width="360"
+              :height="200"
+              @render-to-map="handleRenderToMap"
+              @tag-click="handleTagClick"
+            />
+
+            <div v-if="msg.content && msg.content.trim()" class="message-time">{{ formatTime(msg.timestamp) }}</div>
+          </div>
         </div>
       </div>
 
-      <!-- 消息列表 -->
-      <div v-for="(msg, index) in messages" :key="index" 
-           class="message" :class="msg.role">
-        <div class="message-avatar">
-          <template v-if="msg.role === 'user'">
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-              <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/>
-            </svg>
-          </template>
-          <template v-else>
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
-            </svg>
-          </template>
-        </div>
-        <div class="message-content">
-          <!-- 五阶段 Pipeline 追踪器（嵌入 assistant 消息内） -->
-          <div v-if="msg.role === 'assistant' && (msg.pipelineCompleted || (isTyping && index === messages.length - 1))"
-               class="pipeline-tracker-inline">
-            <div class="pipeline-trace-inline">
-              <template v-for="(step, idx) in stageSteps" :key="step.key">
-                <div class="trace-step-inline"
-                     :class="{
-                       active: !msg.pipelineCompleted && stageActiveIndex === idx,
-                       completed: msg.pipelineCompleted || stageActiveIndex > idx
-                     }">
-                  <div class="step-icon-wrapper">
-                    <svg v-if="!msg.pipelineCompleted && stageActiveIndex === idx" class="step-spinner" viewBox="0 0 24 24" width="14" height="14">
-                      <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none" stroke-dasharray="32" stroke-linecap="round"/>
-                    </svg>
-                    <svg v-else-if="msg.pipelineCompleted || stageActiveIndex > idx" class="step-check" viewBox="0 0 16 16" width="12" height="12">
-                      <path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z" fill="currentColor"/>
-                    </svg>
-                    <span v-else class="step-number">{{ idx + 1 }}</span>
-                  </div>
-                  <span class="step-label-inline">{{ step.label }}</span>
-                </div>
-              </template>
-            </div>
-            <div v-if="!msg.pipelineCompleted && currentStageHint" class="pipeline-hint-inline">{{ currentStageHint }}</div>
-            <div
-              v-if="msg.queryType || msg.intentMeta?.intentMode"
-              class="pipeline-intent-inline"
-            >
-              <span v-if="msg.queryType" class="intent-pill">Type: {{ msg.queryType }}</span>
-              <span v-if="msg.intentMeta?.intentMode" class="intent-pill">Mode: {{ msg.intentMeta.intentMode }}</span>
-            </div>
+      <section class="analysis-board" aria-label="空间分析看板">
+        <header class="analysis-board-header">
+          <div>
+            <p class="analysis-kicker">最新回复分析看板</p>
+            <h3 class="analysis-title">模板化信息聚合</h3>
           </div>
-          <!-- 嵌入式 Pipeline 追踪器（当有阶段信息时显示） -->
-          <div v-if="msg.content && msg.content.trim()" class="message-text" v-html="renderMessageHtml(msg)"></div>
-          
-          <!-- 嵌入式标签云（在文本下方显示，增加视觉引导） -->
-          <EmbeddedTagCloud 
-            v-if="msg.role === 'assistant' && msg.pois && msg.pois.length > 0"
-            :pois="msg.pois"
-            :intent-mode="resolveEmbeddedIntentMode(msg)"
-            :intent-meta="msg.intentMeta || null"
-            :width="360"
-            :height="200"
-            @render-to-map="handleRenderToMap"
-            @tag-click="handleTagClick"
-          />
+          <span class="analysis-meta">
+            {{ latestAssistantMessage?.timestamp ? formatTime(latestAssistantMessage.timestamp) : '--:--' }}
+          </span>
+        </header>
 
+        <div class="analysis-board-content">
           <SpatialEvidenceCard
-            v-if="msg.role === 'assistant' && hasSpatialEvidence(msg)"
-            :clusters="msg.spatialClusters"
-            :vernacular-regions="msg.vernacularRegions"
-            :fuzzy-regions="msg.fuzzyRegions"
+            v-if="latestAssistantMessage && hasSpatialEvidence(latestAssistantMessage)"
+            :clusters="latestAssistantMessage.spatialClusters"
+            :vernacular-regions="latestAssistantMessage.vernacularRegions"
+            :fuzzy-regions="latestAssistantMessage.fuzzyRegions"
+            :analysis-stats="latestAssistantMessage.analysisStats || null"
+            :intent-mode="latestAssistantMessage.intentMode || 'macro_overview'"
+            :query-type="latestAssistantMessage.queryType || latestAssistantMessage.intentMeta?.queryType || 'area_analysis'"
+            :intent-meta="latestAssistantMessage.intentMeta || null"
             @locate="handleEvidenceLocate"
             @ask-followup="handleEvidenceFollowup"
           />
-
-          <div v-if="msg.content && msg.content.trim()" class="message-time">{{ formatTime(msg.timestamp) }}</div>
+          <div v-else class="analysis-empty-state">
+            <span class="analysis-empty-title">等待空间证据</span>
+            <p>当前最新回复尚未返回可聚合的空间结构化结果，继续提问后将自动生成 1-3 个意图模板。</p>
+          </div>
         </div>
-      </div>
-
+      </section>
     </div>
-
-
 
     <!-- 输入区域 -->
     <div class="chat-input-area">
@@ -987,14 +1004,19 @@ function clearExtractedPOIs() {
   extractedPOIs.value = [];
 }
 
-const latestAssistantMessageText = computed(() => {
+const latestAssistantMessage = computed(() => {
   for (let i = messages.value.length - 1; i >= 0; i -= 1) {
     const item = messages.value[i];
-    if (item?.role === 'assistant' && item?.content) {
-      return String(item.content);
+    if (item?.role === 'assistant') {
+      return item;
     }
   }
-  return '';
+  return null;
+});
+
+const latestAssistantMessageText = computed(() => {
+  if (!latestAssistantMessage.value?.content) return '';
+  return String(latestAssistantMessage.value.content);
 });
 
 // 监听最新 assistant 文本，自动提取 POI（避免 deep watch 导致频繁重算）
@@ -1051,41 +1073,52 @@ defineExpose({
 
 <style scoped>
 .ai-chat-container {
+  --panel-bg-1: #071224;
+  --panel-bg-2: #0c1c34;
+  --panel-bg-3: #0f2f44;
+  --line-soft: rgba(132, 171, 207, 0.2);
+  --line-strong: rgba(90, 170, 230, 0.42);
+  --text-main: #e6eef8;
+  --text-dim: rgba(194, 213, 233, 0.76);
+  --primary: #2eb8ff;
+  --surface: rgba(10, 20, 38, 0.8);
+  --surface-2: rgba(12, 26, 46, 0.78);
+  --ok: #34d399;
+  --warn: #fb7185;
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: linear-gradient(160deg, rgba(9, 18, 38, 0.84) 0%, rgba(16, 30, 59, 0.78) 48%, rgba(8, 41, 48, 0.68) 100%);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
-  color: #e5e7eb;
-  font-family: 'Manrope', 'Noto Sans SC', 'PingFang SC', 'Segoe UI', sans-serif;
-  border-left: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: -4px 0 32px rgba(0, 0, 0, 0.3);
+  min-height: 0;
+  color: var(--text-main);
+  font-family: 'Manrope', 'Noto Sans SC', 'PingFang SC', sans-serif;
+  background:
+    radial-gradient(circle at 82% 0%, rgba(31, 113, 162, 0.24), transparent 44%),
+    radial-gradient(circle at 0% 30%, rgba(24, 75, 126, 0.25), transparent 38%),
+    linear-gradient(160deg, var(--panel-bg-1), var(--panel-bg-2) 52%, var(--panel-bg-3));
+  border-left: 1px solid var(--line-soft);
+  box-shadow: -8px 0 34px rgba(2, 8, 20, 0.35);
 }
 
-/* 澶撮儴 */
 .chat-header {
-  padding: 16px 20px;
-  background: rgba(15, 23, 42, 0.4);
-  backdrop-filter: blur(20px);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line-soft);
+  background: linear-gradient(180deg, rgba(8, 18, 33, 0.9), rgba(8, 18, 33, 0.62));
+  backdrop-filter: blur(10px);
   flex-shrink: 0;
-  z-index: 10;
 }
 
 .header-main-row {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  width: 100%;
+  justify-content: space-between;
+  gap: 10px;
 }
 
 .header-left {
   display: flex;
   align-items: center;
-  gap: 12px;
-  flex: 1; /* 鍗犳嵁鍓╀綑绌洪棿 */
-  overflow: hidden; /* 防止文字过长挤压按钮 */
+  gap: 10px;
+  min-width: 0;
 }
 
 .header-actions {
@@ -1096,674 +1129,315 @@ defineExpose({
 }
 
 .ai-avatar {
-  width: 38px;
-  height: 38px;
+  width: 36px;
+  height: 36px;
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #fff;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  display: grid;
+  place-items: center;
+  color: #f8fbff;
+  border: 1px solid rgba(133, 183, 221, 0.35);
+  background: linear-gradient(145deg, rgba(36, 88, 142, 0.55), rgba(24, 46, 82, 0.85));
 }
 
 .header-info {
-  display: flex;
-  flex-direction: column;
+  display: grid;
   gap: 2px;
 }
 
 .ai-name {
+  font-size: 15px;
   font-weight: 700;
-  font-size: 16px;
-  color: #f8fafc;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.01em;
 }
 
 .ai-status {
-  font-size: 11px;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 2px 4px;
-  width: fit-content;
+  font-size: 11px;
+  color: var(--text-dim);
 }
 
 .ai-status::before {
   content: '';
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
 }
 
 .ai-status.online {
-  color: #10b981;
-  font-weight: 500;
+  color: #9ceec9;
 }
+
 .ai-status.online::before {
-  background: #10b981;
-  box-shadow: 0 0 10px rgba(16, 185, 129, 0.8), 0 0 4px rgba(16, 185, 129, 0.4);
+  background: var(--ok);
+  box-shadow: 0 0 0 4px rgba(52, 211, 153, 0.18);
 }
 
 .ai-status.offline {
-  color: #fb7185;
+  color: #fda4af;
 }
+
 .ai-status.offline::before {
-  background: #fb7185;
+  background: var(--warn);
+  box-shadow: 0 0 0 4px rgba(251, 113, 133, 0.15);
 }
 
 .poi-badge {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 4px;
   padding: 4px 8px;
-  background: rgba(99, 102, 241, 0.1);
-  border: 1px solid rgba(99, 102, 241, 0.2);
-  border-radius: 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(94, 186, 245, 0.35);
+  background: rgba(6, 85, 128, 0.34);
   font-size: 11px;
-  font-weight: 600;
-  color: #a5b4fc;
-  margin-right: 4px;
+  color: #d8efff;
 }
 
 .poi-icon {
   font-size: 10px;
 }
 
-/* 操作按钮通用样式重构 - 迷你图标 */
 .action-btn {
   width: 28px;
   height: 28px;
-  padding: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  border-radius: 8px;
   border: 1px solid transparent;
-  border-radius: 6px;
+  display: grid;
+  place-items: center;
   cursor: pointer;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-  background: rgba(255, 255, 255, 0.05);
-  color: #94a3b8;
+  transition: transform 180ms ease, border-color 180ms ease, background 180ms ease;
+  color: #d8e7f7;
 }
 
 .clear-btn {
-  background: rgba(239, 68, 68, 0.15);
-  border-color: rgba(239, 68, 68, 0.2);
-  color: #f87171;
-}
-.clear-btn:hover {
-  background: rgba(239, 68, 68, 0.25);
-  border-color: rgba(239, 68, 68, 0.4);
-  color: #ff8a8a;
+  background: rgba(183, 45, 63, 0.25);
+  border-color: rgba(240, 101, 123, 0.3);
 }
 
 .save-btn {
-  background: rgba(16, 185, 129, 0.15);
-  border-color: rgba(16, 185, 129, 0.2);
-  color: #34d399;
-}
-.save-btn:hover {
-  background: rgba(16, 185, 129, 0.25);
-  border-color: rgba(16, 185, 129, 0.4);
-  color: #5ffcc3;
+  background: rgba(25, 126, 99, 0.24);
+  border-color: rgba(87, 222, 175, 0.3);
 }
 
 .close-btn {
-  background: rgba(99, 102, 241, 0.15);
-  border-color: rgba(99, 102, 241, 0.2);
-  color: #a5b4fc;
-}
-.close-btn:hover {
-  background: rgba(99, 102, 241, 0.25);
-  border-color: rgba(99, 102, 241, 0.4);
-  color: #c7d2ff;
+  background: rgba(38, 91, 150, 0.24);
+  border-color: rgba(111, 188, 255, 0.3);
 }
 
-/* 娑堟伅鍖哄煙 */
-.chat-messages {
+.action-btn:hover {
+  transform: translateY(-1px);
+  border-color: rgba(179, 221, 255, 0.42);
+}
+
+.chat-body {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-height: 0;
+  gap: 10px;
+  padding: 10px 10px 0;
   flex: 1;
+}
+
+.chat-messages {
+  min-height: 0;
   overflow-y: auto;
-  padding: 16px;
+  padding: 10px 8px 14px;
   scroll-behavior: smooth;
 }
 
 .chat-messages::-webkit-scrollbar {
   width: 6px;
 }
-.chat-messages::-webkit-scrollbar-track {
-  background: transparent;
-}
+
 .chat-messages::-webkit-scrollbar-thumb {
-  background: rgba(107, 114, 128, 0.4);
-  border-radius: 3px;
+  border-radius: 999px;
+  background: rgba(123, 168, 209, 0.4);
 }
 
-/* 娆㈣繋娑堟伅 */
 .welcome-message {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
+  min-height: 220px;
+  padding: 18px 10px;
   text-align: center;
-  padding: 20px;
-  color: #9ca3af;
-}
-
-.welcome-icon {
-  width: 80px;
-  height: 80px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.2), rgba(139, 92, 246, 0.2));
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: 16px;
-  color: #818cf8;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 10px;
 }
 
 .welcome-message h3 {
-  margin: 0 0 8px;
-  color: #f9fafb;
+  margin: 0;
   font-size: 18px;
+  color: #f3f8ff;
 }
 
 .welcome-message p {
-  margin: 0 0 20px;
-  font-size: 14px;
-  max-width: 300px;
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-dim);
+  max-width: 320px;
 }
 
 .quick-actions {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 10px;
-  width: 100%;
-  margin-top: 15px;
+  gap: 8px;
 }
 
 .quick-action-btn {
-  padding: 8px 16px;
-  background: linear-gradient(135deg, rgba(15, 23, 42, 0.66), rgba(30, 41, 59, 0.58));
-  border: 1px solid rgba(148, 163, 184, 0.26);
-  border-radius: 20px;
-  color: #e2e8f0;
-  font-size: 13px;
-  text-align: center;
+  border: 1px solid rgba(106, 168, 216, 0.35);
+  border-radius: 999px;
+  background: linear-gradient(130deg, rgba(11, 30, 54, 0.86), rgba(14, 43, 71, 0.7));
+  color: #d8eafc;
+  font-size: 12px;
+  padding: 7px 12px;
   cursor: pointer;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-  display: inline-flex;
-  align-items: center;
-  backdrop-filter: blur(4px);
+  transition: all 200ms ease;
 }
 
 .quick-action-btn:hover {
-  background: linear-gradient(135deg, rgba(14, 165, 233, 0.26), rgba(59, 130, 246, 0.24));
-  border-color: rgba(56, 189, 248, 0.56);
-  transform: translateY(-2px);
-  color: #fff;
-  box-shadow: 0 8px 20px rgba(37, 99, 235, 0.24);
+  border-color: rgba(120, 202, 255, 0.56);
+  background: linear-gradient(130deg, rgba(17, 60, 102, 0.86), rgba(18, 88, 130, 0.66));
+  transform: translateY(-1px);
 }
 
-/* 娑堟伅娉℃场 */
 .message {
   display: flex;
-  gap: 12px;
-  margin-bottom: 24px;
-  max-width: 95%;
-  animation: fadeIn 0.3s ease;
-}
-
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
+  gap: 10px;
+  margin-bottom: 18px;
+  max-width: 100%;
+  animation: msg-enter 220ms ease;
 }
 
 .message.user {
   flex-direction: row-reverse;
-  align-self: flex-end;
-  margin-left: auto;
-}
-
-.message.assistant {
-  width: 100%;
-  max-width: 100%;
 }
 
 .message-avatar {
-  width: 34px;
-  height: 34px;
-  min-width: 34px;
-  border-radius: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
 }
 
 .user .message-avatar {
-  background: rgba(99, 102, 241, 0.8);
-  color: white;
+  background: rgba(35, 98, 167, 0.7);
 }
 
 .assistant .message-avatar {
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  color: white;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  border: 1px solid rgba(121, 171, 214, 0.28);
+  background: rgba(13, 38, 69, 0.65);
 }
 
 .message-content {
-  display: flex;
-  flex-direction: column;
+  min-width: 0;
+  display: grid;
   gap: 6px;
-  max-width: calc(100% - 46px);
-}
-
-.user .message-content {
-  align-items: flex-end;
 }
 
 .assistant .message-content {
-  flex: 1;
-  min-width: 0;
-  max-width: 100%;
+  width: calc(100% - 42px);
+}
+
+.user .message-content {
+  justify-items: end;
 }
 
 .message-text {
-  padding: 12px 16px;
   border-radius: 12px;
-  font-size: 14.5px;
+  padding: 12px 14px;
+  font-size: 14px;
   line-height: 1.6;
   word-break: break-word;
 }
 
 .user .message-text {
-  background: rgba(99, 102, 241, 0.2);
-  border: 1px solid rgba(99, 102, 241, 0.4);
-  color: #f8fafc;
-  border-bottom-right-radius: 4px;
+  background: linear-gradient(145deg, rgba(29, 102, 171, 0.38), rgba(25, 58, 101, 0.52));
+  border: 1px solid rgba(112, 187, 250, 0.35);
+  color: #eef6ff;
 }
 
 .assistant .message-text {
-  background: rgba(255, 255, 255, 0.05);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  color: #f1f5f9;
-  border-top-left-radius: 4px;
-}
-
-.message-text :deep(code) {
-  background: rgba(0, 0, 0, 0.3);
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-family: 'Fira Code', monospace;
-  font-size: 13px;
+  background: linear-gradient(150deg, rgba(11, 27, 47, 0.88), rgba(11, 34, 58, 0.74));
+  border: 1px solid rgba(116, 163, 205, 0.24);
+  color: #e7f0fa;
 }
 
 .message-text :deep(pre) {
-  background: rgba(0, 0, 0, 0.4);
-  padding: 12px;
+  margin: 8px 0;
+  padding: 10px;
   border-radius: 8px;
+  background: rgba(4, 11, 23, 0.66);
   overflow-x: auto;
-  margin: 8px 0;
 }
 
-.message-text :deep(strong) {
-  color: #a5b4fc;
+.message-text :deep(code) {
+  border-radius: 6px;
+  background: rgba(7, 17, 34, 0.75);
+  padding: 2px 5px;
+  font-family: 'Fira Code', monospace;
+  font-size: 12px;
 }
 
-.message-text :deep(h2),
-.message-text :deep(h3),
-.message-text :deep(h4),
-.message-text :deep(h5) {
-  margin: 16px 0 8px;
-  color: #f9fafb;
-  font-weight: 600;
-  line-height: 1.4;
-}
-
-.message-text :deep(h4),
-.message-text :deep(h5) {
-  font-size: 1.1em;
-  color: #e5e7eb;
-}
-
-.message-text :deep(li) {
-  margin-bottom: 4px;
-  line-height: 1.6;
-}
-
-.message-text :deep(ul),
-.message-text :deep(ol) {
-  margin: 8px 0;
-  padding-left: 20px;
-}
-
-.message-text :deep(blockquote) {
-  margin: 10px 0;
-  padding: 8px 12px;
-  border-left: 3px solid rgba(99, 102, 241, 0.65);
-  background: rgba(99, 102, 241, 0.08);
-  color: #dbeafe;
-  border-radius: 0 8px 8px 0;
-}
-
-.message-text :deep(.list-num) {
-  font-weight: bold;
-  color: #93c5fd;
-  margin-right: 4px;
-}
-
-.message-text :deep(hr) {
-  border: none;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-  margin: 16px 0;
-}
-
-.message-text :deep(.spacer) {
-  height: 8px;
-}
-
-/* Markdown 琛ㄦ牸鏍峰紡 */
 .message-text :deep(table),
 .message-text :deep(.md-table) {
   width: 100%;
   border-collapse: collapse;
-  margin: 12px 0;
-  font-size: 13px;
-  background: rgba(0, 0, 0, 0.2);
+  margin: 10px 0;
+  background: rgba(7, 19, 35, 0.65);
   border-radius: 8px;
   overflow: hidden;
 }
 
-.message-text :deep(table th),
-.message-text :deep(table td),
-.message-text :deep(.md-table th),
-.message-text :deep(table td),
-.message-text :deep(.md-table td) {
-  padding: 10px 12px;
-  text-align: left;
-  border-bottom: 1px solid rgba(75, 85, 99, 0.4);
+.message-text :deep(th),
+.message-text :deep(td) {
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(116, 163, 205, 0.2);
 }
 
-.message-text :deep(table th),
-.message-text :deep(.md-table th) {
-  background: rgba(99, 102, 241, 0.15);
-  color: #a5b4fc;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.message-text :deep(.md-table td) {
-  color: #d1d5db;
-}
-
-.message-text :deep(table tr:last-child td),
-.message-text :deep(.md-table tr:last-child td) {
-  border-bottom: none;
-}
-
-.message-text :deep(table tr:hover td),
-.message-text :deep(.md-table tr:hover td) {
-  background: rgba(99, 102, 241, 0.08);
+.message-text :deep(th) {
+  background: rgba(20, 65, 108, 0.5);
 }
 
 .message-time {
   font-size: 11px;
-  color: #6b7280;
-  margin-top: 4px;
-  padding: 0 4px;
-}
-
-.message.user .message-time {
-  text-align: right;
-}
-
-/* 打字指示器 */
-.typing-indicator {
-  display: flex;
-  gap: 4px;
-  padding: 12px 16px;
-}
-
-.typing-indicator span {
-  width: 8px;
-  height: 8px;
-  background: #6366f1;
-  border-radius: 50%;
-  animation: typing 1.4s infinite ease-in-out both;
-}
-
-.typing-indicator span:nth-child(1) { animation-delay: -0.32s; }
-.typing-indicator span:nth-child(2) { animation-delay: -0.16s; }
-
-@keyframes typing {
-  0%, 80%, 100% { transform: scale(0.6); opacity: 0.5; }
-  40% { transform: scale(1); opacity: 1; }
-}
-
-/* Pipeline 追踪器（内联 assistant 消息） */
-.pipeline-tracker-inline {
-  padding: 8px 12px;
-  background: rgba(15, 23, 42, 0.6);
-  border: 1px solid rgba(99, 102, 241, 0.12);
-  border-radius: 10px;
-  margin-bottom: 6px;
-}
-
-.pipeline-trace-inline {
-  display: flex;
-  align-items: center;
-  gap: 0;
-}
-
-.trace-step-inline {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  white-space: nowrap;
-}
-
-.step-label-inline {
-  transition: color 0.3s;
-}
-
-.trace-step-inline.active .step-label-inline {
-  color: #a5b4fc;
-  font-weight: 500;
-}
-
-.trace-step-inline.completed .step-label-inline {
-  color: rgba(52, 211, 153, 0.7);
-}
-
-.trace-connector {
-  width: 20px;
-  height: 1px;
-  background: rgba(255, 255, 255, 0.1);
-  margin: 0 4px;
-  flex-shrink: 0;
-}
-
-.trace-connector.completed {
-  background: rgba(52, 211, 153, 0.3);
-}
-
-.pipeline-hint-inline {
-  font-size: 10px;
-  color: rgba(255, 255, 255, 0.35);
-  margin-top: 4px;
-  font-style: italic;
-}
-
-/* 现代 Pipeline Tracker 样式 */
-.step-icon-wrapper {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background: rgba(30, 41, 59, 0.8);
-  border: 2px solid rgba(100, 116, 139, 0.3);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: rgba(148, 163, 184, 0.6);
-  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-  flex-shrink: 0;
-  position: relative;
-  overflow: hidden;
-}
-
-.step-icon-wrapper.active {
-  background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
-  border-color: #818cf8;
-  box-shadow: 0 0 20px rgba(99, 102, 241, 0.4), 0 0 40px rgba(99, 102, 241, 0.2);
-  animation: icon-pulse 2s infinite;
-}
-
-.step-icon-wrapper.completed {
-  background: linear-gradient(135deg, #10b981 0%, #34d399 100%);
-  border-color: #34d399;
-  box-shadow: 0 0 12px rgba(16, 185, 129, 0.3);
-  color: white;
-}
-
-.step-spinner {
-  animation: spin 1s linear infinite;
-}
-
-.step-check {
-  animation: check-pop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-}
-
-.step-number {
-  font-size: 11px;
-  font-weight: 600;
-  color: rgba(148, 163, 184, 0.8);
-}
-
-.step-label-inline {
-  font-size: 12px;
-  color: rgba(148, 163, 184, 0.5);
-  transition: all 0.3s ease;
-  font-weight: 500;
-  letter-spacing: 0.02em;
-}
-
-.trace-step-inline.active .step-label-inline {
-  color: #a5b4fc;
-  font-weight: 600;
-  text-shadow: 0 0 10px rgba(165, 180, 252, 0.3);
-}
-
-.trace-step-inline.completed .step-label-inline {
-  color: #6ee7b7;
-  font-weight: 500;
-}
-
-.trace-connector {
-  height: 2px;
-  background: rgba(71, 85, 105, 0.4);
-  margin: 0 8px;
-  flex-shrink: 0;
-  position: relative;
-  min-width: 24px;
-  overflow: hidden;
-}
-
-.trace-connector::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  height: 100%;
-  width: 0;
-  background: linear-gradient(90deg, #6366f1, #8b5cf6);
-  transition: width 0.5s ease;
-}
-
-.trace-connector.completed::after {
-  width: 100%;
+  color: rgba(177, 199, 223, 0.62);
+  padding: 0 2px;
 }
 
 .pipeline-tracker-inline {
-  padding: 14px 18px;
-  background: linear-gradient(135deg, rgba(15, 23, 42, 0.9) 0%, rgba(30, 41, 59, 0.8) 100%);
-  border: 1px solid rgba(99, 102, 241, 0.15);
-  border-radius: 16px;
-  margin-bottom: 10px;
-  width: 100%;
-  box-sizing: border-box;
-  backdrop-filter: blur(10px);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+  border: 1px solid rgba(93, 154, 210, 0.22);
+  background: linear-gradient(145deg, rgba(10, 25, 43, 0.92), rgba(15, 41, 68, 0.75));
+  padding: 10px 10px 8px;
 }
 
-.pipeline-trace-inline {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0;
-}
-
-.pipeline-hint-inline {
-  font-size: 11px;
-  color: rgba(165, 180, 252, 0.7);
-  margin-top: 8px;
-  text-align: center;
-  font-style: italic;
-  animation: hint-fade 2s ease-in-out infinite;
-}
-
-@keyframes icon-pulse {
-  0%, 100% { box-shadow: 0 0 20px rgba(99, 102, 241, 0.4), 0 0 40px rgba(99, 102, 241, 0.2); }
-  50% { box-shadow: 0 0 25px rgba(99, 102, 241, 0.6), 0 0 50px rgba(99, 102, 241, 0.3); }
-}
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-@keyframes check-pop {
-  0% { transform: scale(0); opacity: 0; }
-  50% { transform: scale(1.3); }
-  100% { transform: scale(1); opacity: 1; }
-}
-
-@keyframes hint-fade {
-  0%, 100% { opacity: 0.7; }
-  50% { opacity: 1; }
-}
-
-/* 五阶段链路展示：避免中文标签挤压 */
 .pipeline-trace-inline {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  align-items: start;
-  gap: 10px;
+  gap: 6px;
 }
 
 .trace-step-inline {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
   min-width: 0;
+  display: grid;
+  justify-items: center;
+  gap: 5px;
   position: relative;
 }
 
 .trace-step-inline::after {
-  content: "";
+  content: '';
   position: absolute;
   top: 11px;
-  left: calc(50% + 16px);
-  width: calc(100% - 32px);
-  height: 2px;
-  border-radius: 999px;
-  background: rgba(71, 85, 105, 0.45);
+  left: calc(50% + 14px);
+  width: calc(100% - 26px);
+  height: 1px;
+  background: rgba(120, 164, 205, 0.3);
 }
 
 .trace-step-inline:last-child::after {
@@ -1772,54 +1446,247 @@ defineExpose({
 
 .trace-step-inline.completed::after,
 .trace-step-inline.active::after {
-  background: linear-gradient(90deg, rgba(99, 102, 241, 0.75), rgba(16, 185, 129, 0.75));
+  background: linear-gradient(90deg, rgba(46, 184, 255, 0.8), rgba(52, 211, 153, 0.8));
+}
+
+.step-icon-wrapper {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: 1px solid rgba(128, 170, 206, 0.35);
+  background: rgba(11, 31, 54, 0.8);
+  display: grid;
+  place-items: center;
+  color: rgba(193, 215, 236, 0.72);
+}
+
+.trace-step-inline.active .step-icon-wrapper {
+  border-color: rgba(46, 184, 255, 0.84);
+  color: #dff4ff;
+}
+
+.trace-step-inline.completed .step-icon-wrapper {
+  border-color: rgba(52, 211, 153, 0.78);
+  background: rgba(10, 77, 67, 0.46);
+  color: #dcfff5;
+}
+
+.step-spinner {
+  animation: spin 900ms linear infinite;
+}
+
+.step-label-inline {
+  font-size: 10px;
+  text-align: center;
+  line-height: 1.2;
+  color: rgba(176, 199, 223, 0.72);
+}
+
+.trace-step-inline.active .step-label-inline {
+  color: #dff4ff;
+}
+
+.trace-step-inline.completed .step-label-inline {
+  color: #b9f4dc;
+}
+
+.step-number {
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.pipeline-hint-inline {
+  margin-top: 6px;
+  text-align: center;
+  font-size: 11px;
+  color: rgba(173, 211, 244, 0.74);
 }
 
 .pipeline-intent-inline {
   margin-top: 6px;
   display: flex;
+  flex-wrap: wrap;
   justify-content: center;
   gap: 6px;
-  flex-wrap: wrap;
 }
 
 .intent-pill {
-  font-size: 10px;
-  line-height: 1;
-  padding: 4px 8px;
   border-radius: 999px;
-  background: rgba(30, 41, 59, 0.7);
-  border: 1px solid rgba(99, 102, 241, 0.4);
-  color: #c7d2fe;
+  border: 1px solid rgba(108, 176, 231, 0.5);
+  background: rgba(15, 59, 97, 0.55);
+  color: #dff4ff;
+  font-size: 10px;
+  padding: 3px 8px;
 }
 
-.step-label-inline {
+.analysis-board {
+  border: 1px solid var(--line-soft);
+  border-radius: 16px 16px 0 0;
+  background:
+    radial-gradient(circle at 15% 10%, rgba(31, 109, 163, 0.15), transparent 40%),
+    linear-gradient(180deg, rgba(7, 20, 37, 0.94), rgba(9, 27, 47, 0.9));
+  box-shadow: inset 0 1px 0 rgba(165, 210, 247, 0.06);
+  overflow: hidden;
+  transition: border-color 220ms ease;
+}
+
+.analysis-board-header {
+  padding: 10px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  border-bottom: 1px solid rgba(122, 166, 202, 0.2);
+}
+
+.analysis-kicker {
+  margin: 0;
   font-size: 11px;
-  line-height: 1.25;
-  text-align: center;
-  white-space: normal;
-  word-break: break-word;
+  letter-spacing: 0.06em;
+  color: #9bd5ff;
 }
 
-.step-icon-wrapper {
-  width: 24px;
-  height: 24px;
+.analysis-title {
+  margin: 2px 0 0;
+  font-size: 14px;
+  color: #eff7ff;
+}
+
+.analysis-meta {
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  color: #d8efff;
+  background: rgba(8, 74, 114, 0.38);
+  border: 1px solid rgba(109, 178, 233, 0.35);
+}
+
+.analysis-board-content {
+  padding: 10px;
+}
+
+.analysis-empty-state {
+  border: 1px dashed rgba(112, 163, 206, 0.4);
+  border-radius: 12px;
+  background: rgba(8, 27, 47, 0.55);
+  padding: 14px;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.analysis-empty-title {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #e8f5ff;
+}
+
+.chat-input-area {
+  padding: 10px 12px 14px;
+  border-top: 1px solid var(--line-soft);
+  background: linear-gradient(180deg, rgba(8, 20, 36, 0.9), rgba(7, 16, 28, 0.96));
+}
+
+.input-wrapper {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  border-radius: 14px;
+  border: 1px solid rgba(120, 166, 206, 0.35);
+  background: var(--surface);
+  padding: 8px 10px;
+  transition: border-color 200ms ease, box-shadow 200ms ease;
+}
+
+.input-wrapper:focus-within {
+  border-color: var(--line-strong);
+  box-shadow: 0 0 0 2px rgba(46, 184, 255, 0.18);
+}
+
+.input-wrapper textarea {
+  flex: 1;
+  border: none;
+  resize: none;
+  outline: none;
+  max-height: 120px;
+  line-height: 1.45;
+  font-size: 14px;
+  color: #edf6ff;
+  background: transparent;
+  font-family: inherit;
+}
+
+.input-wrapper textarea::placeholder {
+  color: rgba(178, 201, 227, 0.5);
+}
+
+.send-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid rgba(96, 185, 244, 0.55);
+  color: #eff8ff;
+  background: linear-gradient(140deg, rgba(27, 132, 198, 0.95), rgba(28, 87, 182, 0.92));
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: transform 180ms ease, box-shadow 180ms ease, opacity 180ms ease;
+}
+
+.send-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 16px rgba(19, 90, 164, 0.4);
+}
+
+.send-btn:disabled {
+  opacity: 0.52;
+  cursor: not-allowed;
+}
+
+.input-hint {
+  margin-top: 6px;
+  padding: 0 2px;
+  font-size: 11px;
+  color: rgba(172, 196, 223, 0.65);
+}
+
+.offline-hint {
+  color: #fda4af;
+}
+
+@keyframes msg-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @media (max-width: 768px) {
-  .pipeline-tracker-inline {
+  .chat-header {
     padding: 10px 12px;
   }
 
-  .pipeline-trace-inline {
-    gap: 4px;
+  .chat-body {
+    padding: 8px 8px 0;
   }
 
-  .trace-step-inline::after {
-    top: 9px;
-    left: calc(50% + 12px);
-    width: calc(100% - 24px);
-    height: 1px;
+  .pipeline-trace-inline {
+    gap: 2px;
   }
 
   .step-icon-wrapper {
@@ -1828,185 +1695,25 @@ defineExpose({
   }
 
   .step-label-inline {
-    font-size: 10px;
+    font-size: 9px;
   }
 }
 
-/* 杈撳叆鍖哄煙 */
-.chat-input-area {
-  padding: 12px 16px 16px;
-  background: rgba(17, 24, 39, 0.95);
-  border-top: 1px solid rgba(75, 85, 99, 0.4);
-}
-
-.input-wrapper {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-  background: rgba(55, 65, 81, 0.4);
-  border: 1px solid rgba(75, 85, 99, 0.5);
-  border-radius: 16px;
-  padding: 8px 12px;
-  transition: border-color 0.2s;
-}
-
-.input-wrapper:focus-within {
-  border-color: rgba(99, 102, 241, 0.6);
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
-}
-
-.input-wrapper textarea {
-  flex: 1;
-  background: transparent;
-  border: none;
-  color: #f9fafb;
-  font-size: 14px;
-  resize: none;
-  outline: none;
-  max-height: 120px;
-  line-height: 1.5;
-  font-family: inherit;
-}
-
-.input-wrapper textarea::placeholder {
-  color: #6b7280;
-}
-
-.send-btn {
-  width: 36px;
-  height: 36px;
-  border: none;
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
-  border-radius: 12px;
-  color: white;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.2s;
-  flex-shrink: 0;
-}
-
-.send-btn:hover:not(:disabled) {
-  transform: scale(1.05);
-  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
-}
-
-.send-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.input-hint {
-  font-size: 11px;
-  color: #6b7280;
-  margin-top: 6px;
-  padding: 0 4px;
-}
-
-.offline-hint {
-  color: #f87171;
-}
-
-/* AI 提取的 POI 区域 */
-.extracted-pois-area {
-  padding: 10px 16px;
-  background: rgba(16, 185, 129, 0.08);
-  border-top: 1px solid rgba(16, 185, 129, 0.2);
-  border-bottom: 1px solid rgba(16, 185, 129, 0.2);
-}
-
-.extracted-pois-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 8px;
-  font-size: 12px;
-  color: #10b981;
-}
-
-.extracted-pois-icon {
-  font-size: 14px;
-}
-
-.clear-extracted-btn {
-  padding: 4px 10px;
-  background: transparent;
-  border: 1px solid rgba(239, 68, 68, 0.3);
-  border-radius: 4px;
-  color: #f87171;
-  font-size: 11px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.clear-extracted-btn:hover {
-  background: rgba(239, 68, 68, 0.1);
-  border-color: rgba(239, 68, 68, 0.5);
-}
-
-.render-tagcloud-btn, .clear-extracted-btn {
-  margin-left: 8px;
-  padding: 8px 16px;
-  font-size: 13px;
-  border-radius: 6px;
-  border: none;
-  cursor: pointer;
-  font-weight: 500;
-  transition: all 0.2s;
-}
-
-.render-tagcloud-btn {
-  margin-left: auto; /* Keep it pushed to the right if flex container allows, or this might conflict with previous margin-left */
-  background: linear-gradient(135deg, #10b981, #06b6d4);
-  color: white;
-  box-shadow: 0 2px 4px rgba(16, 185, 129, 0.3);
-}
-
-.render-tagcloud-btn:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 8px rgba(16, 185, 129, 0.4);
-}
-
-.clear-extracted-btn {
-  background: rgba(107, 114, 128, 0.2);
-  color: #d1d5db;
-}
-
-.clear-extracted-btn:hover {
-  background: rgba(107, 114, 128, 0.4);
-  color: white;
-}
-
-.extracted-pois-preview {
-  font-size: 12px;
-  color: #6ee7b7;
-  line-height: 1.4;
-  word-break: break-all;
-}
-
-/* 绉诲姩绔€傞厤 */
-@media (max-width: 768px) {
-  .chat-header {
-    padding: 10px 12px;
+@media (prefers-reduced-motion: reduce) {
+  .message,
+  .quick-action-btn,
+  .action-btn,
+  .send-btn,
+  .analysis-board,
+  .input-wrapper,
+  .step-spinner {
+    animation: none !important;
+    transition: none !important;
+    transform: none !important;
   }
 
-  .message-content {
-    max-width: 85%;
-  }
-
-  .quick-actions {
-    gap: 8px;
-    margin-top: 12px;
-  }
-
-  .quick-action-btn {
-    padding: 6px 12px;
-    font-size: 12px;
-  }
-
-  .thinking-process-embed {
-    margin: 0 12px 8px 52px;
+  .chat-messages {
+    scroll-behavior: auto;
   }
 }
 </style>
