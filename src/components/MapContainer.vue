@@ -175,10 +175,6 @@ import Polygon from 'ol/geom/Polygon';
 import Overlay from 'ol/Overlay';
 import { fromLonLat, toLonLat } from 'ol/proj';
 import { Style, Fill, Stroke, Circle as CircleStyle, RegularShape, Text as TextStyle } from 'ol/style';
-<<<<<<< HEAD
-import { getCenter as getExtentCenter, isEmpty as isEmptyExtent } from 'ol/extent';
-=======
->>>>>>> 2152efd (优化前端性能，checkpoint v5)
 
 
 import { useRegions, REGION_COLORS, MAX_REGIONS } from '../composables/useRegions';
@@ -256,15 +252,6 @@ watch(() => props.showWeightValue, (val) => { showWeightValue.value = val; });
 
 // POI 相关说明
 const poiPopup = ref(null); // DOM 相关说明
-<<<<<<< HEAD
-const popupVisible = ref(false);
-const popupName = ref('');
-const popupDetailLines = ref([]);
-let popupAnchor = null;
-let popupHideTimer = null;
-let popupPositionRafId = null;
-=======
->>>>>>> 2152efd (优化前端性能，checkpoint v5)
 
 
 const weightOptions = ref([
@@ -274,15 +261,9 @@ const weightOptions = ref([
 const MAP_MIN_ZOOM = 4;
 const MAP_MAX_ZOOM = 18;
 const VECTOR_LAYER_RUNTIME_OPTIONS = {
-<<<<<<< HEAD
-  updateWhileAnimating: false,
-  updateWhileInteracting: false,
-  renderBuffer: 140
-=======
   updateWhileAnimating: true,
   updateWhileInteracting: true,
   renderBuffer: 192
->>>>>>> 2152efd (优化前端性能，checkpoint v5)
 };
 const { toGcj02IfNeeded } = useProjection();
 
@@ -500,15 +481,6 @@ function showAiSpatialEvidence(payload = {}, options = {}) {
 }
 
 let html2canvasModulePromise = null;
-<<<<<<< HEAD
-let deckViewSyncAnimationId = null;
-let deckLayerRefreshAnimationId = null;
-let pointerMoveAnimationId = null;
-let pendingPointerEvent = null;
-
-// deck.gl 相关说明
-=======
->>>>>>> 2152efd (优化前端性能，checkpoint v5)
 let currentLocatedPoi = null;
 const {
   highlightData,
@@ -532,234 +504,6 @@ let olPoiFeatures = [];
 // OpenLayers 相关说明
 let rawToOlMap = new Map();
 
-<<<<<<< HEAD
-async function loadDeckRuntime() {
-  if (DeckClass && ScatterplotLayerClass && DeckHeatmapLayerClass) {
-    return true;
-  }
-
-  if (!deckRuntimePromise) {
-    deckRuntimePromise = Promise.all([
-      import('@deck.gl/core'),
-      import('@deck.gl/layers'),
-      import('@deck.gl/aggregation-layers')
-    ]).then(([core, layers, aggregation]) => {
-      DeckClass = core?.Deck || null;
-      ScatterplotLayerClass = layers?.ScatterplotLayer || null;
-      DeckHeatmapLayerClass = aggregation?.HeatmapLayer || null;
-      return Boolean(DeckClass && ScatterplotLayerClass && DeckHeatmapLayerClass);
-    }).catch((error) => {
-      console.warn('[MapContainer] deck.gl runtime load failed:', error);
-      DeckClass = null;
-      ScatterplotLayerClass = null;
-      DeckHeatmapLayerClass = null;
-      return false;
-    }).finally(() => {
-      deckRuntimePromise = null;
-    });
-  }
-
-  return deckRuntimePromise;
-}
-
-async function ensureDeckInitialized() {
-  if (deckInstance || !map.value || !mapContainer.value) return deckInstance;
-  const runtimeReady = await loadDeckRuntime();
-  if (!runtimeReady || !DeckClass) return null;
-
-  deckContainer = document.createElement('div');
-  deckContainer.style.cssText = `
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    pointer-events: none;
-    z-index: 1;
-  `;
-  mapContainer.value.appendChild(deckContainer);
-
-  deckInstance = new DeckClass({
-    parent: deckContainer,
-    style: { position: 'absolute', top: 0, left: 0, pointerEvents: 'none' },
-    initialViewState: getDeckViewState(),
-    controller: false,
-    layers: [],
-    getTooltip: null,
-    pickingRadius: 8,
-  });
-
-  const view = map.value.getView();
-  view.on('change:center', scheduleDeckViewSync);
-  view.on('change:rotation', scheduleDeckViewSync);
-  view.on('change:resolution', () => {
-    scheduleDeckViewSync();
-    scheduleDeckLayerRefresh();
-  });
-
-  nextTick(() => {
-    const canvas = deckContainer?.querySelector?.('canvas');
-    if (canvas) canvas.style.pointerEvents = 'none';
-  });
-
-  scheduleDeckViewSync();
-  scheduleDeckLayerRefresh();
-  return deckInstance;
-}
-
-/**
- * deck.gl 相关说明
- */
-function getDeckViewState() {
-  if (!map.value) {
-    return { longitude: 114.33, latitude: 30.58, zoom: 12, bearing: 0, pitch: 0 };
-  }
-  const view = map.value.getView();
-  const center = view.getCenter();
-  const zoom = view.getZoom();
-  const rotation = view.getRotation();
-  
-  if (!center || zoom === undefined) {
-    return { longitude: 114.33, latitude: 30.58, zoom: 12, bearing: 0, pitch: 0 };
-  }
-  
-  // EPSG: 说明
-  const [lon, lat] = toLonLat(center);
-  
-  return {
-    longitude: lon,
-    latitude: lat,
-    zoom: zoom - 1, // deck.gl 相关说明
-    bearing: (-rotation * 180) / Math.PI,
-    pitch: 0,
-  };
-}
-
-/**
- *
- */
-function getColorByGroupIndex(groupIndex) {
-
-  const colors = [
-    [255, 0, 0, 180],
-    [0, 128, 255, 180],
-    [0, 200, 80, 180],
-    [255, 165, 0, 180],
-    [138, 43, 226, 180],
-    [0, 206, 209, 180],
-    [255, 20, 147, 180],
-    [255, 215, 0, 180],
-    [70, 130, 180, 180],
-    [154, 205, 50, 180],
-    [220, 20, 60, 180],
-    [0, 139, 139, 180],
-  ];
-  return colors[groupIndex % colors.length] || colors[0];
-}
-
-/**
- * deck.gl 相关说明
- */
-function updateDeckLayers() {
-  if (!deckInstance || !ScatterplotLayerClass || !DeckHeatmapLayerClass || !map.value) return;
-  
-  const zoom = map.value.getView().getZoom() || 13;
-  
-
-  const minZ = 10, maxZ = 16;
-  const clampedZoom = Math.max(minZ, Math.min(maxZ, zoom));
-  const ratio = (clampedZoom - minZ) / (maxZ - minZ);
-  // -> 80, -> 30
-  const heatmapRadius = Math.round(90 - ratio * (90 - 40));
-  
-  const layers = [
-    // 注释说明
-    // OpenLayers 相关说明
-    new ScatterplotLayerClass({
-      id: 'highlight-layer',
-      data: highlightData.value.filter(d => {
-        // POI 相关说明
-        if (!currentLocatedPoi) return true;
-        const coords = currentLocatedPoi.geometry.coordinates;
-        if (!coords) return true;
-        return Math.abs(d.lon - coords[0]) > 0.000001 || Math.abs(d.lat - coords[1]) > 0.000001;
-      }),
-      pickable: true,
-      opacity: 0.8,
-      stroked: true,
-      filled: true,
-      radiusScale: 1,
-      radiusMinPixels: 3,
-      radiusMaxPixels: 7,
-      lineWidthMinPixels: 1,
-      getPosition: d => [d.lon, d.lat],
-      getRadius: 4,
-      getFillColor: d => getColorByGroupIndex(d.groupIndex || 0),
-      getLineColor: d => {
-        const fill = getColorByGroupIndex(d.groupIndex || 0);
-        return [fill[0], fill[1], fill[2]]; // 注释说明
-      },
-      updateTriggers: {
-        getFillColor: [highlightData.value, currentLocatedPoi],
-        getPosition: [highlightData.value, currentLocatedPoi],
-      },
-    }),
-    
-    // POI 相关说明
-    new DeckHeatmapLayerClass({
-      id: 'heatmap-layer',
-      data: heatmapData.value,
-      visible: heatmapEnabled.value,
-      pickable: false,
-      getPosition: d => [d.lon, d.lat],
-      getWeight: 1,
-      radiusPixels: heatmapRadius,
-      intensity: 5,
-      threshold: 0.01,
-      colorRange: [
-        [255, 255, 178, 150],
-        [254, 217, 118, 180],
-        [254, 178, 76, 200],
-        [253, 141, 60, 220],
-        [240, 59, 32, 240],
-        [189, 0, 38, 255],
-      ],
-      updateTriggers: {
-        getPosition: [heatmapData.value],
-        radiusPixels: [zoom],
-      },
-    }),
-  ];
-  
-  deckInstance.setProps({ layers });
-}
-
-/**
- * deck.gl 相关说明
- */
-function syncDeckView() {
-  if (!deckInstance || !map.value) return;
-  deckInstance.setProps({ viewState: getDeckViewState() });
-}
-
-function scheduleDeckViewSync() {
-  if (deckViewSyncAnimationId !== null) return;
-  deckViewSyncAnimationId = requestAnimationFrame(() => {
-    deckViewSyncAnimationId = null;
-    syncDeckView();
-  });
-}
-
-function scheduleDeckLayerRefresh() {
-  if (deckLayerRefreshAnimationId !== null) return;
-  deckLayerRefreshAnimationId = requestAnimationFrame(() => {
-    deckLayerRefreshAnimationId = null;
-    updateDeckLayers();
-  });
-}
-
-=======
->>>>>>> 2152efd (优化前端性能，checkpoint v5)
 onMounted(() => {
   // 注释说明
   const amapKey = import.meta.env.VITE_AMAP_KEY || '2b42a2f72ef6751f2cd7c7bd24139e72';
@@ -787,13 +531,7 @@ onMounted(() => {
   map.value.on('moveend', onMapMoveEnd);
   map.value.on('pointermove', onPointerMove);
   map.value.on('singleclick', onMapClick);
-<<<<<<< HEAD
-  map.value.getView().on('change:center', schedulePopupPositionSync);
-  map.value.getView().on('change:resolution', schedulePopupPositionSync);
-  map.value.getView().on('change:rotation', schedulePopupPositionSync);
-=======
   attachPopupViewListeners(map.value.getView());
->>>>>>> 2152efd (优化前端性能，checkpoint v5)
 
   // POI 相关说明
   rebuildPoiOlFeatures();
@@ -830,55 +568,11 @@ function onMapMoveEnd() {
   const tr = toLonLat([extent[2], extent[3]]);
   // [   ]
   emit('map-move-end', [bl[0], bl[1], tr[0], tr[1]]);
-<<<<<<< HEAD
-  schedulePopupPositionSync();
-}
-
-const AI_BOUNDARY_KIND_PRIORITY = Object.freeze({
-  fuzzyCore: 4.0,
-  fuzzyTransition: 3.0,
-  fuzzyOuter: 2.0,
-  vernacular: 1.6,
-  hotspot: 1.4,
-  queryBoundary: 1.2,
-  generic: 1.0
-});
-
-function findAiBoundaryAtCoordinate(coordinate) {
-  if (!Array.isArray(coordinate) || coordinate.length < 2) return null;
-
-  let bestMatch = null;
-  aiEvidenceLayerSource.forEachFeature((feature) => {
-    const geometry = feature?.getGeometry?.();
-    if (!geometry || typeof geometry.intersectsCoordinate !== 'function') return;
-    if (!geometry.intersectsCoordinate(coordinate)) return;
-
-    const labelRaw = feature.get('__aiBoundaryLabel');
-    const label = typeof labelRaw === 'string' ? labelRaw.trim() : '';
-    if (!label) return;
-
-    const kind = String(feature.get('__aiBoundaryKind') || 'generic');
-    const priority = AI_BOUNDARY_KIND_PRIORITY[kind] ?? AI_BOUNDARY_KIND_PRIORITY.generic;
-    const confidence = toFiniteBoundaryConfidence(feature.get('__aiBoundaryConfidence')) ?? 0;
-    const score = priority + confidence;
-    if (!bestMatch || score > bestMatch.score) {
-      bestMatch = {
-        score,
-        label,
-        meta: feature.get('__aiBoundaryMeta') || null,
-        feature
-      };
-    }
-  });
-
-  return bestMatch;
-=======
   schedulePopupPosition();
 }
 
 function onMapMoveStart() {
   setBoundaryInteractionMode(true);
->>>>>>> 2152efd (优化前端性能，checkpoint v5)
 }
 
 function debounce(func, wait) {
@@ -902,10 +596,8 @@ const emitHover = debounce((feature) => {
 function onMapClick(evt) {
   const pixel = map.value.getEventPixel(evt.originalEvent);
   let foundRaw = null;
-  let rawAnchorCoordinate = null;
   let boundaryLabel = '';
   let boundaryMeta = null;
-  let boundaryFeature = null;
 
   // 注释说明
   map.value.forEachFeatureAtPixel(
@@ -915,7 +607,6 @@ function onMapClick(evt) {
       if (typeof label === 'string' && label.trim()) {
         boundaryLabel = label.trim();
         boundaryMeta = feature.get('__aiBoundaryMeta') || null;
-        boundaryFeature = feature;
         return true;
       }
       return false;
@@ -931,7 +622,6 @@ function onMapClick(evt) {
     if (fallbackBoundary) {
       boundaryLabel = fallbackBoundary.label;
       boundaryMeta = fallbackBoundary.meta;
-      boundaryFeature = fallbackBoundary.feature || null;
     }
   }
 
@@ -943,7 +633,6 @@ function onMapClick(evt) {
         const raw = feature.get('__raw');
         if (raw) {
           foundRaw = raw;
-          rawAnchorCoordinate = resolveFeatureAnchorCoordinate(feature, evt.coordinate);
           return true;
         }
         return false;
@@ -956,284 +645,38 @@ function onMapClick(evt) {
   }
 
   // deck.gl 相关说明
-<<<<<<< HEAD
-  if (!boundaryLabel && !foundRaw && deckInstance && pixel && Number.isFinite(pixel[0]) && Number.isFinite(pixel[1])) {
-    try {
-      const pickInfo = deckInstance.pickObject({
-        x: pixel[0],
-        y: pixel[1],
-        radius: 10,
-      });
-      if (pickInfo && pickInfo.object && pickInfo.object.raw) {
-        foundRaw = pickInfo.object.raw;
-        const lon = Number(pickInfo.object.raw?.geometry?.coordinates?.[0]);
-        const lat = Number(pickInfo.object.raw?.geometry?.coordinates?.[1]);
-        if (Number.isFinite(lon) && Number.isFinite(lat)) {
-          rawAnchorCoordinate = fromLonLat([lon, lat]);
-        }
-      }
-    } catch (e) {
-      // deck.gl 相关说明
-=======
   if (!boundaryLabel && !foundRaw && pixel && Number.isFinite(pixel[0]) && Number.isFinite(pixel[1])) {
     const picked = pickDeckObject(pixel, 10);
     if (picked?.raw) {
       foundRaw = picked.raw;
->>>>>>> 2152efd (优化前端性能，checkpoint v5)
     }
   }
   
   if (boundaryLabel) {
-<<<<<<< HEAD
-    const boundaryAnchor = normalizePopupAnchor(
-      {
-        coordinate: resolveFeatureAnchorCoordinate(boundaryFeature, evt.coordinate),
-        pixel
-      },
-      evt.coordinate
-    );
-    showBoundaryPopup(boundaryLabel, boundaryAnchor, boundaryMeta);
-=======
     showBoundaryPopup(
       boundaryLabel,
       evt.coordinate,
       buildBoundaryPopupLines(boundaryMeta)
     );
->>>>>>> 2152efd (优化前端性能，checkpoint v5)
   } else if (foundRaw) {
     console.log('[MapContainer] 点击要素:', foundRaw);
     emit('click-feature', foundRaw);
 
     // POI 相关说明
-<<<<<<< HEAD
-    const poiAnchor = normalizePopupAnchor(
-      {
-        coordinate: rawAnchorCoordinate,
-        pixel
-      },
-      evt.coordinate
-    );
-    showPoiPopup(foundRaw, poiAnchor);
-=======
     showPoiPopup(foundRaw, evt.coordinate);
->>>>>>> 2152efd (优化前端性能，checkpoint v5)
   } else {
 
     hidePoiPopup();
   }
 }
 
-<<<<<<< HEAD
-function toFinitePair(value) {
-  if (!Array.isArray(value) || value.length < 2) return null;
-  const x = Number(value[0]);
-  const y = Number(value[1]);
-  return Number.isFinite(x) && Number.isFinite(y) ? [x, y] : null;
-}
-
-function resolveFeatureAnchorCoordinate(feature, fallbackCoordinate = null) {
-  const geometry = feature?.getGeometry?.();
-  if (!geometry) return Array.isArray(fallbackCoordinate) ? fallbackCoordinate : null;
-
-  if (typeof geometry.getType === 'function' && geometry.getType() === 'Point') {
-    const pointCoords = toFinitePair(geometry.getCoordinates?.());
-    if (pointCoords) return pointCoords;
-  }
-
-  if (typeof geometry.getInteriorPoint === 'function') {
-    const interior = geometry.getInteriorPoint();
-    const coord = toFinitePair(interior?.getCoordinates?.());
-    if (coord) return coord;
-  }
-
-  if (Array.isArray(fallbackCoordinate) && typeof geometry.getClosestPoint === 'function') {
-    const closest = toFinitePair(geometry.getClosestPoint(fallbackCoordinate));
-    if (closest) return closest;
-  }
-
-  if (typeof geometry.getExtent === 'function') {
-    const extent = geometry.getExtent();
-    if (Array.isArray(extent) && extent.length === 4 && !isEmptyExtent(extent)) {
-      return getExtentCenter(extent);
-    }
-  }
-
-  return Array.isArray(fallbackCoordinate) ? fallbackCoordinate : null;
-}
-
-function normalizePopupAnchor(anchor, fallbackCoordinate = null) {
-  if (!map.value) return null;
-
-  let coordinate = null;
-  let pixel = null;
-
-  if (anchor && typeof anchor === 'object') {
-    coordinate = toFinitePair(anchor.coordinate);
-    pixel = toFinitePair(anchor.pixel);
-    if (!pixel && Number.isFinite(anchor.clientX) && Number.isFinite(anchor.clientY) && mapContainer.value) {
-      const mapRect = mapContainer.value.getBoundingClientRect();
-      pixel = [Number(anchor.clientX) - mapRect.left, Number(anchor.clientY) - mapRect.top];
-    }
-  } else {
-    pixel = toFinitePair(anchor);
-  }
-
-  if (!coordinate) {
-    coordinate = toFinitePair(fallbackCoordinate);
-  }
-
-  if (!pixel && coordinate) {
-    pixel = toFinitePair(map.value.getPixelFromCoordinate(coordinate));
-  }
-
-  if (!coordinate && pixel) {
-    coordinate = toFinitePair(map.value.getCoordinateFromPixel(pixel));
-  }
-
-  if (!coordinate && !pixel) return null;
-  return { coordinate, pixel };
-}
-
-function getPopupPixelFromAnchor(anchor) {
-  if (!anchor || !map.value) return null;
-  if (anchor.coordinate) {
-    return toFinitePair(map.value.getPixelFromCoordinate(anchor.coordinate));
-  }
-  return toFinitePair(anchor.pixel);
-}
-
-function schedulePopupPositionSync() {
-  if (popupPositionRafId !== null) return;
-  popupPositionRafId = requestAnimationFrame(() => {
-    popupPositionRafId = null;
-    syncPopupPosition();
-  });
-}
-
-function syncPopupPosition() {
-  if (!popupVisible.value || !popupAnchor) return;
-  positionPopup(popupAnchor);
-}
-
-function positionPopup(anchor) {
-  if (!poiPopup.value || !mapContainer.value || !anchor) return;
-  const pixel = getPopupPixelFromAnchor(anchor);
-  if (!pixel) return;
-
-  const mapRect = mapContainer.value.getBoundingClientRect();
-  const popupRect = poiPopup.value.getBoundingClientRect();
-  const popupWidth = popupRect.width || 0;
-  const popupHeight = popupRect.height || 0;
-
-  let x = Number(pixel[0]);
-  let y = Number(pixel[1]);
-  if (!Number.isFinite(x) || !Number.isFinite(y)) return;
-
-  const halfWidth = popupWidth * 0.5;
-  const leftBoundary = Math.max(halfWidth + 8, 8);
-  const rightBoundary = Math.max(leftBoundary, mapRect.width - halfWidth - 8);
-  x = Math.min(Math.max(x, leftBoundary), rightBoundary);
-
-  let flipped = false;
-  let anchorTop = y - 12;
-  if (anchorTop - popupHeight < 8) {
-    flipped = true;
-    anchorTop = y + 12;
-  }
-
-  if (flipped) {
-    anchorTop = Math.min(Math.max(anchorTop, 8), Math.max(8, mapRect.height - popupHeight - 8));
-  } else {
-    anchorTop = Math.min(Math.max(anchorTop, popupHeight + 8), Math.max(popupHeight + 8, mapRect.height - 8));
-  }
-
-  poiPopup.value.classList.toggle('flip-vertical', flipped);
-  poiPopup.value.style.left = `${x}px`;
-  poiPopup.value.style.top = `${anchorTop}px`;
-}
-
-function showTextPopup(label, anchor, autoHideMs = 2800, detailLines = []) {
-  popupName.value = String(label || '').trim() || '未命名片区';
-  popupDetailLines.value = Array.isArray(detailLines)
-    ? detailLines.map((line) => String(line || '').trim()).filter(Boolean).slice(0, 4)
-    : [];
-  popupAnchor = normalizePopupAnchor(anchor);
-  if (!popupAnchor) {
-    popupVisible.value = false;
-    return;
-  }
-  popupVisible.value = true;
-
-  nextTick(() => {
-    positionPopup(popupAnchor);
-  });
-
-  if (popupHideTimer) {
-    clearTimeout(popupHideTimer);
-    popupHideTimer = null;
-  }
-
-  popupHideTimer = setTimeout(() => {
-    hidePoiPopup();
-  }, autoHideMs);
-}
-
-/**
- * POI 相关说明
- */
-function showPoiPopup(feature, event) {
-  const props = feature.properties || feature;
-  const name = props['名称'] || props.name || props.poi_name || props.poiName || props.title || props.label || '未命名POI';
-  const category = props.category_small || props.category_mid || props.category_big || props.type || '';
-  const address = props.address || props.addr || '';
-  const detailLines = [category, address].map((value) => String(value || '').trim()).filter(Boolean).slice(0, 2);
-  showTextPopup(name, event, 3200, detailLines);
-}
-
-function showBoundaryPopup(label, event, meta = null) {
-  const detailLines = buildBoundaryPopupLines(meta);
-  showTextPopup(label, event, 2800, detailLines);
-}
-
-/**
- * POI 相关说明
- */
-function hidePoiPopup() {
-  if (popupHideTimer) {
-    clearTimeout(popupHideTimer);
-    popupHideTimer = null;
-  }
-  popupVisible.value = false;
-  popupAnchor = null;
-  if (poiPopup.value) {
-    poiPopup.value.classList.remove('flip-vertical');
-  }
-  popupDetailLines.value = [];
-}
-
-=======
->>>>>>> 2152efd (优化前端性能，checkpoint v5)
 /**
  *
  * deck.gl 相关说明
  */
 function onPointerMove(evt) {
-  pendingPointerEvent = evt;
-  if (pointerMoveAnimationId !== null) return;
-  pointerMoveAnimationId = requestAnimationFrame(() => {
-    pointerMoveAnimationId = null;
-    processPointerMove(pendingPointerEvent);
-  });
-}
-
-function processPointerMove(evt) {
-  if (!evt || !map.value) return;
-  if (evt.dragging) {
-    map.value.getTargetElement().style.cursor = '';
-    emitHover(null);
-    return;
-  }
-
+  if (evt.dragging) return;
+  
   const pixel = map.value.getEventPixel(evt.originalEvent);
   let hitRaw = null;
   
@@ -1249,25 +692,10 @@ function processPointerMove(evt) {
   });
   
   // deck.gl 相关说明
-<<<<<<< HEAD
-  if (!hitRaw && deckInstance && pixel && Number.isFinite(pixel[0]) && Number.isFinite(pixel[1])) {
-    try {
-      const pickInfo = deckInstance.pickObject({
-        x: pixel[0],
-        y: pixel[1],
-        radius: 6,
-      });
-      if (pickInfo && pickInfo.object && pickInfo.object.raw) {
-        hitRaw = pickInfo.object.raw;
-      }
-    } catch (e) {
-      // deck.gl 相关说明
-=======
   if (!hitRaw && pixel && Number.isFinite(pixel[0]) && Number.isFinite(pixel[1])) {
     const picked = pickDeckObject(pixel, 8);
     if (picked?.raw) {
       hitRaw = picked.raw;
->>>>>>> 2152efd (优化前端性能，checkpoint v5)
     }
   }
   
@@ -1281,49 +709,9 @@ function processPointerMove(evt) {
 }
 
 onBeforeUnmount(() => {
-<<<<<<< HEAD
-
-  if (deckViewSyncAnimationId !== null) {
-    cancelAnimationFrame(deckViewSyncAnimationId);
-    deckViewSyncAnimationId = null;
-  }
-
-  if (deckLayerRefreshAnimationId !== null) {
-    cancelAnimationFrame(deckLayerRefreshAnimationId);
-    deckLayerRefreshAnimationId = null;
-  }
-
-  if (pointerMoveAnimationId !== null) {
-    cancelAnimationFrame(pointerMoveAnimationId);
-    pointerMoveAnimationId = null;
-  }
-
-  if (popupPositionRafId !== null) {
-    cancelAnimationFrame(popupPositionRafId);
-    popupPositionRafId = null;
-  }
-
-  if (popupHideTimer) {
-    clearTimeout(popupHideTimer);
-    popupHideTimer = null;
-  }
-  
-  // deck.gl 相关说明
-  if (deckInstance) {
-    deckInstance.finalize();
-    deckInstance = null;
-  }
-  
-  // deck.gl 相关说明
-  if (deckContainer && deckContainer.parentNode) {
-    deckContainer.parentNode.removeChild(deckContainer);
-    deckContainer = null;
-  }
-=======
   cleanupPopupAnchor();
   setBoundaryInteractionMode(false);
   destroyDeckBridge();
->>>>>>> 2152efd (优化前端性能，checkpoint v5)
   
   // OpenLayers 相关说明
   if (map.value) map.value.setTarget(null);
@@ -1418,12 +806,8 @@ function flyTo(target, options = {}) {
   } else {
     currentLocatedPoi = null;
   }
-<<<<<<< HEAD
-  scheduleDeckLayerRefresh();
-=======
   markDeckLayersDirty();
   scheduleDeckSync({ forceLayerRefresh: true });
->>>>>>> 2152efd (优化前端性能，checkpoint v5)
 
   hoverLayerSource.clear();
   locateLayerSource.clear();
@@ -1935,442 +1319,7 @@ function removeRegionFromMap(regionId) {
  *
  */
 function clearHighlights() {
-<<<<<<< HEAD
-  highlightData.value = [];
-  heatmapData.value = [];
-  if (deckInstance) {
-    scheduleDeckLayerRefresh();
-  }
-}
-
-function parseBoundaryPayload(boundary) {
-  if (typeof boundary !== 'string') return boundary;
-  const raw = boundary.trim();
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
-}
-
-function toCoordinatePair(coord) {
-  if (Array.isArray(coord) && coord.length >= 2) {
-    const lon = Number(coord[0]);
-    const lat = Number(coord[1]);
-    if (Number.isFinite(lon) && Number.isFinite(lat)) {
-      return [lon, lat];
-    }
-  }
-
-  if (coord && typeof coord === 'object') {
-    const lonRaw = coord.lon ?? coord.lng ?? coord.longitude ?? coord.x;
-    const latRaw = coord.lat ?? coord.latitude ?? coord.y;
-    const lon = Number(lonRaw);
-    const lat = Number(latRaw);
-    if (Number.isFinite(lon) && Number.isFinite(lat)) {
-      return [lon, lat];
-    }
-  }
-
-  return null;
-}
-
-function extractBoundaryRings(boundary) {
-  const payload = parseBoundaryPayload(boundary);
-  if (!payload) return [];
-
-  if (Array.isArray(payload)) {
-    if (payload.length === 0) return [];
-
-    if (toCoordinatePair(payload[0])) {
-      return [payload];
-    }
-
-    const first = payload[0];
-    if (Array.isArray(first) && toCoordinatePair(first[0])) {
-      return [first];
-    }
-
-    return payload.flatMap((item) => extractBoundaryRings(item));
-  }
-
-  if (typeof payload !== 'object') {
-    return [];
-  }
-
-  if (payload.type === 'Feature') {
-    return extractBoundaryRings(payload.geometry);
-  }
-
-  if (payload.type === 'FeatureCollection' && Array.isArray(payload.features)) {
-    return payload.features.flatMap((feature) => extractBoundaryRings(feature));
-  }
-
-  if (payload.type === 'Polygon') {
-    return extractBoundaryRings(payload.coordinates);
-  }
-
-  if (payload.type === 'MultiPolygon' && Array.isArray(payload.coordinates)) {
-    return payload.coordinates.flatMap((polygon) => extractBoundaryRings(polygon));
-  }
-
-  if (Array.isArray(payload.coordinates)) {
-    return extractBoundaryRings(payload.coordinates);
-  }
-
-  if (Array.isArray(payload.boundary)) {
-    return extractBoundaryRings(payload.boundary);
-  }
-
-  if (Array.isArray(payload.boundary_ring)) {
-    return extractBoundaryRings(payload.boundary_ring);
-  }
-
-  if (payload.geometry && typeof payload.geometry === 'object') {
-    return extractBoundaryRings(payload.geometry);
-  }
-
-  return [];
-}
-
-function normalizeClosedRing(ringCandidate) {
-  const ring = (Array.isArray(ringCandidate) ? ringCandidate : [])
-    .map((coord) => toCoordinatePair(coord))
-    .filter(Boolean);
-
-  if (ring.length < 3) return [];
-
-  const [firstLon, firstLat] = ring[0];
-  const [lastLon, lastLat] = ring[ring.length - 1];
-  if (firstLon !== lastLon || firstLat !== lastLat) {
-    ring.push([firstLon, firstLat]);
-  }
-
-  return ring;
-}
-
-function toMapLonLat(lon, lat) {
-  const poiCoordSys = import.meta.env.VITE_POI_COORD_SYS || 'gcj02';
-  if (poiCoordSys.toLowerCase() === 'wgs84') {
-    return wgs84ToGcj02(lon, lat);
-  }
-  return [lon, lat];
-}
-
-function ringToOlCoordinates(ringCandidate) {
-  const ring = normalizeClosedRing(ringCandidate);
-  if (ring.length < 4) return [];
-  return ring.map(([lon, lat]) => {
-    const [mapLon, mapLat] = toMapLonLat(lon, lat);
-    return fromLonLat([mapLon, mapLat]);
-  });
-}
-
-function toFiniteBoundaryConfidence(value) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return null;
-  if (parsed < 0) return 0;
-  if (parsed > 1) return 1;
-  return parsed;
-}
-
-function confidenceBucket(score) {
-  const value = toFiniteBoundaryConfidence(score);
-  if (value === null) return 'unknown';
-  if (value >= 0.7) return 'high';
-  if (value >= 0.4) return 'medium';
-  return 'low';
-}
-
-function formatLegendPercent(value) {
-  const score = toFiniteBoundaryConfidence(value);
-  if (score === null) return '--';
-  return `${Math.round(score * 100)}%`;
-}
-
-function resetAiBoundaryLegend() {
-  aiBoundaryLegend.value = {
-    visible: false,
-    model: null,
-    avg: null,
-    min: null,
-    max: null,
-    buckets: { high: 0, medium: 0, low: 0 },
-    anchorModel: null,
-    semanticAnchorCoverage: null,
-    dominantNicheType: null,
-    avgWaterPenalty: null
-  };
-}
-
-function updateAiBoundaryLegend({ stats = null, confidenceValues = [], renderedCount = 0 } = {}) {
-  if (renderedCount <= 0) {
-    resetAiBoundaryLegend();
-    return;
-  }
-
-  const cleanValues = confidenceValues
-    .map((value) => toFiniteBoundaryConfidence(value))
-    .filter((value) => value !== null);
-
-  const normalizedStats = stats && typeof stats === 'object' ? stats : {};
-  const statAvg = toFiniteBoundaryConfidence(normalizedStats.avg_boundary_confidence);
-  const statMin = toFiniteBoundaryConfidence(normalizedStats.min_boundary_confidence);
-  const statMax = toFiniteBoundaryConfidence(normalizedStats.max_boundary_confidence);
-
-  const avg = statAvg !== null
-    ? statAvg
-    : (cleanValues.length ? cleanValues.reduce((sum, value) => sum + value, 0) / cleanValues.length : null);
-  const min = statMin !== null ? statMin : (cleanValues.length ? Math.min(...cleanValues) : null);
-  const max = statMax !== null ? statMax : (cleanValues.length ? Math.max(...cleanValues) : null);
-
-  const buckets = { high: 0, medium: 0, low: 0 };
-  cleanValues.forEach((value) => {
-    const bucket = confidenceBucket(value);
-    if (bucket in buckets) {
-      buckets[bucket] += 1;
-    }
-  });
-
-  aiBoundaryLegend.value = {
-    visible: true,
-    model: String(normalizedStats.boundary_confidence_model || 'composite_v5'),
-    avg,
-    min,
-    max,
-    buckets,
-    anchorModel: normalizedStats.semantic_anchor_model ? String(normalizedStats.semantic_anchor_model) : null,
-    semanticAnchorCoverage: toFiniteBoundaryConfidence(normalizedStats.semantic_anchor_coverage),
-    dominantNicheType: normalizedStats.dominant_niche_type ? String(normalizedStats.dominant_niche_type) : null,
-    avgWaterPenalty: toFiniteBoundaryConfidence(normalizedStats.avg_water_penalty)
-  };
-}
-
-function createAiPolygonStyle(kind = 'generic', confidence = null) {
-  const presets = {
-    queryBoundary: { color: [59, 130, 246], fillAlpha: 0.08, strokeAlpha: 0.95, width: 3.0 },
-    hotspot: { color: [249, 115, 22], fillAlpha: 0.12, strokeAlpha: 0.92, width: 2.0 },
-    vernacular: { color: [244, 114, 182], fillAlpha: 0.10, strokeAlpha: 0.82, width: 2.0 },
-    fuzzyOuter: { color: [56, 189, 248], fillAlpha: 0.08, strokeAlpha: 0.58, width: 1.6 },
-    fuzzyTransition: { color: [168, 85, 247], fillAlpha: 0.10, strokeAlpha: 0.75, width: 2.0 },
-    fuzzyCore: { color: [16, 185, 129], fillAlpha: 0.15, strokeAlpha: 0.90, width: 2.4 },
-    generic: { color: [148, 163, 184], fillAlpha: 0.06, strokeAlpha: 0.75, width: 1.8 }
-  };
-
-  const preset = presets[kind] || presets.generic;
-  const score = toFiniteBoundaryConfidence(confidence);
-  const confidenceFactor = score === null ? 1 : (0.45 + score * 0.55);
-  const fillAlpha = Math.max(0.02, Math.min(0.98, preset.fillAlpha * confidenceFactor));
-  const strokeAlpha = Math.max(0.08, Math.min(0.98, preset.strokeAlpha * (score === null ? 1 : (0.35 + score * 0.65))));
-  const strokeWidth = Math.max(1, preset.width * (score === null ? 1 : (0.75 + score * 0.5)));
-  const [r, g, b] = preset.color;
-
-  let lineDash;
-  if (score !== null && score < 0.4) {
-    lineDash = [8, 8];
-  } else if (score !== null && score < 0.7) {
-    lineDash = [6, 5];
-  }
-
-  return new Style({
-    fill: new Fill({ color: `rgba(${r}, ${g}, ${b}, ${fillAlpha.toFixed(3)})` }),
-    stroke: new Stroke({
-      color: `rgba(${r}, ${g}, ${b}, ${strokeAlpha.toFixed(3)})`,
-      width: Number(strokeWidth.toFixed(2)),
-      lineDash,
-      lineJoin: 'round',
-      lineCap: 'round'
-    })
-  });
-}
-
-function addAiBoundaryFeature(boundary, kind = 'generic', options = {}) {
-  const rings = extractBoundaryRings(boundary);
-  if (!rings.length) return 0;
-
-  const confidence = toFiniteBoundaryConfidence(options.confidence);
-  const onFeatureAdded = typeof options.onFeatureAdded === 'function' ? options.onFeatureAdded : null;
-  const label = typeof options.label === 'string' ? options.label.trim() : '';
-  const meta = options.meta && typeof options.meta === 'object' ? options.meta : null;
-
-  let addedCount = 0;
-  rings.forEach((ringCandidate) => {
-    const olCoords = ringToOlCoordinates(ringCandidate);
-    if (olCoords.length < 4) return;
-
-    const feature = new Feature({
-      geometry: new Polygon([olCoords])
-    });
-
-    if (label) {
-      feature.set('__aiBoundaryLabel', label);
-    }
-    feature.set('__aiBoundaryKind', kind);
-    feature.set('__aiBoundaryConfidence', confidence);
-    if (meta) {
-      feature.set('__aiBoundaryMeta', meta);
-    }
-    feature.setStyle(createAiPolygonStyle(kind, confidence));
-    aiEvidenceLayerSource.addFeature(feature);
-    addedCount += 1;
-
-    if (onFeatureAdded) {
-      onFeatureAdded(confidence);
-    }
-  });
-
-  return addedCount;
-}
-
-function fitToAiEvidenceIfNeeded(shouldFit = false) {
-  if (!shouldFit || !map.value) return;
-  const extent = aiEvidenceLayerSource.getExtent();
-  if (!extent || isEmptyExtent(extent)) return;
-  map.value.getView().fit(extent, {
-    padding: [60, 60, 60, 60],
-    duration: 600,
-    maxZoom: 16
-  });
-}
-
-function clearAiEvidenceBoundaries() {
-  aiEvidenceLayerSource.clear();
-  resetAiBoundaryLegend();
-  hidePoiPopup();
-}
-
-function showAnalysisBoundary(boundary, options = {}) {
-  const { fitView = true, clear = true, clearLocate = true, label = '片区边界' } = options;
-  if (clear) clearAiEvidenceBoundaries();
-  if (clearLocate) locateLayerSource.clear();
-  addAiBoundaryFeature(boundary, 'queryBoundary', { label });
-  aiBoundaryLegend.value.visible = false;
-  fitToAiEvidenceIfNeeded(fitView);
-}
-
-function showAiSpatialEvidence(payload = {}, options = {}) {
-  const inputPayload = payload && typeof payload === 'object' ? payload : {};
-  const { fitView = false, clear = true, clearLocate = true } = options;
-  if (clear) clearAiEvidenceBoundaries();
-  if (clearLocate) locateLayerSource.clear();
-
-  const normalized = normalizeAiEvidencePayload(inputPayload);
-  const clusters = normalized.clusters;
-  const vernacularRegions = normalized.vernacularRegions;
-  const fuzzyRegions = normalized.fuzzyRegions;
-  const boundary = normalized.boundary;
-  const stats = normalized.stats;
-
-  const confidenceValues = [];
-  const collectConfidence = (value) => {
-    const score = toFiniteBoundaryConfidence(value);
-    if (score !== null) {
-      confidenceValues.push(score);
-    }
-  };
-
-  let renderedCount = 0;
-
-  const hotspotList = Array.isArray(clusters?.hotspots) ? clusters.hotspots : [];
-
-  if (hotspotList.length) {
-    hotspotList.slice(0, 8).forEach((hotspot) => {
-      const hotspotBoundary =
-        hotspot.boundary_geojson ||
-        hotspot.layers?.transition?.geojson ||
-        hotspot.boundary ||
-        hotspot.layers?.transition?.boundary ||
-        hotspot.layers?.outer?.boundary ||
-        hotspot.boundary_ring;
-      const hotspotLabel = String(
-        hotspot.name ||
-        hotspot.dominantCategories?.[0]?.category ||
-        hotspot.dominant_categories?.[0]?.category ||
-        '高活力片区'
-      );
-      renderedCount += addAiBoundaryFeature(hotspotBoundary, 'hotspot', {
-        confidence: hotspot.boundary_confidence,
-        label: hotspotLabel,
-        meta: buildAiBoundaryMeta(hotspot),
-        onFeatureAdded: collectConfidence
-      });
-    });
-  }
-
-  if (Array.isArray(vernacularRegions) && vernacularRegions.length > 0) {
-    vernacularRegions.slice(0, 8).forEach((region) => {
-      const regionBoundary = resolveRegionBoundary(region);
-      const regionLabel = String(region.name || region.dominant_category || region.theme || '生态片区');
-      renderedCount += addAiBoundaryFeature(regionBoundary, 'vernacular', {
-        confidence: region.boundary_confidence,
-        label: regionLabel,
-        meta: buildAiBoundaryMeta(region),
-        onFeatureAdded: collectConfidence
-    });
-    });
-  }
-
-  if (Array.isArray(fuzzyRegions) && fuzzyRegions.length > 0) {
-    fuzzyRegions.slice(0, 10).forEach((region) => {
-      const baseLabel = String(region.name || region.theme || '片区');
-      const layers = resolveFuzzyLayerBundle(region);
-
-      // V5 路网地块边界：没有多层结构时只渲染单层，避免 3x 重复渲染导致卡顿
-      const hasDistinctLayers = region.layers && (
-        region.layers.outer?.boundary !== region.layers.transition?.boundary ||
-        region.layers.transition?.boundary !== region.layers.core?.boundary
-      );
-
-      if (hasDistinctLayers) {
-        // 有真正的多层模糊边界（V1-V4）
-        renderedCount += addAiBoundaryFeature(layers.outer.boundary, 'fuzzyOuter', {
-          confidence: layers.outer.confidence,
-          label: `${baseLabel}（外层）`,
-          meta: buildAiBoundaryMeta(region, { fuzzyLayer: 'outer' }),
-          onFeatureAdded: collectConfidence
-        });
-        renderedCount += addAiBoundaryFeature(layers.transition.boundary, 'fuzzyTransition', {
-          confidence: layers.transition.confidence,
-          label: `${baseLabel}（过渡层）`,
-          meta: buildAiBoundaryMeta(region, { fuzzyLayer: 'transition' }),
-          onFeatureAdded: collectConfidence
-        });
-        renderedCount += addAiBoundaryFeature(layers.core.boundary, 'fuzzyCore', {
-          confidence: layers.core.confidence,
-          label: `${baseLabel}（核心层）`,
-          meta: buildAiBoundaryMeta(region, { fuzzyLayer: 'core' }),
-          onFeatureAdded: collectConfidence
-        });
-      } else {
-        // V5 单层边界：只渲染一次
-        const singleBoundary = layers.core.boundary || layers.transition.boundary || layers.outer.boundary;
-        renderedCount += addAiBoundaryFeature(singleBoundary, 'fuzzyCore', {
-          confidence: layers.core.confidence,
-          label: `${baseLabel}（核心区）`,
-          meta: buildAiBoundaryMeta(region, { fuzzyLayer: 'core' }),
-          onFeatureAdded: collectConfidence
-        });
-      }
-    });
-  }
-
-  if (renderedCount === 0 && boundary) {
-    renderedCount += addAiBoundaryFeature(boundary, 'queryBoundary', {
-      label: inputPayload.boundary_label || inputPayload.boundaryLabel || '边界'
-    });
-  }
-
-  updateAiBoundaryLegend({
-    stats,
-    confidenceValues,
-    renderedCount
-  });
-
-  fitToAiEvidenceIfNeeded(fitView);
-=======
   clearDeckData();
->>>>>>> 2152efd (优化前端性能，checkpoint v5)
 }
 
 /**
@@ -2382,12 +1331,6 @@ function showHighlights(features, options = {}) {
   // deck.gl 相关说明
   if (!features || !features.length) {
     clearHighlights();
-<<<<<<< HEAD
-    if (deckInstance) {
-      scheduleDeckLayerRefresh();
-    }
-=======
->>>>>>> 2152efd (优化前端性能，checkpoint v5)
     return;
   }
 
@@ -2408,13 +1351,8 @@ function showHighlights(features, options = {}) {
   heatmapData.value = deckData;
   ensureDeckInitialized().then((instance) => {
     if (!instance) return;
-<<<<<<< HEAD
-    scheduleDeckLayerRefresh();
-    scheduleDeckViewSync();
-=======
     markDeckLayersDirty();
     scheduleDeckSync({ forceLayerRefresh: true });
->>>>>>> 2152efd (优化前端性能，checkpoint v5)
   });
   
 
@@ -2450,14 +1388,6 @@ watch(heatmapEnabled, (enabled) => {
   if (enabled) {
     ensureDeckInitialized().then((instance) => {
       if (!instance) return;
-<<<<<<< HEAD
-      scheduleDeckLayerRefresh();
-      scheduleDeckViewSync();
-    });
-    return;
-  }
-  scheduleDeckLayerRefresh();
-=======
       markDeckLayersDirty();
       scheduleDeckSync({ forceLayerRefresh: true });
     });
@@ -2465,7 +1395,6 @@ watch(heatmapEnabled, (enabled) => {
   }
   markDeckLayersDirty();
   scheduleDeckSync({ forceLayerRefresh: true });
->>>>>>> 2152efd (优化前端性能，checkpoint v5)
 });
 
 /**
@@ -2891,18 +1820,8 @@ async function captureMapScreenshot() {
   color: #fff;
   display: block;
   pointer-events: none;
-<<<<<<< HEAD
-  border: 1px solid rgba(99, 102, 241, 0.5);
-  transform: translate(-50%, -100%);
-  margin-top: 0;
-=======
->>>>>>> 2152efd (优化前端性能，checkpoint v5)
   z-index: 2000;
   will-change: left, top;
-}
-
-.poi-popup.flip-vertical {
-  transform: translate(-50%, 0);
 }
 
 .popup-content {
@@ -2952,10 +1871,6 @@ async function captureMapScreenshot() {
   bottom: auto;
   border-top: none;
   border-bottom: 8px solid #16213e;
-}
-
-.poi-popup.flip-vertical .popup-arrow {
-  display: none;
 }
 
 @keyframes popupFadeIn {

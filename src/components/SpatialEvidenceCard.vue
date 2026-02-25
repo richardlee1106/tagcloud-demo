@@ -417,40 +417,7 @@ function buildComparisonFollowup(regionA, regionB, hotspotA, hotspotB) {
   if (hotspotA && hotspotB) {
     return `请对比「${formatHotspotLabel(hotspotA)}」与「${formatHotspotLabel(hotspotB)}」的活力结构与商业机会。`
   }
-<<<<<<< HEAD
   return '请给出两个片区的差异化运营策略。'
-=======
-}
-
-function emitFollowup(prompt) {
-  if (!prompt) return
-  emit('ask-followup', prompt)
-}
-
-function askHotspotCause() {
-  const top = topHotspots.value[0]
-  const label = top ? formatHotspotLabel(top) : '߻Ƭ'
-  emitFollowup(`请解释「${label}」为什么会成为活力热点，并给出 3 个可验证指标。`)
-}
-
-function askHotspotOpportunity() {
-  const top = topHotspots.value[0]
-  const label = top ? formatHotspotLabel(top) : '߻Ƭ'
-  emitFollowup(`Χơ${label} 3 ͹Ļ㣬˵ԭʺҵ̬`)
-}
-
-function askRegionCompare() {
-  const [first, second] = topRegions.value
-  const firstName = first ? formatRegionLabel(first) : '片区 A'
-  const secondName = second ? formatRegionLabel(second) : '片区 B'
-  emitFollowup(`请对比「${firstName}」和「${secondName}」的业态结构差异与潜在风险。`)
-}
-
-function askRegionStrategy() {
-  const top = topRegions.value[0]
-  const name = top ? formatRegionLabel(top) : '主导业态片区'
-  emitFollowup(`针对「${name}」输出一份可执行经营策略：目标人群、业态组合、投入优先级。`)
->>>>>>> 2152efd (优化前端性能，checkpoint v5)
 }
 </script>
 

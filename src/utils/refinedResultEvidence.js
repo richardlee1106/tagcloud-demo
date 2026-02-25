@@ -1,4 +1,4 @@
-function pickArray(...candidates) {
+﻿function pickArray(...candidates) {
   for (const value of candidates) {
     if (Array.isArray(value)) return value
   }
@@ -80,36 +80,8 @@ export function normalizeRefinedResultEvidence(payload) {
     root.fuzzy_regions,
     root.fuzzyRegions
   )
-<<<<<<< HEAD
-  const stats = pickObject(results.stats, results.analysisStats, root.stats, root.analysisStats) || {}
-  const queryPlan = pickObject(
-    root.query_plan,
-    root.queryPlan,
-    results.query_executed,
-    results.queryExecuted
-  ) || {}
-  const intentMode = String(
-    queryPlan.intent_mode ||
-      queryPlan.intentMode ||
-      stats.intent_mode ||
-      stats.intentMode ||
-      ''
-  )
-    .trim()
-    .toLowerCase()
-  const queryType = String(
-    queryPlan.query_type ||
-      queryPlan.queryType ||
-      stats.query_type ||
-      stats.queryType ||
-      ''
-  )
-    .trim()
-    .toLowerCase()
-=======
   const stats = pickObject(results.stats, results.analysisStats, root.stats, root.analysisStats)
   const intent = normalizeIntentMeta(root, results)
->>>>>>> 2152efd (优化前端性能，checkpoint v5)
 
   const hotspotCount = Array.isArray(spatialClusters?.hotspots) ? spatialClusters.hotspots.length : 0
   const hasEvidence = Boolean(
@@ -125,13 +97,8 @@ export function normalizeRefinedResultEvidence(payload) {
     vernacularRegions,
     fuzzyRegions,
     stats,
-<<<<<<< HEAD
-    queryPlan,
-    intentMode: intentMode || null,
-    queryType: queryType || null,
-=======
     intent,
->>>>>>> 2152efd (优化前端性能，checkpoint v5)
     hasEvidence
   }
 }
+

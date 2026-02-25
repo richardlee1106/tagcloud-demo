@@ -1,10 +1,5 @@
-<<<<<<< HEAD
-<template>
-  <div class="ai-chat-container" :class="{ 'map-link-pulse': mapLinkPulse }">
-=======
 ﻿<template>
   <div class="ai-chat-container">
->>>>>>> 2152efd (优化前端性能，checkpoint v5)
     <!-- 头部状态栏 -->
     <div class="chat-header">
       <div class="header-main-row">
@@ -121,12 +116,8 @@
           <EmbeddedTagCloud 
             v-if="msg.role === 'assistant' && msg.pois && msg.pois.length > 0"
             :pois="msg.pois"
-<<<<<<< HEAD
-            :intent-mode="msg.tagCloudMode || 'macro'"
-=======
             :intent-mode="resolveEmbeddedIntentMode(msg)"
             :intent-meta="msg.intentMeta || null"
->>>>>>> 2152efd (优化前端性能，checkpoint v5)
             :width="360"
             :height="200"
             @render-to-map="handleRenderToMap"
@@ -138,9 +129,6 @@
             :clusters="msg.spatialClusters"
             :vernacular-regions="msg.vernacularRegions"
             :fuzzy-regions="msg.fuzzyRegions"
-            :analysis-stats="msg.analysisStats"
-            :intent-mode="msg.intentMode || 'macro_overview'"
-            :query-type="msg.queryType || msg.analysisStats?.query_type || ''"
             @locate="handleEvidenceLocate"
             @ask-followup="handleEvidenceFollowup"
           />
@@ -262,10 +250,8 @@ const emit = defineEmits([
 const messages = ref([]);
 const inputText = ref('');
 const isTyping = ref(false);
-const mapLinkPulse = ref(false);
 const currentStage = ref(''); // 原始 stage 名称（来自 SSE）
 const streamQueue = ref('');
-let mapLinkPulseTimer = null;
 
 const stageSteps = [
   { key: 'planner', label: '意图处理', hint: '正在理解问题意图与约束...' },
@@ -411,252 +397,7 @@ async function checkOnlineStatus() {
 
 // 发送消息
 
-<<<<<<< HEAD
-function normalizeSelectedCategories(rawSelectedCategories) {
-  if (!Array.isArray(rawSelectedCategories) || rawSelectedCategories.length === 0) {
-    return [];
-  }
-
-  const flattened = [];
-  for (const item of rawSelectedCategories) {
-    if (Array.isArray(item) && item.length > 0) {
-      const leaf = item[item.length - 1];
-      if (typeof leaf === 'string' && leaf.trim()) {
-        flattened.push(leaf.trim());
-      }
-      continue;
-    }
-
-    if (typeof item === 'string' && item.trim()) {
-      flattened.push(item.trim());
-    }
-  }
-
-  return [...new Set(flattened)];
-}
-
-function hasCustomSelection(spatialContext, regions) {
-  const hasPolygon = Array.isArray(spatialContext?.boundary) && spatialContext.boundary.length >= 3;
-  const hasCircle = Boolean(spatialContext?.center) && String(spatialContext?.mode || '').toLowerCase() === 'circle';
-  const hasRegion = Array.isArray(regions) && regions.length > 0;
-  return hasPolygon || hasCircle || hasRegion;
-}
-
-function inferAnalysisScale(zoom) {
-  if (!zoom) return 'district';
-  if (zoom >= 16) return 'street';
-  if (zoom >= 14) return 'block';
-  if (zoom >= 12) return 'district';
-  return 'city';
-}
-
-const DEEP_SPATIAL_KEYWORDS = [
-  '模糊',
-  '边界',
-  '片区',
-  '聚类',
-  '热力',
-  '对比',
-  '空间结构',
-  '可达性',
-  '生态位',
-  'fuzzy',
-  'vernacular',
-  'cluster',
-  'region',
-  'comparison'
-];
-
-const VISUAL_SNAPSHOT_KEYWORDS = [
-  '看图',
-  '截图',
-  '视觉',
-  '形态',
-  '地图',
-  'v l m'.replace(/\s+/g, ''),
-  'ocr'
-];
-
-function shouldRunDeepSpatialMode(queryText, spatialContext, regions, poiCount) {
-  const normalized = String(queryText || '').toLowerCase();
-  if (!normalized) return false;
-  if ((regions?.length || 0) >= 2) return true;
-  if (DEEP_SPATIAL_KEYWORDS.some((kw) => normalized.includes(kw))) return true;
-  if (String(spatialContext?.mode || '').toLowerCase() === 'polygon' && Number(poiCount) >= 180) return true;
-  return false;
-}
-
-function shouldCaptureSnapshot(queryText, deepSpatialMode) {
-  if (!deepSpatialMode) return false;
-  const normalized = String(queryText || '').toLowerCase();
-  return VISUAL_SNAPSHOT_KEYWORDS.some((kw) => normalized.includes(kw)) || normalized.length >= 28;
-}
-
-function inferTagCloudMode(intentMode, queryType = '', fallbackSpatialMode = '') {
-  const normalizedIntent = String(intentMode || '').toLowerCase();
-  const normalizedQueryType = String(queryType || '').toLowerCase();
-  const normalizedSpatialMode = String(fallbackSpatialMode || '').toLowerCase();
-
-  if (
-    normalizedIntent.includes('local_search') ||
-    normalizedIntent.includes('micro') ||
-    normalizedQueryType === 'poi_search'
-  ) {
-    return 'micro';
-  }
-
-  if (normalizedIntent.includes('comparison') || normalizedQueryType === 'region_comparison') {
-    return 'macro';
-  }
-
-  if (normalizedSpatialMode === 'polygon') {
-    return 'micro';
-  }
-
-  return 'macro';
-}
-
-const poiCoordSys = (import.meta.env.VITE_POI_COORD_SYS || 'gcj02').toLowerCase();
-const shouldProjectToBackend = poiCoordSys === 'wgs84';
-
-const GCJ_A = 6378245.0;
-const GCJ_EE = 0.00669342162296594323;
-
-function outOfChina(lon, lat) {
-  return (lon < 72.004 || lon > 137.8347) || (lat < 0.8293 || lat > 55.8271);
-}
-
-function transformLat(x, y) {
-  let ret = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * Math.sqrt(Math.abs(x));
-  ret += (20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0 / 3.0;
-  ret += (20.0 * Math.sin(y * Math.PI) + 40.0 * Math.sin(y / 3.0 * Math.PI)) * 2.0 / 3.0;
-  ret += (160.0 * Math.sin(y / 12.0 * Math.PI) + 320.0 * Math.sin((y * Math.PI) / 30.0)) * 2.0 / 3.0;
-  return ret;
-}
-
-function transformLon(x, y) {
-  let ret = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * Math.sqrt(Math.abs(x));
-  ret += (20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0 / 3.0;
-  ret += (20.0 * Math.sin(x * Math.PI) + 40.0 * Math.sin(x / 3.0 * Math.PI)) * 2.0 / 3.0;
-  ret += (150.0 * Math.sin(x / 12.0 * Math.PI) + 300.0 * Math.sin(x / 30.0 * Math.PI)) * 2.0 / 3.0;
-  return ret;
-}
-
-function wgs84ToGcj02(lon, lat) {
-  if (outOfChina(lon, lat)) return [lon, lat];
-
-  const dLat = transformLat(lon - 105.0, lat - 35.0);
-  const dLon = transformLon(lon - 105.0, lat - 35.0);
-  const radLat = lat / 180.0 * Math.PI;
-  let magic = Math.sin(radLat);
-  magic = 1 - GCJ_EE * magic * magic;
-  const sqrtMagic = Math.sqrt(magic);
-  const mgLat = lat + (dLat * 180.0) / ((GCJ_A * (1 - GCJ_EE)) / (magic * sqrtMagic) * Math.PI);
-  const mgLon = lon + (dLon * 180.0) / (GCJ_A / sqrtMagic * Math.cos(radLat) * Math.PI);
-  return [mgLon, mgLat];
-}
-
-function gcj02ToWgs84(lon, lat) {
-  if (outOfChina(lon, lat)) return [lon, lat];
-  const [gcjLon, gcjLat] = wgs84ToGcj02(lon, lat);
-  return [lon * 2 - gcjLon, lat * 2 - gcjLat];
-}
-
-function toBackendLonLat(lon, lat) {
-  const numericLon = Number(lon);
-  const numericLat = Number(lat);
-  if (!Number.isFinite(numericLon) || !Number.isFinite(numericLat)) {
-    return [lon, lat];
-  }
-  if (!shouldProjectToBackend) {
-    return [numericLon, numericLat];
-  }
-  return gcj02ToWgs84(numericLon, numericLat);
-}
-
-function convertCoordinateArrayToBackend(coords) {
-  if (!Array.isArray(coords)) return coords;
-  if (coords.length >= 2 && Number.isFinite(Number(coords[0])) && Number.isFinite(Number(coords[1]))) {
-    const [lon, lat] = toBackendLonLat(coords[0], coords[1]);
-    const rest = coords.length > 2 ? coords.slice(2) : [];
-    return [lon, lat, ...rest];
-  }
-  return coords.map((item) => convertCoordinateArrayToBackend(item));
-}
-
-function normalizeBoundaryForBackend(boundary) {
-  if (!Array.isArray(boundary)) return boundary;
-  return boundary
-    .map((point) => {
-      if (Array.isArray(point) && point.length >= 2) {
-        const [lon, lat] = toBackendLonLat(point[0], point[1]);
-        return [lon, lat];
-      }
-      if (point && typeof point === 'object') {
-        const [lon, lat] = toBackendLonLat(point.lon ?? point.lng ?? point.longitude, point.lat ?? point.latitude);
-        return { ...point, lon, lat };
-      }
-      return null;
-    })
-    .filter(Boolean);
-}
-
-function normalizeCenterForBackend(center) {
-  if (!center) return center;
-  if (Array.isArray(center) && center.length >= 2) {
-    const [lon, lat] = toBackendLonLat(center[0], center[1]);
-    return [lon, lat];
-  }
-  if (center && typeof center === 'object') {
-    const [lon, lat] = toBackendLonLat(center.lon ?? center.lng ?? center.longitude, center.lat ?? center.latitude);
-    return { ...center, lon, lat };
-  }
-  return center;
-}
-
-function normalizeViewportForBackend(viewport) {
-  if (!Array.isArray(viewport) || viewport.length < 4) return viewport;
-  const [swLon, swLat] = toBackendLonLat(viewport[0], viewport[1]);
-  const [neLon, neLat] = toBackendLonLat(viewport[2], viewport[3]);
-  return [
-    Math.min(swLon, neLon),
-    Math.min(swLat, neLat),
-    Math.max(swLon, neLon),
-    Math.max(swLat, neLat)
-  ];
-}
-
-function normalizeBoundaryWKTForBackend(boundaryWKT) {
-  if (!shouldProjectToBackend) return boundaryWKT;
-  if (typeof boundaryWKT !== 'string' || !boundaryWKT.trim()) return boundaryWKT;
-  if (!/POLYGON\s*\(\(/i.test(boundaryWKT)) return boundaryWKT;
-
-  const match = boundaryWKT.match(/POLYGON\s*\(\(\s*(.+?)\s*\)\)/i);
-  if (!match || !match[1]) return boundaryWKT;
-
-  const convertedPairs = match[1]
-    .split(',')
-    .map((pair) => pair.trim().split(/\s+/))
-    .filter((pair) => pair.length >= 2)
-    .map(([lon, lat]) => toBackendLonLat(lon, lat))
-    .map(([lon, lat]) => `${lon} ${lat}`);
-
-  if (convertedPairs.length < 3) return boundaryWKT;
-  return `POLYGON((${convertedPairs.join(', ')}))`;
-}
-
-function normalizeRegionGeometryForBackend(geometry) {
-  if (!geometry || typeof geometry !== 'object') return geometry;
-  if (!Array.isArray(geometry.coordinates)) return geometry;
-  return {
-    ...geometry,
-    coordinates: convertCoordinateArrayToBackend(geometry.coordinates)
-  };
-}
-
-=======
 // spatial request normalization moved to composable: useSpatialRequestBuilder
->>>>>>> 2152efd (优化前端性能，checkpoint v5)
 async function loadHtml2Canvas() {
   if (!html2canvasModulePromise) {
     html2canvasModulePromise = import('html2canvas')
@@ -816,10 +557,7 @@ async function sendMessage() {
     messages.value.push({
       role: 'assistant',
       content: '',
-      timestamp: Date.now(),
-      intentMode: '',
-      queryType: '',
-      tagCloudMode: inferTagCloudMode('', '', props.drawMode)
+      timestamp: Date.now()
     });
 
     const spatialContext = buildSpatialContext({
@@ -879,107 +617,6 @@ async function sendMessage() {
       options,
       props.poiFeatures,
       (type, data) => {
-<<<<<<< HEAD
-        if (type === 'stage') {
-          currentStage.value = data;
-          return;
-        }
-
-        if (type === 'pois' && Array.isArray(data)) {
-          console.log('[AiChat] Received structured POIs:', data.length);
-          extractedPOIs.value = data;
-          if (messages.value[aiMessageIndex]) {
-            messages.value[aiMessageIndex].pois = data;
-            messages.value[aiMessageIndex].tagCloudMode = inferTagCloudMode(
-              messages.value[aiMessageIndex].intentMode,
-              messages.value[aiMessageIndex].queryType,
-              spatialContext?.mode
-            );
-          }
-        }
-
-        if (type === 'boundary' && data) {
-          if (messages.value[aiMessageIndex]) {
-            messages.value[aiMessageIndex].boundary = data;
-          }
-          emit('ai-boundary', data);
-        }
-
-        if (type === 'spatial_clusters' && data) {
-          if (messages.value[aiMessageIndex]) {
-            messages.value[aiMessageIndex].spatialClusters = data;
-          }
-          emit('ai-spatial-clusters', data);
-        }
-
-        if (type === 'vernacular_regions' && Array.isArray(data)) {
-          if (messages.value[aiMessageIndex]) {
-            messages.value[aiMessageIndex].vernacularRegions = data;
-          }
-          emit('ai-vernacular-regions', data);
-        }
-
-        if (type === 'fuzzy_regions' && Array.isArray(data)) {
-          if (messages.value[aiMessageIndex]) {
-            messages.value[aiMessageIndex].fuzzyRegions = data;
-          }
-          emit('ai-fuzzy-regions', data);
-        }
-
-        if (type === 'stats' && data && typeof data === 'object') {
-          if (messages.value[aiMessageIndex]) {
-            messages.value[aiMessageIndex].analysisStats = data;
-            if (!messages.value[aiMessageIndex].queryType && data.query_type) {
-              messages.value[aiMessageIndex].queryType = String(data.query_type).toLowerCase();
-              messages.value[aiMessageIndex].tagCloudMode = inferTagCloudMode(
-                messages.value[aiMessageIndex].intentMode,
-                messages.value[aiMessageIndex].queryType,
-                spatialContext?.mode
-              );
-            }
-          }
-          emit('ai-analysis-stats', data);
-        }
-
-        if (type === 'refined_result' && data && typeof data === 'object') {
-          const normalized = normalizeRefinedResultEvidence(data);
-          const currentMsg = messages.value[aiMessageIndex];
-
-          if (currentMsg) {
-            if (normalized.boundary) currentMsg.boundary = normalized.boundary;
-            if (normalized.spatialClusters) currentMsg.spatialClusters = normalized.spatialClusters;
-            if (normalized.vernacularRegions.length > 0) currentMsg.vernacularRegions = normalized.vernacularRegions;
-            if (normalized.fuzzyRegions.length > 0) currentMsg.fuzzyRegions = normalized.fuzzyRegions;
-            if (normalized.stats) currentMsg.analysisStats = normalized.stats;
-            if (normalized.intentMode) currentMsg.intentMode = normalized.intentMode;
-            if (normalized.queryType) currentMsg.queryType = normalized.queryType;
-            currentMsg.tagCloudMode = inferTagCloudMode(
-              currentMsg.intentMode,
-              currentMsg.queryType,
-              spatialContext?.mode
-            );
-          }
-
-          if (normalized.boundary) emit('ai-boundary', normalized.boundary);
-          if (normalized.spatialClusters?.hotspots?.length) {
-            emit('ai-spatial-clusters', normalized.spatialClusters);
-          }
-          if (normalized.vernacularRegions.length > 0) {
-            emit('ai-vernacular-regions', normalized.vernacularRegions);
-          }
-          if (normalized.fuzzyRegions.length > 0) {
-            emit('ai-fuzzy-regions', normalized.fuzzyRegions);
-          }
-          if (normalized.stats) {
-            emit('ai-analysis-stats', normalized.stats);
-          }
-        }
-
-        if (type === 'progress' && data) {
-          if (messages.value[aiMessageIndex]) {
-            messages.value[aiMessageIndex].progress = data.progress;
-          }
-=======
         const fallbackIntentMode = spatialContext?.mode === 'Polygon' ? 'micro' : 'macro';
         const dispatchResult = dispatchMetaEvent({
           type,
@@ -989,7 +626,6 @@ async function sendMessage() {
         });
         if (dispatchResult?.stage) {
           currentStage.value = dispatchResult.stage;
->>>>>>> 2152efd (优化前端性能，checkpoint v5)
         }
       }
     );
@@ -1023,7 +659,6 @@ function sendQuickAction(prompt) {
 // 标签云：渲染到地图
 function handleRenderToMap(pois) {
   console.log('[AiChat] 渲染 POI 到地图:', pois.length);
-  triggerMapLinkPulse();
   emit('render-pois-to-map', pois);
 }
 
@@ -1031,7 +666,6 @@ function handleRenderToMap(pois) {
 function handleTagClick(tag) {
   console.log('[AiChat] 标签点击:', tag.name);
   if (tag.originalPoi) {
-    triggerMapLinkPulse();
     emit('render-pois-to-map', [tag.originalPoi]);
   }
 }
@@ -1045,7 +679,6 @@ function hasSpatialEvidence(msg) {
 function handleEvidenceLocate(center) {
   if (!center) return;
   const poi = { lon: center.lon || center[0], lat: center.lat || center[1] };
-  triggerMapLinkPulse();
   emit('render-pois-to-map', [{ type: 'Feature', geometry: { type: 'Point', coordinates: [poi.lon, poi.lat] }, properties: { _source: 'evidence_locate' } }]);
 }
 
@@ -1054,22 +687,7 @@ function handleEvidenceFollowup(prompt) {
   sendQuickAction(prompt);
 }
 
-<<<<<<< HEAD
-function triggerMapLinkPulse() {
-  mapLinkPulse.value = true;
-  if (mapLinkPulseTimer) {
-    clearTimeout(mapLinkPulseTimer);
-  }
-  mapLinkPulseTimer = setTimeout(() => {
-    mapLinkPulse.value = false;
-    mapLinkPulseTimer = null;
-  }, 720);
-}
-
-// 清空对话
-=======
 // 娓呯┖瀵硅瘽
->>>>>>> 2152efd (优化前端性能，checkpoint v5)
 function clearChat() {
   messages.value = [];
   extractedPOIs.value = [];
@@ -1142,11 +760,6 @@ onUnmounted(() => {
   if (statusTimer) {
     clearInterval(statusTimer)
     statusTimer = null
-  }
-
-  if (mapLinkPulseTimer) {
-    clearTimeout(mapLinkPulseTimer)
-    mapLinkPulseTimer = null
   }
 
   resetStreamState()
@@ -2395,123 +2008,6 @@ defineExpose({
   .thinking-process-embed {
     margin: 0 12px 8px 52px;
   }
-}
-
-/* ===== AI Panel Refresh v2 ===== */
-.ai-chat-container {
-  background:
-    radial-gradient(circle at 15% 0%, rgba(56, 189, 248, 0.16), transparent 40%),
-    radial-gradient(circle at 85% 0%, rgba(14, 165, 233, 0.12), transparent 42%),
-    linear-gradient(175deg, rgba(15, 23, 42, 0.96), rgba(2, 6, 23, 0.96));
-  border-left: 1px solid rgba(56, 189, 248, 0.18);
-  box-shadow: -8px 0 30px rgba(2, 6, 23, 0.5);
-}
-
-.ai-chat-container.map-link-pulse {
-  animation: map-link-pulse 0.72s ease;
-}
-
-@keyframes map-link-pulse {
-  0% {
-    box-shadow: -8px 0 30px rgba(2, 6, 23, 0.5);
-  }
-  40% {
-    box-shadow: -8px 0 30px rgba(2, 6, 23, 0.5), inset 0 0 0 1px rgba(56, 189, 248, 0.45);
-  }
-  100% {
-    box-shadow: -8px 0 30px rgba(2, 6, 23, 0.5);
-  }
-}
-
-.chat-header {
-  background: linear-gradient(120deg, rgba(15, 23, 42, 0.88), rgba(7, 26, 44, 0.88));
-  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
-}
-
-.message {
-  margin-bottom: 18px;
-}
-
-.assistant .message-text {
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  background: linear-gradient(145deg, rgba(15, 23, 42, 0.78), rgba(15, 23, 42, 0.56));
-  box-shadow: 0 8px 20px rgba(2, 6, 23, 0.2);
-}
-
-.user .message-text {
-  border: 1px solid rgba(56, 189, 248, 0.4);
-  background: linear-gradient(145deg, rgba(2, 132, 199, 0.34), rgba(14, 116, 144, 0.22));
-}
-
-.pipeline-tracker-inline {
-  border: 1px solid rgba(56, 189, 248, 0.26);
-  background: linear-gradient(140deg, rgba(15, 23, 42, 0.92), rgba(2, 30, 50, 0.86));
-  box-shadow: inset 0 1px 0 rgba(186, 230, 253, 0.06), 0 8px 22px rgba(2, 6, 23, 0.32);
-}
-
-.pipeline-trace-inline {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.trace-step-inline {
-  flex: 1 1 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
-.trace-connector {
-  display: block !important;
-  flex: 0 0 24px;
-  height: 2px;
-  margin: 0;
-  border-radius: 999px;
-  background: rgba(148, 163, 184, 0.26);
-}
-
-.trace-connector.completed {
-  background: linear-gradient(90deg, rgba(16, 185, 129, 0.92), rgba(45, 212, 191, 0.92));
-}
-
-.step-icon-wrapper.active {
-  background: linear-gradient(130deg, rgba(14, 165, 233, 0.95), rgba(2, 132, 199, 0.95));
-  border-color: rgba(125, 211, 252, 0.8);
-  box-shadow: 0 0 0 4px rgba(14, 165, 233, 0.2), 0 0 24px rgba(14, 165, 233, 0.38);
-}
-
-.step-icon-wrapper.completed {
-  background: linear-gradient(130deg, rgba(16, 185, 129, 0.95), rgba(13, 148, 136, 0.92));
-  border-color: rgba(110, 231, 183, 0.82);
-}
-
-.step-label-inline {
-  text-align: center;
-  white-space: normal;
-  line-height: 1.25;
-  color: rgba(203, 213, 225, 0.68);
-}
-
-.input-wrapper {
-  border: 1px solid rgba(125, 211, 252, 0.22);
-  background: linear-gradient(145deg, rgba(15, 23, 42, 0.9), rgba(15, 23, 42, 0.62));
-}
-
-.input-wrapper:focus-within {
-  border-color: rgba(56, 189, 248, 0.64);
-  box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.16);
-}
-
-.send-btn {
-  background: linear-gradient(135deg, #0ea5e9, #0284c7);
-}
-
-.send-btn:hover:not(:disabled) {
-  box-shadow: 0 6px 16px rgba(14, 165, 233, 0.35);
 }
 </style>
 

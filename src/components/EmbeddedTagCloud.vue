@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div ref="containerRef" class="embedded-tagcloud-container">
     <div class="tagcloud-header">
       <span class="tagcloud-title">地名标签云</span>
@@ -58,13 +58,8 @@
 </template>
 
 <script setup>
-<<<<<<< HEAD
-import { ref, onMounted, onUnmounted, watch } from 'vue'
-import { buildPlaceTagsFromPois } from '../utils/placeTagExtractor'
-=======
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { buildPlaceTags } from '../utils/tagExtraction.js'
->>>>>>> 2152efd (优化前端性能，checkpoint v5)
 
 const props = defineProps({
   pois: { type: Array, default: () => [] },
@@ -346,169 +341,7 @@ function switchMode(mode) {
   calculateLayout()
 }
 
-<<<<<<< HEAD
-// 计算布局
-function calculateLayout() {
-  if (!worker || props.pois.length === 0) return
-  isCalculating.value = true
-  
-  const topK = currentMode.value === 'coarse' ? 50 : 20
-  
-  // 关键修复：使用 JSON.parse(JSON.stringify()) 深拷贝去除 Proxy 响应式包装
-  let rawPois = []
-  try {
-    rawPois = JSON.parse(JSON.stringify(props.pois.slice(0, topK)))
-  } catch (e) {
-    console.warn('[TagCloud] POI 数据序列化失败，尝试手动提取:', e)
-    rawPois = props.pois.slice(0, topK).map(p => ({
-      id: p.id || p.poiid,
-      name: p.name || p.名称,
-      type: p.type || p.小类 || p.大类,
-      score: p.score || p.relevance_score,
-      properties: { ...p.properties },
-      geometry: { ...p.geometry }
-    }))
-  }
-  
-  const tags = buildPlaceTagsFromPois(rawPois, {
-    mode: currentMode.value,
-    intentMode: props.intentMode,
-    maxCount: topK
-  })
-  
-  // 发送到 Worker 计算 (使用 canvasWidth.value)
-  worker.postMessage({
-    tags,
-    width: canvasWidth.value || 380,
-    height: props.height,
-    config: {
-      fontMin: 12,
-      fontMax: 18,
-      padding: 3,
-      spiralStep: 4
-    }
-  })
-}
-
-// 渲染 Canvas
-function renderCanvas() {
-  const canvas = canvasRef.value
-  if (!canvas) return
-  
-  const ctx = canvas.getContext('2d')
-  const dpr = window.devicePixelRatio || 1
-  const w = canvasWidth.value
-  const h = props.height
-  
-  canvas.width = w * dpr
-  canvas.height = h * dpr
-  canvas.style.width = w + 'px'
-  canvas.style.height = h + 'px'
-  
-  // 基础缩放 (DPR)
-  ctx.scale(dpr, dpr)
-  
-  // 清空画布
-  ctx.clearRect(0, 0, w, h)
-  
-  // 绘制背景
-  ctx.fillStyle = 'rgba(20, 25, 35, 0.6)'
-  ctx.fillRect(0, 0, w, h)
-
-  // 应用视图变换 (缩放 + 平移)
-  ctx.save()
-  ctx.translate(transform.value.x, transform.value.y)
-  ctx.scale(transform.value.k, transform.value.k)
-  
-  // 绘制标签
-  placedTags.value.forEach((tag, index) => {
-    if (!tag.placed) return
-    
-    ctx.save()
-    ctx.translate(tag.x, tag.y)
-    
-    // 根据权重/索引计算颜色
-    const hue = 200 + (index * 5) % 60 // 蓝-紫色系
-    const saturation = 60 + Math.random() * 20
-    const lightness = 65 + Math.random() * 15 // 稍微调亮一点
-    
-    ctx.fillStyle = `hsl(${hue}, ${saturation}%, ${lightness}%)`
-    const fontSize = tag.fontSize
-    ctx.font = `${fontSize}px "PingFang SC", "Microsoft YaHei", sans-serif`
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    
-    // 文字阴影
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.8)'
-    ctx.shadowBlur = 4
-    ctx.shadowOffsetX = 1
-    ctx.shadowOffsetY = 1
-    
-    ctx.fillText(tag.text, 0, 0)
-    
-    ctx.restore()
-  })
-  
-  ctx.restore()
-}
-
-// 如果放置完成，自动适配视图
-watch([placedTags, canvasWidth], () => {
-  if (placedTags.value.length > 0) {
-    fitToView()
-  }
-})
-
-// 自动适配视图算法
-function fitToView() {
-    if (placedTags.value.length === 0) return
-    
-    // 1. 计算内容边界
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
-    let hasPlaced = false
-    
-    placedTags.value.forEach(tag => {
-        if (!tag.placed) return
-        hasPlaced = true
-        minX = Math.min(minX, tag.x - tag.width/2)
-        maxX = Math.max(maxX, tag.x + tag.width/2)
-        minY = Math.min(minY, tag.y - tag.height/2)
-        maxY = Math.max(maxY, tag.y + tag.height/2)
-    })
-    
-    if (!hasPlaced) return
-    
-    // 2. 增加 padding
-    const padding = 20
-    const w = canvasWidth.value
-    const h = props.height
-    
-    const contentWidth = maxX - minX + padding * 2
-    const contentHeight = maxY - minY + padding * 2
-    
-    // 3. 计算缩放比
-    const scaleX = w / contentWidth
-    const scaleY = h / contentHeight
-    const scale = Math.min(scaleX, scaleY) * 0.9 // 留出 10% 余量
-    
-    // 4. 计算中心偏移
-    const contentCenterX = (minX + maxX) / 2
-    const contentCenterY = (minY + maxY) / 2
-    
-    const tx = w / 2 - contentCenterX * scale
-    const ty = h / 2 - contentCenterY * scale
-    
-    transform.value = { k: scale, x: tx, y: ty }
-    renderCanvas()
-}
-
-const dragStartPos = ref({ x: 0, y: 0 })
-
-// Canvas 交互事件处理
-function handleCanvasMouseDown(e) {
-=======
 function handleCanvasMouseDown(event) {
->>>>>>> 2152efd (优化前端性能，checkpoint v5)
   isDragging.value = true
   lastMousePos.value = { x: event.clientX, y: event.clientY }
   dragStartPos.value = { x: event.clientX, y: event.clientY }
