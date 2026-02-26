@@ -7,6 +7,7 @@ import json
 import math
 import re
 import sys
+import time
 import urllib.error
 import urllib.request
 from collections import Counter, defaultdict
@@ -2435,6 +2436,21 @@ class SpatialPipeline:
         query_type = str(request.get("query_type") or "poi_search")
         spatial_context = _safe_json_loads(request.get("spatial_context"), {})
         categories = [str(cat).strip() for cat in (request.get("categories") or []) if str(cat).strip()]
+        operator_timings_ms: Dict[str, float] = defaultdict(float)
+
+        def run_with_timing(operator_name: str, fn, *args, **kwargs):
+            started = time.perf_counter()
+            result = fn(*args, **kwargs)
+            elapsed_ms = (time.perf_counter() - started) * 1000.0
+            operator_timings_ms[operator_name] += elapsed_ms
+            return result
+
+        def snapshot_operator_timings() -> Dict[str, float]:
+            return {
+                name: round(float(total_ms), 3)
+                for name, total_ms in operator_timings_ms.items()
+                if float(total_ms) > 0.0
+            }
 
         hints = _safe_json_loads(request.get("hints"), {})
         semantic_query = hints.get("semantic_query") or ""
@@ -2576,13 +2592,17 @@ class SpatialPipeline:
                 },
             }
 
-            region_analyses = analyze_region_set(
+            region_analyses = run_with_timing(
+                "region_comparison.py",
+                analyze_region_set,
                 regions=region_context,
                 target_region_ids=target_region_ids,
                 categories=categories,
                 repository=self.repository,
             )
-            comparison = compute_region_comparison(
+            comparison = run_with_timing(
+                "region_comparison.py",
+                compute_region_comparison,
                 region_analyses,
                 dimensions=query_plan.get("comparison_dimensions") if isinstance(query_plan.get("comparison_dimensions"), list) else [],
             )
@@ -2640,6 +2660,7 @@ class SpatialPipeline:
                     "fuzzy_core_count": 0,
                     "fuzzy_transition_count": 0,
                     "fuzzy_periphery_count": 0,
+                    "operator_timings_ms": snapshot_operator_timings(),
                 },
             }
 
@@ -2657,6 +2678,7 @@ class SpatialPipeline:
                         "requested_regions": len(target_region_ids),
                         "valid_regions": valid_regions,
                         "comparison_ready": comparison is not None,
+                        "operator_timings_ms": snapshot_operator_timings(),
                     },
                 },
             }
@@ -2671,6 +2693,11 @@ class SpatialPipeline:
 
         max_fetch_limit = _resolve_limit(hints_options.get("maxFetchLimit"), default_value=20000, max_value=500000)
         fetch_limit = _resolve_limit(hints_options.get("limit"), default_value=8000, max_value=max_fetch_limit)
+        print(
+            f"[PIPELINE_DEBUG] hints_options limit={hints_options.get('limit')} maxFetchLimit={hints_options.get('maxFetchLimit')} resolved_fetch_limit={fetch_limit}",
+            flush=True,
+            file=sys.stderr,
+        )
 
         # 注释说明
         explicit_limit = hints_options.get("limit")
@@ -2886,7 +2913,9 @@ class SpatialPipeline:
         landuse_source = str(landuse_bundle.get("source") or "disabled")
 
         graph_summary = (
-            analyze_spatial_graph(
+            run_with_timing(
+                "graph_reasoning.py",
+                analyze_spatial_graph,
                 pois,
                 max_nodes=graph_max_nodes,
                 distance_threshold_m=graph_distance_threshold_m,
@@ -2954,6 +2983,7 @@ class SpatialPipeline:
                     "landuse_boundary_enhancement": landuse_boundary_enhancement,
                     "landuse_feature_count": len(landuse_geometries),
                     "landuse_source": landuse_source,
+                    "operator_timings_ms": snapshot_operator_timings(),
                 },
             }
 
@@ -2975,6 +3005,7 @@ class SpatialPipeline:
                         "road_feature_count": len(road_geometries),
                         "landuse_source": landuse_source,
                         "landuse_feature_count": len(landuse_geometries),
+                        "operator_timings_ms": snapshot_operator_timings(),
                     },
                 },
             }
@@ -2999,6 +3030,7 @@ class SpatialPipeline:
                     "direction": direction_hint,
                     "direction_applied": direction_applied,
                     "fetch_limit": fetch_limit,
+                    "operator_timings_ms": snapshot_operator_timings(),
                 },
             }
 
@@ -3013,6 +3045,7 @@ class SpatialPipeline:
                         "fetch_limit": fetch_limit,
                         "candidate_source": candidate_source,
                         "source_policy": source_policy if isinstance(source_policy, dict) else {},
+                        "operator_timings_ms": snapshot_operator_timings(),
                     },
                 },
             }
@@ -3046,6 +3079,7 @@ class SpatialPipeline:
                             "direction_applied": direction_applied,
                             "boundary_method": "none",
                             "boundary_methods": [],
+                            "operator_timings_ms": snapshot_operator_timings(),
                         },
                     },
                 },
@@ -3090,7 +3124,9 @@ class SpatialPipeline:
         )
         cluster_adaptive = str(hints_options.get("clusterAdaptive", "true")).lower() not in {"false", "0", "off", "no"}
 
-        cluster_result = cluster_points(
+        cluster_result = run_with_timing(
+            "hdbscan_cluster.py",
+            cluster_points,
             coords,
             min_cluster_size=cluster_min_cluster_size,
             min_samples=cluster_min_samples,
@@ -3241,7 +3277,9 @@ class SpatialPipeline:
                             if poi.get("lon") is not None and poi.get("lat") is not None
                         ]
                         # 用新 POI 重新聚类
-                        cluster_result = cluster_points(
+                        cluster_result = run_with_timing(
+                            "hdbscan_cluster.py",
+                            cluster_points,
                             coords,
                             min_cluster_size=cluster_min_cluster_size,
                             min_samples=cluster_min_samples,
@@ -3503,7 +3541,9 @@ class SpatialPipeline:
                     niche_type=prelim_niche or "mixed",
                 )
 
-                boundary_selection = _build_cluster_boundary(
+                boundary_selection = run_with_timing(
+                    "alpha_shape.py",
+                    _build_cluster_boundary,
                     cluster_points=cluster_points_list,
                     bbox_area_m2=bbox_area_m2,
                     density=density,
@@ -3891,7 +3931,9 @@ class SpatialPipeline:
         )
         area_km2 = _extract_area_km2(spatial_context)
         h3_resolution = _dynamic_h3_resolution(area_km2)
-        h3_summary = aggregate_pois_h3(
+        h3_summary = run_with_timing(
+            "h3_aggregate.py",
+            aggregate_pois_h3,
             pois,
             resolution=h3_resolution,
             max_cells=120 if query_type == "area_analysis" else 60,
@@ -4031,11 +4073,12 @@ class SpatialPipeline:
                 "name_audit_model": name_audit_model_name if name_audit_remote_enabled else "rule_guard_v2",
                 "name_audit_rule_rewritten": int(name_audit_summary.get("rule_rewritten", 0)),
                 "name_audit_llm_rewritten": int(name_audit_summary.get("llm_rewritten", 0)),
-                "name_audit_duplicate_rewritten": int(name_audit_summary.get("duplicate_rewritten", 0)),
-                "name_audit_llm_attempted": bool(name_audit_summary.get("llm_attempted", False)),
-                "vlm_extracted_texts": vlm_extracted_texts,
-            },
-        }
+                    "name_audit_duplicate_rewritten": int(name_audit_summary.get("duplicate_rewritten", 0)),
+                    "name_audit_llm_attempted": bool(name_audit_summary.get("llm_attempted", False)),
+                    "vlm_extracted_texts": vlm_extracted_texts,
+                    "operator_timings_ms": snapshot_operator_timings(),
+                },
+            }
 
         yield {
             "type": "FINAL",
@@ -4089,6 +4132,7 @@ class SpatialPipeline:
                     "skg_edge_count": int(skg_graph.get("edge_count", 0)),
                     "graph_enabled": need_graph_reasoning,
                     "graph_component_count": graph_summary.get("component_count", 0) if graph_summary else 0,
+                    "operator_timings_ms": snapshot_operator_timings(),
                 },
             },
         }

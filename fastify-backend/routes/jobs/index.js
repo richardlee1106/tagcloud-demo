@@ -23,6 +23,7 @@ import {
   extractLastUserMessage
 } from '../../services/spatialJobRunner.js'
 import { getSpatialMigrationConfig } from '../../services/migrationPolicy.js'
+import { getCacheHealthSnapshot } from '../../services/queryCache.js'
 
 /**
  * SSE 事件写入工具。
@@ -136,6 +137,7 @@ async function jobsRoutes(fastify) {
    */
   fastify.get('/health', async () => {
     const queueHealth = await getQueueHealthSnapshot()
+    const cacheHealth = getCacheHealthSnapshot()
     const migrationConfig = getSpatialMigrationConfig()
 
     const migration = {
@@ -147,7 +149,7 @@ async function jobsRoutes(fastify) {
       py_data_source: migrationConfig.pyDataSource
     }
 
-    const alerts = [...(queueHealth.alerts || [])]
+    const alerts = [...(queueHealth.alerts || []), ...(cacheHealth.alerts || [])]
 
     if (!migration.migrate_enabled) {
       alerts.push({
@@ -166,6 +168,7 @@ async function jobsRoutes(fastify) {
       status,
       checked_at: new Date().toISOString(),
       queue: queueHealth,
+      cache: cacheHealth,
       migration,
       alerts
     }

@@ -71,6 +71,23 @@ EVENT_TYPE_MAP = {
 }
 
 
+def _configure_stdio_utf8() -> None:
+    """Ensure Python gRPC logs are emitted as UTF-8 to avoid mojibake on Windows."""
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if stream is None:
+            continue
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
+
+_configure_stdio_utf8()
+
+
 class SpatialComputeService(spatial_compute_pb2_grpc.SpatialComputeServiceServicer):
     """gRPC 服务实现。"""
 
@@ -91,6 +108,20 @@ class SpatialComputeService(spatial_compute_pb2_grpc.SpatialComputeServiceServic
             "execution_profile": request.execution_profile,
             "dry_run": request.dry_run,
         }
+        print(
+            json.dumps(
+                {
+                    "ts": int(time.time() * 1000),
+                    "level": "info",
+                    "event": "grpc_compute_start",
+                    "trace_id": request.request_id,
+                    "query_type": request.query_type,
+                    "mode": request.mode,
+                },
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
 
         try:
             for event in self.pipeline.run(request_payload):
@@ -101,8 +132,35 @@ class SpatialComputeService(spatial_compute_pb2_grpc.SpatialComputeServiceServic
                     payload=payload,
                     ts=int(time.time() * 1000),
                 )
+            print(
+                json.dumps(
+                    {
+                        "ts": int(time.time() * 1000),
+                        "level": "info",
+                        "event": "grpc_compute_complete",
+                        "trace_id": request.request_id,
+                        "query_type": request.query_type,
+                    },
+                    ensure_ascii=False,
+                ),
+                flush=True,
+            )
         except Exception as exc:  # pragma: no cover - runtime guard
             # 出错时也返回 ERROR 事件，避免 Node 端只能拿到连接异常。
+            print(
+                json.dumps(
+                    {
+                        "ts": int(time.time() * 1000),
+                        "level": "error",
+                        "event": "grpc_compute_error",
+                        "trace_id": request.request_id,
+                        "query_type": request.query_type,
+                        "error": str(exc),
+                    },
+                    ensure_ascii=False,
+                ),
+                flush=True,
+            )
             yield spatial_compute_pb2.ComputeEvent(
                 type=spatial_compute_pb2.ERROR,
                 payload=json.dumps({"message": str(exc)}),

@@ -234,6 +234,7 @@ export function deriveTemplateContext({
     intentType,
     intentMode: resolvedIntentMode || null,
     queryType: resolvedQueryType || null,
+    traceId: intentMeta?.traceId || intentMeta?.trace_id || null,
     hotspots,
     regions,
     fuzzyRegions: fuzzy,

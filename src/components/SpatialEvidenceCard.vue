@@ -31,7 +31,7 @@
             :key="`${widget.id}-${action.label}`"
             type="button"
             class="template-action"
-            @click="runAction(action)"
+            @click="runAction(action, widget.id)"
           >
             {{ action.label }}
           </button>
@@ -59,9 +59,15 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import { useIntentTemplateSelector } from '../composables/ai/useIntentTemplateSelector.js'
 import { deriveTemplateContext } from '../utils/aiTemplateMetrics.js'
+import {
+  trackTemplateImpression,
+  trackTemplateClick,
+  trackLocateClick,
+  trackFollowupClick
+} from '../services/aiTelemetry.js'
 
 const props = defineProps({
   clusters: { type: Object, default: null },
@@ -91,6 +97,15 @@ const templateContext = computed(() =>
 const selectedWidgets = computed(() => selectTemplates(templateContext.value))
 
 const hasWidgets = computed(() => selectedWidgets.value.length > 0)
+const traceId = computed(() => {
+  return (
+    props.intentMeta?.traceId ||
+    props.intentMeta?.trace_id ||
+    props.analysisStats?.trace_id ||
+    null
+  )
+})
+const emittedImpressionKeys = new Set()
 
 const intentLabel = computed(() => {
   if (templateContext.value.intentType === 'comparison') return '对比意图'
@@ -135,13 +150,23 @@ const detailRows = computed(() => {
   return rows
 })
 
-function runAction(action) {
+function runAction(action, widgetId = null) {
   if (!action?.type) return
+  const payloadBase = {
+    traceId: traceId.value,
+    templateId: widgetId,
+    intentMeta: props.intentMeta || null
+  }
+
+  trackTemplateClick(payloadBase).catch(() => {})
+
   if (action.type === 'locate') {
+    trackLocateClick(payloadBase).catch(() => {})
     handleLocate(action.payload)
     return
   }
   if (action.type === 'followup' && action.payload) {
+    trackFollowupClick(payloadBase).catch(() => {})
     emit('ask-followup', action.payload)
   }
 }
@@ -171,6 +196,25 @@ function toPercent(value) {
   if (!Number.isFinite(num)) return '--'
   return `${Math.round(Math.max(0, Math.min(1, num)) * 100)}%`
 }
+
+watch(
+  () => [traceId.value, props.intentMeta, selectedWidgets.value],
+  ([currentTrace, currentIntentMeta, widgets]) => {
+    if (!currentTrace || !Array.isArray(widgets) || widgets.length === 0) return
+
+    widgets.forEach((widget) => {
+      const key = `${currentTrace}:${widget.id}`
+      if (emittedImpressionKeys.has(key)) return
+      emittedImpressionKeys.add(key)
+      trackTemplateImpression({
+        traceId: currentTrace,
+        templateId: widget.id,
+        intentMeta: currentIntentMeta || null
+      }).catch(() => {})
+    })
+  },
+  { immediate: true, deep: false }
+)
 </script>
 
 <style scoped>
@@ -365,4 +409,3 @@ function toPercent(value) {
   }
 }
 </style>
-

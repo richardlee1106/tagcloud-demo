@@ -12,7 +12,7 @@
           </div>
           <div class="header-info">
             <span class="ai-name">GeoAI 助手</span>
-            <span class="ai-status" :class="{ online: isOnline, offline: !isOnline }">
+            <span class="ai-status" :class="{ online: isOnline === true, offline: isOnline === false, probing: isOnline === null }">
               {{ statusText }}
             </span>
           </div>
@@ -76,7 +76,7 @@
           </div>
           <div class="message-content">
             <div
-              v-if="msg.role === 'assistant' && (msg.pipelineCompleted || (isTyping && index === messages.length - 1))"
+              v-if="msg.role === 'assistant' && !isGeneralQaMessage(msg) && (msg.pipelineCompleted || (isTyping && index === messages.length - 1))"
               class="pipeline-tracker-inline"
             >
               <div class="pipeline-trace-inline">
@@ -111,7 +111,7 @@
             <div v-if="msg.content && msg.content.trim()" class="message-text" v-html="renderMessageHtml(msg)"></div>
 
             <EmbeddedTagCloud 
-              v-if="msg.role === 'assistant' && msg.pois && msg.pois.length > 0"
+              v-if="msg.role === 'assistant' && !isGeneralQaMessage(msg) && msg.pois && msg.pois.length > 0"
               :pois="msg.pois"
               :intent-mode="resolveEmbeddedIntentMode(msg)"
               :intent-meta="msg.intentMeta || null"
@@ -124,38 +124,46 @@
             <div v-if="msg.content && msg.content.trim()" class="message-time">{{ formatTime(msg.timestamp) }}</div>
           </div>
         </div>
+
+        <section
+          v-if="latestAssistantMessage && shouldShowAnalysisBoard(latestAssistantMessage)"
+          class="analysis-board analysis-board-inline"
+          aria-label="空间分析看板"
+        >
+          <header class="analysis-board-header">
+            <div>
+              <p class="analysis-kicker">最新回复分析看板</p>
+              <h3 class="analysis-title">模板化信息聚合</h3>
+            </div>
+            <span class="analysis-meta">
+              {{ latestAssistantMessage?.timestamp ? formatTime(latestAssistantMessage.timestamp) : '--:--' }}
+            </span>
+          </header>
+
+          <div class="analysis-board-content">
+            <div v-if="analysisNarrativeText" class="analysis-narrative">
+              {{ analysisNarrativeText }}
+            </div>
+
+            <SpatialEvidenceCard
+              v-if="latestAssistantMessage && hasSpatialEvidence(latestAssistantMessage)"
+              :clusters="latestAssistantMessage.spatialClusters"
+              :vernacular-regions="latestAssistantMessage.vernacularRegions"
+              :fuzzy-regions="latestAssistantMessage.fuzzyRegions"
+              :analysis-stats="latestAssistantMessage.analysisStats || null"
+              :intent-mode="latestAssistantMessage.intentMode || 'macro_overview'"
+              :query-type="latestAssistantMessage.queryType || latestAssistantMessage.intentMeta?.queryType || 'area_analysis'"
+              :intent-meta="latestAssistantMessage.intentMeta ? { ...latestAssistantMessage.intentMeta, traceId: latestAssistantMessage.traceId } : (latestAssistantMessage.traceId ? { traceId: latestAssistantMessage.traceId } : null)"
+              @locate="handleEvidenceLocate"
+              @ask-followup="handleEvidenceFollowup"
+            />
+            <div v-else class="analysis-empty-state">
+              <span class="analysis-empty-title">等待空间证据</span>
+              <p>当前最新回复尚未返回可聚合的空间结构化结果，继续提问后将自动生成 1-3 个意图模板。</p>
+            </div>
+          </div>
+        </section>
       </div>
-
-      <section class="analysis-board" aria-label="空间分析看板">
-        <header class="analysis-board-header">
-          <div>
-            <p class="analysis-kicker">最新回复分析看板</p>
-            <h3 class="analysis-title">模板化信息聚合</h3>
-          </div>
-          <span class="analysis-meta">
-            {{ latestAssistantMessage?.timestamp ? formatTime(latestAssistantMessage.timestamp) : '--:--' }}
-          </span>
-        </header>
-
-        <div class="analysis-board-content">
-          <SpatialEvidenceCard
-            v-if="latestAssistantMessage && hasSpatialEvidence(latestAssistantMessage)"
-            :clusters="latestAssistantMessage.spatialClusters"
-            :vernacular-regions="latestAssistantMessage.vernacularRegions"
-            :fuzzy-regions="latestAssistantMessage.fuzzyRegions"
-            :analysis-stats="latestAssistantMessage.analysisStats || null"
-            :intent-mode="latestAssistantMessage.intentMode || 'macro_overview'"
-            :query-type="latestAssistantMessage.queryType || latestAssistantMessage.intentMeta?.queryType || 'area_analysis'"
-            :intent-meta="latestAssistantMessage.intentMeta || null"
-            @locate="handleEvidenceLocate"
-            @ask-followup="handleEvidenceFollowup"
-          />
-          <div v-else class="analysis-empty-state">
-            <span class="analysis-empty-title">等待空间证据</span>
-            <p>当前最新回复尚未返回可聚合的空间结构化结果，继续提问后将自动生成 1-3 个意图模板。</p>
-          </div>
-        </div>
-      </section>
     </div>
 
     <!-- 输入区域 -->
@@ -167,13 +175,13 @@
           @keydown.enter.exact.prevent="sendMessage"
           @keydown.shift.enter="insertNewline"
           placeholder="询问关于选中区域 POI 的问题..."
-          :disabled="isTyping || !isOnline"
+          :disabled="isTyping"
           rows="1"
         ></textarea>
         <button 
           class="send-btn" 
           @click="sendMessage"
-          :disabled="!inputText.trim() || isTyping || !isOnline"
+          :disabled="!inputText.trim() || isTyping"
         >
           <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
             <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
@@ -181,7 +189,11 @@
         </button>
       </div>
       <div class="input-hint">
-        <span v-if="!isOnline" class="offline-hint">AI 服务未连接</span>
+        <span v-if="isOnline === null" class="probing-hint">正在检测 AI 服务...</span>
+        <span v-else-if="isOnline === false" class="offline-hint">
+          AI 服务未连接
+          <button class="retry-link" type="button" @click="checkOnlineStatus">重试连接</button>
+        </span>
         <span v-else>按 Enter 发送，Shift+Enter 换行</span>
       </div>
     </div>
@@ -198,6 +210,10 @@ import {
 import { normalizeRefinedResultEvidence } from '../utils/refinedResultEvidence.js';
 import { useAiStreamDispatcher } from '../composables/ai/useAiStreamDispatcher.js';
 import { useSpatialRequestBuilder } from '../composables/ai/useSpatialRequestBuilder.js';
+import {
+  refreshTemplateWeights,
+  trackSessionOutcome
+} from '../services/aiTelemetry.js';
 import EmbeddedTagCloud from './EmbeddedTagCloud.vue';
 import SpatialEvidenceCard from './SpatialEvidenceCard.vue';
 import { marked } from 'marked';
@@ -328,12 +344,48 @@ function resolveEmbeddedIntentMode(message) {
 
   return 'macro';
 }
+
+function resolveMessageQueryType(message) {
+  return String(
+    message?.queryType ||
+    message?.intentMeta?.queryType ||
+    ''
+  ).trim().toLowerCase()
+}
+
+function resolveMessageIntentMode(message) {
+  return String(
+    message?.intentMeta?.intentMode ||
+    message?.intentMode ||
+    ''
+  ).trim().toLowerCase()
+}
+
+function isGeneralQaMessage(message) {
+  const queryType = resolveMessageQueryType(message)
+  const intentMode = resolveMessageIntentMode(message)
+
+  if (queryType === 'general_qa' || queryType === 'irrelevant_input') {
+    return true
+  }
+
+  if (intentMode === 'llm_chat' || intentMode === 'out_of_scope') {
+    return true
+  }
+
+  return false
+}
+
+function shouldShowAnalysisBoard(message) {
+  if (!message) return false
+  return !isGeneralQaMessage(message)
+}
 const streamTimer = ref(null);
 const activeMessageIndex = ref(-1);
 const streamRenderStep = 18;
 const streamRenderIntervalMs = 24;
 const streamScrollTick = ref(0);
-const isOnline = ref(false);
+const isOnline = ref(null);
 const messagesContainer = ref(null);
 const inputRef = ref(null);
 const extractedPOIs = ref([]); // AI 提取的 POI 名称列表
@@ -354,6 +406,7 @@ const {
 } = useSpatialRequestBuilder();
 let statusTimer = null;
 let html2canvasModulePromise = null;
+let manualScrollTimer = null;
 const snapshotCache = {
   dataUrl: null,
   capturedAt: 0,
@@ -361,7 +414,7 @@ const snapshotCache = {
 };
 const SNAPSHOT_CACHE_TTL_MS = 25000;
 
-// 璁＄畻 POI 鏁伴噺
+// 计算 POI 数量
 const poiCount = computed(() => props.poiFeatures?.length || 0);
 
 // 快捷操作按钮
@@ -395,9 +448,24 @@ const quickActions = [
 const providerName = ref('');
 const isLocalProvider = ref(false);
 
+function stopStatusPolling() {
+  if (statusTimer) {
+    clearInterval(statusTimer);
+    statusTimer = null;
+  }
+}
+
+function startStatusPolling() {
+  if (statusTimer) return;
+  statusTimer = setInterval(() => {
+    checkOnlineStatus().catch(() => {});
+  }, 30000);
+}
+
 // 计算状态文本
 const statusText = computed(() => {
-  if (!isOnline.value) return '绂荤嚎';
+  if (isOnline.value === null) return '检测中...';
+  if (isOnline.value === false) return '离线';
   // 本地显示 "Local LM"，云端统丢显示 "在线"
   return isLocalProvider.value ? 'Local LM' : '在线';
 });
@@ -409,7 +477,14 @@ async function checkOnlineStatus() {
     const config = getCurrentProviderInfo();
     providerName.value = config.name;
     isLocalProvider.value = config.id === 'local';
+    startStatusPolling();
+    refreshTemplateWeights({ force: false }).catch(() => {});
+  } else {
+    providerName.value = '';
+    isLocalProvider.value = false;
+    stopStatusPolling();
   }
+  return isOnline.value;
 }
 
 // 发送消息
@@ -539,7 +614,23 @@ const markdownRenderCache = new WeakMap();
 
 async function sendMessage() {
   const text = inputText.value.trim();
-  if (!text || isTyping.value || !isOnline.value) return;
+  if (!text || isTyping.value) return;
+
+  const online = await checkOnlineStatus();
+  if (!online) {
+    const lastMessage = messages.value[messages.value.length - 1];
+    const offlineTip = 'AI 服务未连接，请先启动后端服务后重试。';
+    if (!(lastMessage?.role === 'assistant' && lastMessage?.content === offlineTip)) {
+      messages.value.push({
+        role: 'assistant',
+        content: offlineTip,
+        timestamp: Date.now()
+      });
+      await nextTick();
+      scrollToBottom(true, 'auto');
+    }
+    return;
+  }
 
 
 
@@ -560,6 +651,8 @@ async function sendMessage() {
 
   // 棰勫厛瀹氫箟 aiMessageIndex
   let aiMessageIndex = -1;
+  let requestId = `chat_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  let requestSucceeded = false;
 
   try {
     console.log('[AiChat] Sending message with POI count:', props.poiFeatures?.length || 0);
@@ -601,6 +694,12 @@ async function sendMessage() {
       : null;
 
     const options = {
+      requestId,
+      clientMetrics: {
+        panel: 'ai-chat',
+        messageCount: messages.value.length,
+        poiCount
+      },
       globalAnalysis: props.globalAnalysisEnabled,
       selectedCategories: normalizedSelectedCategories,
       sourcePolicy: {
@@ -634,6 +733,9 @@ async function sendMessage() {
       options,
       props.poiFeatures,
       (type, data) => {
+        if (type === 'trace' && data?.trace_id) {
+          requestId = data.trace_id;
+        }
         const fallbackIntentMode = spatialContext?.mode === 'Polygon' ? 'micro' : 'macro';
         const dispatchResult = dispatchMetaEvent({
           type,
@@ -648,19 +750,39 @@ async function sendMessage() {
     );
 
     await flushStreamQueue();
+    requestSucceeded = true;
   } catch (error) {
     console.error('[AiChat] Failed to send message:', error);
-    messages.value.push({
-      role: 'assistant',
-      content: `Request failed: ${error.message}`,
-      timestamp: Date.now()
-    });
+    await flushStreamQueue();
+    const failedContent = `Request failed: ${error.message}`;
+    if (aiMessageIndex >= 0 && messages.value[aiMessageIndex]) {
+      const currentMessage = messages.value[aiMessageIndex];
+      const existingContent = String(currentMessage.content || '').trim();
+      currentMessage.content = existingContent ? `${existingContent}\n\n${failedContent}` : failedContent;
+      currentMessage.error = true;
+    } else {
+      messages.value.push({
+        role: 'assistant',
+        content: failedContent,
+        timestamp: Date.now(),
+        error: true
+      });
+    }
   } finally {
     await flushStreamQueue();
     resetStreamState();
     if (messages.value[aiMessageIndex]) {
       messages.value[aiMessageIndex].pipelineCompleted = true;
     }
+    const finalAssistantMessage = messages.value[aiMessageIndex] || null;
+    trackSessionOutcome({
+      traceId: finalAssistantMessage?.traceId || requestId,
+      intentMeta: finalAssistantMessage?.intentMeta || null,
+      extra: {
+        status: requestSucceeded ? 'success' : 'failed',
+        queryLength: text.length
+      }
+    }).catch(() => {});
     isTyping.value = false;
     currentStage.value = '';
     await nextTick();
@@ -704,7 +826,7 @@ function handleEvidenceFollowup(prompt) {
   sendQuickAction(prompt);
 }
 
-// 娓呯┖瀵硅瘽
+// 清空对话
 function clearChat() {
   messages.value = [];
   extractedPOIs.value = [];
@@ -712,13 +834,13 @@ function clearChat() {
   resetStreamState();
 }
 
-// 淇濆瓨瀵硅瘽璁板綍
+// 保存对话记录
 function saveChatHistory() {
   if (messages.value.length === 0) return;
   
   let content = "===== 标签云智能助手对话记录 =====\n\n";
-  content += `瀵煎嚭鏃堕棿: ${new Date().toLocaleString()}\n`;
-  content += `閫変腑POI鏁伴噺: ${props.poiFeatures.length}\n\n`;
+  content += `导出时间: ${new Date().toLocaleString()}\n`;
+  content += `选中POI数量: ${props.poiFeatures.length}\n\n`;
   content += "-----------------------------------\n\n";
   
   messages.value.forEach(msg => {
@@ -739,12 +861,26 @@ function saveChatHistory() {
 
 // 滚动状态
 const userScrolledUp = ref(false)
+const isManualScrolling = ref(false)
 
 onMounted(() => {
   if (messagesContainer.value) {
     messagesContainer.value.addEventListener('scroll', handleScroll)
+    messagesContainer.value.addEventListener('wheel', markManualScrolling, { passive: true })
+    messagesContainer.value.addEventListener('touchmove', markManualScrolling, { passive: true })
   }
 })
+
+function markManualScrolling() {
+  isManualScrolling.value = true
+  if (manualScrollTimer) {
+    clearTimeout(manualScrollTimer)
+  }
+  manualScrollTimer = setTimeout(() => {
+    isManualScrolling.value = false
+    manualScrollTimer = null
+  }, 180)
+}
 
 function handleScroll() {
   const el = messagesContainer.value
@@ -756,7 +892,7 @@ function handleScroll() {
 
 // 滚动到底部（平滑）
 function scrollToBottom(force = false, behavior = 'smooth') {
-  if (userScrolledUp.value && !force) return
+  if ((userScrolledUp.value || isManualScrolling.value) && !force) return
 
   // 等待 nextTick，确保 DOM 已完成更新
   nextTick(() => {
@@ -772,6 +908,13 @@ function scrollToBottom(force = false, behavior = 'smooth') {
 onUnmounted(() => {
   if (messagesContainer.value) {
     messagesContainer.value.removeEventListener('scroll', handleScroll)
+    messagesContainer.value.removeEventListener('wheel', markManualScrolling)
+    messagesContainer.value.removeEventListener('touchmove', markManualScrolling)
+  }
+
+  if (manualScrollTimer) {
+    clearTimeout(manualScrollTimer)
+    manualScrollTimer = null
   }
 
   if (statusTimer) {
@@ -878,7 +1021,7 @@ function renderTables(text) {
   return result.join('\n');
 }
 
-// 鐢熸垚琛ㄦ牸 HTML
+// 生成表格 HTML
 function generateTableHTML(tableLines) {
   if (tableLines.length === 0) return '';
   
@@ -892,14 +1035,14 @@ function generateTableHTML(tableLines) {
       .map(cell => cell.trim());
     
     if (index === 0) {
-      // 琛ㄥご
+      // 表头
       html += '<thead><tr>';
       cells.forEach(cell => {
         html += `<th>${cell}</th>`;
       });
       html += '</tr></thead><tbody>';
     } else {
-      // 琛ㄤ綋
+      // 表体
       html += '<tr>';
       cells.forEach(cell => {
         html += `<td>${cell}</td>`;
@@ -915,7 +1058,7 @@ function generateTableHTML(tableLines) {
 /**
  * 从 AI 回复中提取 POI 名称（解析 Markdown 表格）
  * @param {string} content - AI 回复内容
- * @returns {Array} POI 鍒楄〃 [{name, distance}, ...]
+ * @returns {Array} POI 列表 [{name, distance}, ...]
  */
 function extractPOIsFromResponse(content) {
   const pois = [];
@@ -929,7 +1072,7 @@ function extractPOIsFromResponse(content) {
   for (const line of lines) {
     const trimmed = line.trim();
     
-    // 棢测表格行
+    // 检测表格行
     if (trimmed.startsWith('|') && trimmed.endsWith('|')) {
       const cells = trimmed.split('|').filter((c, i, arr) => i !== 0 && i !== arr.length - 1).map(c => c.trim());
       
@@ -940,8 +1083,8 @@ function extractPOIsFromResponse(content) {
       
       // 检查是否是表头（寻找“名称”列）
       if (!inTable) {
-        nameColIndex = cells.findIndex(c => c.includes('鍚嶇О') || c.includes('搴楀悕') || c.includes('POI'));
-        distanceColIndex = cells.findIndex(c => c.includes('璺濈'));
+        nameColIndex = cells.findIndex(c => c.includes('名称') || c.includes('店名') || c.includes('POI'));
+        distanceColIndex = cells.findIndex(c => c.includes('距离'));
         if (nameColIndex >= 0) {
           inTable = true;
         }
@@ -977,9 +1120,9 @@ function renderToTagCloud() {
         type: 'Feature',
         properties: {
            id: p.id || `temp_${Math.random()}`,
-           '鍚嶇О': p.name,
-           '灏忕被': p.category,
-           '鍦板潃': p.address,
+           '名称': p.name,
+           '小类': p.category,
+           '地址': p.address,
            '_is_temp': true // 标记为临时数据
         },
         geometry: {
@@ -993,7 +1136,7 @@ function renderToTagCloud() {
   }
 
   const poiNames = extractedPOIs.value.map(p => p.name);
-  console.log('[AiChat] 娓叉煋鍒版爣绛句簯:', poiNames);
+  console.log('[AiChat] 渲染到标签云:', poiNames);
   emit('render-to-tagcloud', poiNames);
 }
 
@@ -1019,6 +1162,40 @@ const latestAssistantMessageText = computed(() => {
   return String(latestAssistantMessage.value.content);
 });
 
+function normalizeNarrativeText(raw = '') {
+  const plain = String(raw || '')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/\|.*\|/g, ' ')
+    .replace(/[#>*`]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  if (!plain) return ''
+  if (plain.length <= 180) return plain
+
+  const sentenceMatch = plain.match(/^(.{40,220}?[。！？!?])(.*)$/)
+  if (sentenceMatch?.[1]) return sentenceMatch[1].trim()
+  return `${plain.slice(0, 180)}...`
+}
+
+const analysisNarrativeText = computed(() => {
+  const message = latestAssistantMessage.value
+  if (!message) return ''
+
+  const fromContent = normalizeNarrativeText(message.content || '')
+  if (fromContent) return fromContent
+
+  const hotspotCount = Array.isArray(message.spatialClusters?.hotspots) ? message.spatialClusters.hotspots.length : 0
+  const regionCount = Array.isArray(message.vernacularRegions) ? message.vernacularRegions.length : 0
+  const fuzzyCount = Array.isArray(message.fuzzyRegions) ? message.fuzzyRegions.length : 0
+
+  if (hotspotCount > 0 || regionCount > 0 || fuzzyCount > 0) {
+    return `已识别 ${hotspotCount} 个热点片区、${regionCount} 个主导业态片区、${fuzzyCount} 个边界模糊片区，可结合下方模板执行定位与追问。`
+  }
+
+  return ''
+})
+
 // 监听最新 assistant 文本，自动提取 POI（避免 deep watch 导致频繁重算）
 watch(latestAssistantMessageText, (latestText) => {
   if (isTyping.value || !latestText) return;
@@ -1037,12 +1214,8 @@ watch(() => props.poiFeatures, (newVal, oldVal) => {
 }, { deep: false });
 
 onMounted(() => {
-  checkOnlineStatus();
-  // 定期检查服务状态
-  if (statusTimer) {
-    clearInterval(statusTimer);
-  }
-  statusTimer = setInterval(checkOnlineStatus, 30000);
+  stopStatusPolling();
+  checkOnlineStatus().catch(() => {});
 });
 
 /**
@@ -1056,14 +1229,14 @@ async function autoSendMessage(message) {
   // 填充输入框
   inputText.value = message.trim();
   
-  // 绛夊緟 DOM 鏇存柊
+  // 等待 DOM 更新
   await nextTick();
   
   // 自动发送
   await sendMessage();
 }
 
-// 鏆撮湶鏂规硶缁欑埗缁勪欢
+// 暴露方法给父组件
 defineExpose({
   clearChat,
   checkOnlineStatus,
@@ -1183,6 +1356,15 @@ defineExpose({
   box-shadow: 0 0 0 4px rgba(251, 113, 133, 0.15);
 }
 
+.ai-status.probing {
+  color: #93c5fd;
+}
+
+.ai-status.probing::before {
+  background: #60a5fa;
+  box-shadow: 0 0 0 4px rgba(96, 165, 250, 0.15);
+}
+
 .poi-badge {
   display: inline-flex;
   align-items: center;
@@ -1232,19 +1414,25 @@ defineExpose({
 }
 
 .chat-body {
-  display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
+  display: flex;
+  flex-direction: column;
   min-height: 0;
   gap: 10px;
   padding: 10px 10px 0;
   flex: 1;
+  overflow: hidden;
 }
 
 .chat-messages {
+  flex: 1;
   min-height: 0;
   overflow-y: auto;
   padding: 10px 8px 14px;
   scroll-behavior: smooth;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
 }
 
 .chat-messages::-webkit-scrollbar {
@@ -1521,13 +1709,18 @@ defineExpose({
 
 .analysis-board {
   border: 1px solid var(--line-soft);
-  border-radius: 16px 16px 0 0;
+  border-radius: 16px;
   background:
     radial-gradient(circle at 15% 10%, rgba(31, 109, 163, 0.15), transparent 40%),
     linear-gradient(180deg, rgba(7, 20, 37, 0.94), rgba(9, 27, 47, 0.9));
   box-shadow: inset 0 1px 0 rgba(165, 210, 247, 0.06);
   overflow: hidden;
   transition: border-color 220ms ease;
+}
+
+.analysis-board-inline {
+  margin: 8px 0 10px 42px;
+  width: calc(100% - 42px);
 }
 
 .analysis-board-header {
@@ -1563,6 +1756,17 @@ defineExpose({
 
 .analysis-board-content {
   padding: 10px;
+}
+
+.analysis-narrative {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(115, 170, 214, 0.24);
+  background: linear-gradient(140deg, rgba(10, 31, 56, 0.7), rgba(9, 24, 43, 0.78));
+  color: rgba(226, 239, 252, 0.92);
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .analysis-empty-state {
@@ -1654,6 +1858,27 @@ defineExpose({
 
 .offline-hint {
   color: #fda4af;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.probing-hint {
+  color: #93c5fd;
+}
+
+.retry-link {
+  border: 0;
+  background: transparent;
+  color: #60a5fa;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.retry-link:hover {
+  color: #93c5fd;
 }
 
 @keyframes msg-enter {
@@ -1683,6 +1908,11 @@ defineExpose({
 
   .chat-body {
     padding: 8px 8px 0;
+  }
+
+  .analysis-board-inline {
+    margin-left: 0;
+    width: 100%;
   }
 
   .pipeline-trace-inline {

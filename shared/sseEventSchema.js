@@ -1,35 +1,68 @@
+const SSE_EVENT_META_PROPERTIES = Object.freeze({
+  trace_id: { type: 'string' },
+  schema_version: { type: 'string' },
+  capabilities: {
+    type: 'array',
+    items: { type: 'string' }
+  }
+})
+
+function withEventMeta(schema) {
+  if (!schema || typeof schema !== 'object') return schema
+
+  if (schema.type === 'object') {
+    return {
+      ...schema,
+      properties: {
+        ...(schema.properties || {}),
+        ...SSE_EVENT_META_PROPERTIES
+      },
+      additionalProperties: schema.additionalProperties !== undefined ? schema.additionalProperties : true
+    }
+  }
+
+  if (Array.isArray(schema.anyOf)) {
+    return {
+      ...schema,
+      anyOf: schema.anyOf.map((child) => withEventMeta(child))
+    }
+  }
+
+  return schema
+}
+
 export const SSE_EVENT_SCHEMAS = Object.freeze({
-  job: {
+  job: withEventMeta({
     type: 'object',
     required: ['mode'],
     properties: {
       mode: { type: 'string' }
     },
     additionalProperties: true
-  },
-  stage: {
+  }),
+  stage: withEventMeta({
     type: 'object',
     required: ['name'],
     properties: {
       name: { type: 'string' }
     },
     additionalProperties: true
-  },
-  progress: {
+  }),
+  progress: withEventMeta({
     type: 'object',
     required: ['progress'],
     properties: {
       progress: { type: 'number' }
     },
     additionalProperties: true
-  },
-  partial: {
+  }),
+  partial: withEventMeta({
     type: 'object',
     properties: {
       text_chunk: { type: 'string' }
     },
     additionalProperties: true
-  },
+  }),
   pois: {
     type: 'array',
     items: { type: 'object' }
@@ -42,13 +75,13 @@ export const SSE_EVENT_SCHEMAS = Object.freeze({
       { type: 'null' }
     ]
   },
-  spatial_clusters: {
+  spatial_clusters: withEventMeta({
     type: 'object',
     properties: {
       hotspots: { type: 'array', items: { type: 'object' } }
     },
     additionalProperties: true
-  },
+  }),
   vernacular_regions: {
     type: 'array',
     items: { type: 'object' }
@@ -57,23 +90,23 @@ export const SSE_EVENT_SCHEMAS = Object.freeze({
     type: 'array',
     items: { type: 'object' }
   },
-  stats: {
+  stats: withEventMeta({
     type: 'object',
     additionalProperties: true
-  },
-  refined_result: {
+  }),
+  refined_result: withEventMeta({
     type: 'object',
     additionalProperties: true
-  },
-  error: {
+  }),
+  error: withEventMeta({
     type: 'object',
     required: ['message'],
     properties: {
       message: { type: 'string' }
     },
     additionalProperties: true
-  },
-  schema_error: {
+  }),
+  schema_error: withEventMeta({
     type: 'object',
     required: ['event', 'errors'],
     properties: {
@@ -84,7 +117,7 @@ export const SSE_EVENT_SCHEMAS = Object.freeze({
       }
     },
     additionalProperties: true
-  }
+  })
 })
 
 function isObjectLike(value) {

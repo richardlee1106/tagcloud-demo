@@ -22,6 +22,13 @@ function pickString(...candidates) {
 }
 
 function normalizeIntentMeta(root, results) {
+  const intentMetaCandidate = pickObject(
+    results.intentMeta,
+    results.intent_meta,
+    root.intentMeta,
+    root.intent_meta
+  )
+
   const queryPlan = pickObject(
     results.query_plan,
     results.queryPlan,
@@ -32,16 +39,24 @@ function normalizeIntentMeta(root, results) {
     root.stats?.query_plan,
     root.stats?.queryPlan,
     results.query_executed,
-    root.query_executed
+    root.query_executed,
+    intentMetaCandidate?.queryPlan,
+    intentMetaCandidate?.query_plan
   )
 
   const queryType = pickString(
     queryPlan?.query_type,
     queryPlan?.queryType,
+    results.query_executed?.query_type,
+    results.query_executed?.queryType,
+    root.query_executed?.query_type,
+    root.query_executed?.queryType,
     results.query_type,
     results.queryType,
     results.stats?.query_type,
     results.stats?.queryType,
+    intentMetaCandidate?.queryType,
+    intentMetaCandidate?.query_type,
     root.query_type,
     root.queryType,
     root.stats?.query_type,
@@ -51,10 +66,16 @@ function normalizeIntentMeta(root, results) {
   const intentMode = pickString(
     queryPlan?.intent_mode,
     queryPlan?.intentMode,
+    results.query_executed?.intent_mode,
+    results.query_executed?.intentMode,
+    root.query_executed?.intent_mode,
+    root.query_executed?.intentMode,
     results.intent_mode,
     results.intentMode,
     results.stats?.intent_mode,
     results.stats?.intentMode,
+    intentMetaCandidate?.intentMode,
+    intentMetaCandidate?.intent_mode,
     root.intent_mode,
     root.intentMode,
     root.stats?.intent_mode,

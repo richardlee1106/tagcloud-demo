@@ -13,6 +13,14 @@ import { API_BASE_URL } from '../config';
 import { validateSSEEventPayload } from '../../shared/sseEventSchema.js';
 const API_BASE = `${API_BASE_URL}/api/ai`;
 
+function createClientRequestId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  const random = Math.random().toString(36).slice(2, 10)
+  return `web_${Date.now()}_${random}`
+}
+
 // 当前服务商信息（从后端获取）
 let currentProvider = {
   online: false,
@@ -129,6 +137,12 @@ export function buildSystemPrompt(poiContext, isLocationQuery = false) {
 export async function sendChatMessageStream(messages, onChunk, options = {}, poiFeatures = [], onMeta = null) {
   console.log('[AI Frontend] 调用后端 API，POI 数量:', poiFeatures.length)
 
+  const requestId = options?.requestId || options?.request_id || createClientRequestId()
+  const normalizedOptions = {
+    ...options,
+    requestId
+  }
+
   const response = await fetch(`${API_BASE}/chat`, {
     method: 'POST',
     headers: {
@@ -137,7 +151,7 @@ export async function sendChatMessageStream(messages, onChunk, options = {}, poi
     body: JSON.stringify({
       messages,
       poiFeatures,
-      options
+      options: normalizedOptions
     })
   })
 
@@ -149,9 +163,21 @@ export async function sendChatMessageStream(messages, onChunk, options = {}, poi
   // 获取当前使用的服务商
   const provider = response.headers.get('X-AI-Provider')
   const providerName = response.headers.get('X-AI-Provider-Name')
+  const responseTraceId = response.headers.get('X-Trace-Id') || requestId
   if (provider) {
     currentProvider.provider = provider
     currentProvider.providerName = providerName || (provider === 'local' ? 'Local LM Studio' : 'Cloud AI (GLM)')
+  }
+
+  if (onMeta) {
+    try {
+      onMeta('trace', {
+        trace_id: responseTraceId,
+        request_id: requestId
+      })
+    } catch (metaErr) {
+      console.error('[AI Meta Handler Error]', metaErr)
+    }
   }
 
   const reader = response.body.getReader()
@@ -179,28 +205,30 @@ export async function sendChatMessageStream(messages, onChunk, options = {}, poi
       if (line.startsWith('data: ')) {
         const data = line.slice(6).trim()
         if (data === '[DONE]') continue
+        const eventType = currentEvent
 
         try {
           // 统一处理具名 SSE 元事件（查表模式，消除重复分支）
           const META_EVENT_TYPES = new Set([
             'pois', 'stage', 'boundary', 'spatial_clusters',
             'vernacular_regions', 'fuzzy_regions', 'stats', 'progress',
-            'partial', 'refined_result', 'schema_error'
+            'partial', 'refined_result', 'schema_error', 'error'
           ])
 
-          if (currentEvent && META_EVENT_TYPES.has(currentEvent)) {
+          if (eventType && META_EVENT_TYPES.has(eventType)) {
             const payload = JSON.parse(data)
-            const validation = validateSSEEventPayload(currentEvent, payload)
+            const validation = validateSSEEventPayload(eventType, payload)
             if (!validation.ok) {
               console.warn('[AI Frontend] SSE payload schema mismatch:', {
-                event: currentEvent,
+                event: eventType,
                 errors: validation.errors.slice(0, 5)
               })
               if (onMeta) {
                 try {
                   onMeta('schema_error', {
-                    event: currentEvent,
-                    errors: validation.errors
+                    event: eventType,
+                    errors: validation.errors,
+                    trace_id: responseTraceId
                   })
                 } catch (metaErr) {
                   console.error('[AI Meta Handler Error]', metaErr)
@@ -209,17 +237,26 @@ export async function sendChatMessageStream(messages, onChunk, options = {}, poi
               currentEvent = null
               continue
             }
-            if (currentEvent === 'pois') {
+            if (eventType === 'pois') {
               console.log('[AI Frontend] 收到后端下发的 POI 数据:', payload.length)
-            } else if (currentEvent === 'stage') {
+            } else if (eventType === 'stage') {
               console.log('[AI Frontend] 收到阶段更新:', payload.name)
+            } else if (eventType === 'error') {
+              console.error('[AI Frontend] 收到后端错误:', payload?.message || payload)
             }
             if (onMeta) {
               try {
-                onMeta(currentEvent, currentEvent === 'stage' ? payload.name : payload)
+                if (payload && typeof payload === 'object' && !Array.isArray(payload) && !payload.trace_id) {
+                  payload.trace_id = responseTraceId
+                }
+                onMeta(eventType, payload)
               } catch (metaErr) {
                 console.error('[AI Meta Handler Error]', metaErr)
               }
+            }
+            if (eventType === 'error') {
+              const backendErrorMessage = payload?.message || '空间分析失败'
+              throw new Error(String(backendErrorMessage))
             }
             currentEvent = null
             continue
@@ -249,6 +286,9 @@ export async function sendChatMessageStream(messages, onChunk, options = {}, poi
              onChunk(`\n[系统错误: ${parsed.error.message || '未知错误'}]\n`)
           }
         } catch (e) {
+          if (eventType === 'error') {
+            throw e
+          }
           console.warn('[AI Stream Parse Error]', e, line)
         }
         // 重置 event（通常 event 只对下一行 data 有效）
@@ -292,9 +332,9 @@ export async function quickSearch(keyword, options = {}) {
   const params = new URLSearchParams({ q: kw, limit: '100' });
   
   // ========== 核心业务逻辑 ==========
-  // 1. ѡ/ԲΣ ѡ
+  // 1. 选择/圆形选区优先
   // 2. 无选区 → 使用当前地图视野 (viewport) 作为边界
-  // 3. κпռԼȫ
+  // 3. 禁止无约束全库扫描
   
   let hasGeometry = false;
   
@@ -495,13 +535,13 @@ export async function checkAIService() {
       currentProvider.online = false
       return false
     }
-    
+
     const data = await response.json()
     currentProvider = data
     console.log(`[AI] 服务状态: ${data.providerName} (${data.provider})`)
     return data.online
   } catch (e) {
-    console.error('[AI] 服务检查失败:', e)
+    console.debug('[AI] status probe skipped/offline:', e?.message || e)
     currentProvider.online = false
     return false
   }

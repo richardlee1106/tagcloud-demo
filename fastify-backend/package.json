@@ -15,7 +15,12 @@
     "python:http": "python python_service/app.py",
     "dev:stack": "node scripts/dev_stack.js",
     "smoke:jobs": "node scripts/smoke_jobs_flow.js",
-    "bench:jobs": "node scripts/bench_jobs.js"
+    "bench:jobs": "node scripts/bench_jobs.js",
+    "kpi:report": "node scripts/kpi_report.js --window=7d",
+    "template:weights": "node scripts/recompute_template_weights.js --window_days=7",
+    "ops:hotspots": "node scripts/select_hotspot_operators.js --window=7d",
+    "sql:apply": "node scripts/apply_sql_script.js",
+    "sql:apply:obs": "node scripts/apply_sql_script.js --file=sql/05_ai_observability.sql"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.0",

@@ -1,12 +1,12 @@
 <template>
   <div class="narrative-mode-container">
-    <!-- 背景效果层 (来自 Demo) -->
+    
     <div class="bg-gradient"></div>
     <div class="grid-overlay"></div>
     <div class="floating-orb orb-1"></div>
     <div class="floating-orb orb-2"></div>
 
-    <!-- 1. 底层：真实地理地图 -->
+    
     <MapContainer 
       ref="mapRef"
       class="background-map"
@@ -18,12 +18,12 @@
       @map-move-end="onMapMove"
     />
 
-    <!-- 2. 中层：Three.js 特效层 (极光描边 & 区域遮罩) -->
+    
     <canvas ref="canvasRef" class="effect-canvas"></canvas>
 
-    <!-- 3. 顶层：UI 控制与解说字幕 -->
+    
     <div class="narrative-ui">
-      <!-- 进度指示器 (来自 Demo) -->
+      
       <div v-if="isPlaying && narrativeSteps.length > 0" class="progress-ring-container">
         <svg width="48" height="48" class="progress-ring-svg">
           <circle class="ring-bg" cx="24" cy="24" r="20"/>
@@ -36,7 +36,7 @@
         <div class="progress-text">{{ currentStepIndex + 1 }}/{{ narrativeSteps.length }}</div>
       </div>
 
-      <!-- 左侧脚本面板 -->
+      
       <transition name="fade-slide">
         <div v-if="scriptVisible" class="script-panel" :class="{ 'generating': isGenerating }">
           <div class="panel-header">
@@ -53,15 +53,15 @@
           </div>
           
           <div class="script-content" ref="scriptContentRef">
-            <!-- 1. AI 分析报告 (始终优先展示) -->
+            
             <div v-if="aiResponse" class="ai-text-response">
               <div class="response-title">AI 分析报告</div>
               <div class="response-body" v-html="formattedAiResponse"></div>
             </div>
 
-            <!-- 2. 漫游剧本步骤 (紧随报告之后) -->
+            
             <div v-if="narrativeSteps.length > 0" class="narrative-steps-section">
-              <div class="response-title">漫游剧本</div>
+              <div class="response-title">漫游脚本</div>
               <div class="modern-steps">
                 <div 
                   v-for="(step, index) in narrativeSteps" 
@@ -79,16 +79,16 @@
               </div>
             </div>
             
-            <!-- 3. 空白状态 -->
+            
             <div v-if="!aiResponse && !isGenerating" class="empty-state">
-              <div class="empty-icon">🗺️</div>
-              <p>点击下方按钮开启空间叙事之旅</p>
+              <div class="empty-icon">💬</div>
+              <p>当前为前端展示模式，后端接入中。点击下方按钮查看叙事规范模板。</p>
             </div>
 
-            <!-- 4. 生成中的 Loading -->
+            
             <div v-if="isGenerating" class="loading-state">
               <div class="loader-spinner-mini"></div>
-              <span>正在感知空间并生成叙事流...</span>
+              <span>正在加载叙事规范模板...</span>
             </div>
           </div>
 
@@ -101,7 +101,7 @@
               >
                 <el-icon v-if="isGenerating" class="is-loading"><Loading /></el-icon>
                 <el-icon v-else><MagicStick /></el-icon>
-                {{ isGenerating ? 'AI 解析中...' : '生成区域解说' }}
+                {{ isGenerating ? '模板加载中...' : '查看叙事规范模板' }}
               </button>
               <button 
                 v-if="narrativeSteps.length > 0" 
@@ -111,14 +111,14 @@
                 :disabled="isPlaying"
               >
                 <el-icon><VideoPlay /></el-icon>
-                {{ isPlaying ? '播放中' : '开始漫游' }}
+                {{ isPlaying ? '播放中...' : '开始漫游' }}
               </button>
             </div>
           </div>
         </div>
       </transition>
 
-      <!-- 底部字幕卡片 (来自 Demo) -->
+      
       <transition name="up">
         <div v-if="isPlaying && currentVoiceText" class="subtitle-card">
           <div class="card-glow"></div>
@@ -132,7 +132,7 @@
             </p>
           </div>
           
-          <!-- 解说控制栏 -->
+          
           <div class="card-controls">
             <div class="voice-visualizer">
               <div v-for="i in 5" :key="i" class="audio-bar" :style="{ animationDelay: (i * 0.2) + 's' }"></div>
@@ -141,9 +141,9 @@
         </div>
       </transition>
       
-      <!-- 右下角设置与返回 -->
+      
       <div class="action-buttons">
-        <button class="round-tool-btn" @click="scriptVisible = !scriptVisible" :title="scriptVisible ? '' : 'ʾ'">
+        <button class="round-tool-btn" @click="scriptVisible = !scriptVisible" :title="scriptVisible ? '隐藏面板' : '显示面板'">
           <el-icon><View v-if="scriptVisible" /><Hide v-else /></el-icon>
         </button>
         <button class="round-tool-btn danger" @click="goBack" title="返回主页">
@@ -160,6 +160,7 @@ import { useRouter } from 'vue-router';
 import { marked } from 'marked';
 import { ArrowLeft, Close, Hide, Loading, MagicStick, VideoPlay, View } from '@element-plus/icons-vue';
 import { fromLonLat, toLonLat } from 'ol/proj';
+import { NARRATIVE_TEXT_TEMPLATE_MARKDOWN, NARRATIVE_UI_ONLY_NOTICE } from '../utils/narrativeTextTemplate';
 
 const MapContainer = defineAsyncComponent(() => import('../components/MapContainer.vue'));
 
@@ -179,26 +180,22 @@ async function ensureThreeRuntime() {
   return threeRuntimePromise;
 }
 
-/**
- * ==========================================
- * 1. 状态定义
- * ==========================================
- */
+
 const router = useRouter();
 const mapRef = ref(null);
 const canvasRef = ref(null);
 const poiFeatures = ref([]);
 const narrativeSteps = ref([]);
-const aiResponse = ref(''); // 存储原始文本回复
+const aiResponse = ref(''); 
 const currentStepIndex = ref(-1);
 const isGenerating = ref(false);
 const isPlaying = ref(false);
 const scriptVisible = ref(true);
 const currentVoiceText = ref('');
 const boundaryData = ref(null);
-const scriptContentRef = ref(null); // 用于自动滚动
+const scriptContentRef = ref(null); 
 
-// 打字机效果相关的状态
+
 const typedText = ref('');
 const currentNarrativeFocus = computed(() => {
   if (currentStepIndex.value >= 0 && narrativeSteps.value[currentStepIndex.value]) {
@@ -208,16 +205,14 @@ const currentNarrativeFocus = computed(() => {
   return '空间叙事';
 });
 
-// 进度环相关的计算
+
 const progressOffset = computed(() => {
   if (narrativeSteps.value.length === 0) return 125.6;
   const progress = (currentStepIndex.value + 1) / narrativeSteps.value.length;
   return 125.6 * (1 - progress);
 });
 
-/**
- * 打字机效果函数
- */
+
 let typeInterval = null;
 const typeText = (text) => {
   clearInterval(typeInterval);
@@ -230,40 +225,39 @@ const typeText = (text) => {
     } else {
       clearInterval(typeInterval);
     }
-  }, 50); //打字速度
+  }, 50); 
 };
 
-// 监听文本变化，触发打字机效果
+
 watch(currentVoiceText, (newVal) => {
   if (newVal) {
-    typeText(newVal.replace(/<[^>]+>/g, '')); // 移除 HTML 标签后再打字
+    typeText(newVal.replace(/<[^>]+>/g, '')); 
   }
 });
 
-// Three.js 实例
+
 const scene = shallowRef(null);
 const camera = shallowRef(null);
 const renderer = shallowRef(null);
 const clock = shallowRef(null);
 const boundaryMesh = shallowRef(null);
 const boundaryMaterial = shallowRef(null);
-const maskMesh = shallowRef(null); // 背景遮罩
+const maskMesh = shallowRef(null); 
 const mapInstance = shallowRef(null);
-const spatialClusters = ref([]); // 空间聚类数据
-const vernacularRegions = ref([]); // 语义模糊区域数据
-const fuzzyRegions = ref([]); // 模糊区域数据（三层边界模型）
-const clusterBoundaries = ref([]); // 聚类边界网格数组
-const fuzzyRegionMeshes = ref([]); // 模糊区域Three.js网格数组
-const isDrawingCluster = ref(false); // 是否正在绘制聚类边界
-const currentSubtitle = ref(''); // 当前字幕文本
-const subtitleHistory = ref([]); // 字幕历史记录
-const isSubtitleVisible = ref(false); // 字幕是否可见
-const subtitleContainerRef = ref(null); // 字幕容器引用
-const aiPanelRef = ref(null); // AI面板引用（用于碰撞检测）
-const subtitlePosition = ref({ x: 0, y: 0 }); // 字幕位置（动态计算）
-const subtitleSafeZone = ref({ left: 0, top: 0, right: 0, bottom: 0 }); // 字幕安全区域
-const activeRegionIndex = ref(-1); // 当前激活的模糊区域索引
-const regionNarrativeSteps = ref([]); // 基于模糊区域的解说步骤
+const spatialClusters = ref([]); 
+const vernacularRegions = ref([]); 
+const fuzzyRegions = ref([]); 
+const clusterBoundaries = ref([]); 
+const fuzzyRegionMeshes = ref([]); 
+const isDrawingCluster = ref(false); 
+const currentSubtitle = ref(''); 
+const subtitleHistory = ref([]); 
+const isSubtitleVisible = ref(false); 
+const subtitleContainerRef = ref(null); 
+const aiPanelRef = ref(null); 
+const subtitlePosition = ref({ x: 0, y: 0 }); 
+const subtitleSafeZone = ref({ left: 0, top: 0, right: 0, bottom: 0 }); 
+const activeRegionIndex = ref(-1); 
 
 let frameId = null;
 let boundaryDashStart = 0;
@@ -275,19 +269,13 @@ function getElapsedClockTime() {
   return clock.value.getElapsedTime();
 }
 
-const formattedAiResponse = computed(() => {
-  // 1. 移除 JSON 代码块 (包括 ```json ... ``` 和 纯 JSON 文本)
-  let cleanText = aiResponse.value
-    .replace(/```json[\s\S]*?```/g, '') // Ƴ markdown json 
-    .replace(/\{[\s\S]*"narrative_flow"[\s\S]*\}/, ''); // 移除裸 json
-  
-  // 2. 也是为了隐藏可能的残留思考过程
-  cleanText = cleanText.replace(/<think>[\s\S]*?<\/think>/g, '');
-  
-  return marked.parse(cleanText);
-});
+const NARRATIVE_TEMPLATE_CONTENT = `${NARRATIVE_UI_ONLY_NOTICE}
 
-// 监听 aiResponse 变化，自动滚动到底部
+${NARRATIVE_TEXT_TEMPLATE_MARKDOWN}`;
+
+const formattedAiResponse = computed(() => marked.parse(aiResponse.value || NARRATIVE_TEMPLATE_CONTENT));
+
+
 watch(aiResponse, () => {
   nextTick(() => {
     if (scriptContentRef.value) {
@@ -322,7 +310,7 @@ const initThree = async () => {
   camera.value = c;
   renderer.value = r;
 
-  // 1. 创建全局暗场遮罩 (聚光灯效果的基础)
+  
   const maskGeo = new THREE.PlaneGeometry(width * 2, height * 2);
   const maskMat = new THREE.ShaderMaterial({
     uniforms: {
@@ -400,37 +388,37 @@ const cleanupThree = () => {
   }
 };
 
-// ==========================================
-// 核心修复：每一帧都重新计算几何体坐标
-// ==========================================
+
+
+
 const syncThreeWithMap = () => {
   if (!mapInstance.value || !scene.value || !camera.value) return;
   
-  // 1. 同步边界线 (Aurora Line)
+  
   if (boundaryData.value && boundaryMesh.value) {
     const ring = boundaryData.value.coordinates[0];
     const positions = boundaryMesh.value.geometry.attributes.position;
     const array = positions.array;
     let needsUpdate = false;
     
-    // һ£ݱˣɼ
-    // 这里我们假设点数在 updateBoundaryLine 初始化后不变，只更新位置
+    
+    
     
     ring.forEach((coord, i) => {
-      // 关键：实时将 经纬度 -> 屏幕像素坐标 (Screen Coordinates)
-      // 注意：OpenLayers 的像素坐标原点在左上角，Three.js Y轴向上，需反转 Y
+      
+      
       const pixel = mapInstance.value.getPixelFromCoordinate(fromLonLat(coord));
       if (pixel) {
-        // 更新 BufferGeometry
-        array[i * 3] = pixel[0];     // x
-        array[i * 3 + 1] = window.innerHeight - pixel[1]; // y (Three.js 坐标系反转)
-        array[i * 3 + 2] = 0;        // z
+        
+        array[i * 3] = pixel[0];     
+        array[i * 3 + 1] = window.innerHeight - pixel[1]; 
+        array[i * 3 + 2] = 0;        
       }
     });
     
     positions.needsUpdate = true;
     
-    // 更新描边动画（dash）
+    
     if (boundaryMesh.value) {
       boundaryMesh.value.computeLineDistances();
       const lineDistance = boundaryMesh.value.geometry.attributes.lineDistance;
@@ -449,8 +437,8 @@ const syncThreeWithMap = () => {
       }
     }
 
-    // 更新遮罩中心
-    // 计算当前的边界几何中心屏幕坐标
+    
+    
     let centerX = 0, centerY = 0;
     let count = 0;
     ring.forEach(coord => {
@@ -465,7 +453,7 @@ const syncThreeWithMap = () => {
     if (count > 0 && maskMesh.value) {
       maskMesh.value.material.uniforms.uFocus.value.set(
         centerX / count, 
-        window.innerHeight - (centerY / count) // 反转 Y
+        window.innerHeight - (centerY / count) 
       );
     }
   }
@@ -477,13 +465,13 @@ const animate = () => {
   if (renderer.value && scene.value && camera.value) {
     const time = getElapsedClockTime();
     
-    // 1. ÿһ֡ǿͬ (϶ͼû)
+    
     syncThreeWithMap();
     
-    // 2. 同步聚类边界坐标
+    
     syncClusterBoundaries();
 
-    // 3. 更新遮罩动画
+    
     if (maskMesh.value) {
       maskMesh.value.material.uniforms.uOpacity.value = 0.6 + 0.1 * Math.sin(time * 0.8);
     }
@@ -492,9 +480,7 @@ const animate = () => {
   }
 };
 
-/**
- * 初始化边界线几何体 (仅分配内存)
- */
+
 const updateBoundaryLine = () => {
   if (!boundaryData.value || !scene.value) return;
 
@@ -503,12 +489,12 @@ const updateBoundaryLine = () => {
     boundaryMesh.value.geometry.dispose();
   }
 
-  // 初始构建 Geometry
+  
   const ring = boundaryData.value.coordinates[0];
-  const points = ring.map(() => new THREE.Vector3(0, 0, 0)); // 只有占位符
+  const points = ring.map(() => new THREE.Vector3(0, 0, 0)); 
   const geometry = new THREE.BufferGeometry().setFromPoints(points);
   
-  // 确保材质存在 (复用之前的 Shader 逻辑)
+  
   if (!boundaryMaterial.value) {
     boundaryMaterial.value = new THREE.ShaderMaterial({
       uniforms: {
@@ -557,20 +543,16 @@ const updateBoundaryLine = () => {
       boundaryMaterial.value.uniforms.uDashOffset.value = boundaryDashTotal;
     }
   }
-  //  frustumCulledΪĻⱻ޳µ˸
+  
   mesh.frustumCulled = false; 
   boundaryMesh.value = mesh;
   scene.value.add(mesh);
   
-  // 立即同步一次坐标
+  
   syncThreeWithMap();
 };
 
-/**
- * ==========================================
- * 4. 业务逻辑
- * ==========================================
- */
+
 const onMapReady = async (olMap) => {
   mapInstance.value = olMap;
   await initThree();
@@ -578,155 +560,38 @@ const onMapReady = async (olMap) => {
 };
 
 const onMapMove = () => {
-  // 坐标同步现在由 animate 循环中的 syncThreeWithMap 自动处理，无需重新创建几何体
-};
-
-const handleGenerate = () => {
-  // 使用新的三阶段区域解说生成
-  generateRegionNarrative();
-};
-
-const generateNarrative = async () => {
-  if (isGenerating.value) return;
-  if (!mapInstance.value) return;
   
+};
+
+const handleGenerate = async () => {
+  if (isGenerating.value) return;
+
   isGenerating.value = true;
   narrativeSteps.value = [];
-  aiResponse.value = ''; 
+  currentStepIndex.value = -1;
+  currentVoiceText.value = '';
   boundaryData.value = null;
   poiFeatures.value = [];
-  
-  const view = mapInstance.value.getView();
-  const extent = view.calculateExtent(mapInstance.value.getSize());
-  const bl = toLonLat([extent[0], extent[1]]);
-  const tr = toLonLat([extent[2], extent[3]]);
-  const viewport = [bl[0], bl[1], tr[0], tr[1]];
-  
-  try {
-    const response = await fetch('/api/ai/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        messages: [{
-          role: 'user', 
-          content: "请深度分析当前这片区域。请务必在回答末尾提供 narrative_flow JSON 漫游脚本。"
-        }],
-        options: {
-          spatialContext: { mode: 'global', viewport: viewport }
-        }
-      })
-    });
+  spatialClusters.value = [];
+  vernacularRegions.value = [];
+  fuzzyRegions.value = [];
+  clearClusterBoundaries();
+  clearFuzzyRegions();
+  aiResponse.value = NARRATIVE_TEMPLATE_CONTENT;
 
-    if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let currentEventType = null;
-    let buffer = '';
-    
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-      
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith(':')) continue; // 忽略心跳
-        
-        if (trimmed.startsWith('event: ')) {
-          currentEventType = trimmed.slice(7).trim();
-        } else if (trimmed.startsWith('data: ')) {
-          const content = trimmed.slice(6);
-          if (content === '[DONE]') continue;
-          
-          try {
-            if (currentEventType === 'pois') {
-              const poisData = JSON.parse(content);
-              poiFeatures.value = poisData.map(p => ({
-                type: 'Feature',
-                geometry: { type: 'Point', coordinates: [p.lon, p.lat] },
-                properties: { ...p }
-              }));
-              console.log('[Narrative] 已同步 POI 数据:', poiFeatures.value.length);
-            } else if (currentEventType === 'boundary') {
-              boundaryData.value = JSON.parse(content);
-              console.log('[Narrative] 已同步边界数据');
-              nextTick(updateBoundaryLine);
-            } else if (currentEventType === 'spatial_clusters') {
-              // 接收空间聚类数据
-              const clusterData = JSON.parse(content);
-              spatialClusters.value = clusterData.hotspots || [];
-              console.log('[Narrative] 已同步空间聚类数据:', spatialClusters.value.length);
-              // 自动绘制聚类边界
-              nextTick(() => drawClusterBoundaries(spatialClusters.value));
-            } else if (currentEventType === 'vernacular_regions') {
-              // 接收语义模糊区域数据
-              const regionData = JSON.parse(content);
-              vernacularRegions.value = regionData || [];
-              console.log('[Narrative] 已同步语义区域数据:', vernacularRegions.value.length);
-            } else if (currentEventType === 'fuzzy_regions') {
-              // 接收模糊区域数据（三层边界模型）
-              const fuzzyData = JSON.parse(content);
-              fuzzyRegions.value = fuzzyData || [];
-              console.log('[Narrative] 已同步模糊区域数据:', fuzzyRegions.value.length);
-              // 自动绘制模糊区域
-              nextTick(() => drawFuzzyRegions(fuzzyRegions.value));
-            } else {
-              const data = JSON.parse(content);
-              if (data.content) aiResponse.value += data.content;
-            }
-          } catch (e) {
-            // 解析错误可能由不完整的 JSON 块引起
-          }
-          if (line.endsWith('\n\n')) currentEventType = null; // 重置
-        }
-      }
-    }
-    
-    console.log('[Narrative] AI 文本生成完成');
-    
-    // 弹性 JSON 提取：支持多种包裹格式
-    const text = aiResponse.value;
-    const jsonMatch = text.match(/```json\s*(\{[\s\S]*?\})\s*```/) || text.match(/\{[\s\S]*"narrative_flow"[\s\S]*\}/);
-    
-    if (jsonMatch) {
-      try {
-        const jsonStr = jsonMatch[1] || jsonMatch[0];
-        const script = JSON.parse(jsonStr);
-        narrativeSteps.value = script.narrative_flow || [];
-        console.log('[Narrative] 已成功提取叙事脚本，步数:', narrativeSteps.value.length);
-      } catch (e) {
-        console.error('[Narrative] JSON 脚本解析失败:', e);
-      }
-    } else {
-      console.warn('[Narrative] 回复中未发现有效的 narrative_flow JSON');
-    }
-    
-  } catch (err) {
-    console.error('[Narrative] 网络或执行错误:', err);
-  } finally {
-    isGenerating.value = false;
-  }
+  await nextTick();
+  isGenerating.value = false;
 };
 
-// 注意：clusterBoundaries 和 isDrawingCluster 已在上方声明，此处不再重复声明
-
-/**
- * 绘制模糊区域（三层边界模型）
- * 核心区 + 过渡带 + 外圈，每层有不同的视觉效果
- */
 const drawFuzzyRegions = async (regions) => {
   if (!regions || regions.length === 0 || !scene.value) return;
   
   console.log(`[Narrative] 绘制模糊区域: ${regions.length} 个区域`);
   
-  // 清除旧的模糊区域
+  
   clearFuzzyRegions();
   
-  // 为每个模糊区域创建三层边界
+  
   for (let i = 0; i < regions.length; i++) {
     const region = regions[i];
     if (!region.layers) continue;
@@ -739,42 +604,42 @@ const drawFuzzyRegions = async (regions) => {
       outer: null
     };
     
-    // 1. 外圈（最底层，大范围，低透明度）
+    
     if (region.layers.outer?.boundary) {
       regionMeshGroup.outer = createAuroraBoundary(
         region.layers.outer.boundary,
         i,
         'outer',
-        { r: 0.0, g: 0.8, b: 1.0 }, // 青色
-        0.15 // 低透明度
+        { r: 0.0, g: 0.8, b: 1.0 }, 
+        0.15 
       );
       if (regionMeshGroup.outer) {
         scene.value.add(regionMeshGroup.outer);
       }
     }
     
-    // 2. 过渡带（中层，中等范围，中等透明度）
+    
     if (region.layers.transition?.boundary) {
       regionMeshGroup.transition = createAuroraBoundary(
         region.layers.transition.boundary,
         i,
         'transition',
-        { r: 0.5, g: 0.3, b: 1.0 }, // 紫色
-        0.35 // 中等透明度
+        { r: 0.5, g: 0.3, b: 1.0 }, 
+        0.35 
       );
       if (regionMeshGroup.transition) {
         scene.value.add(regionMeshGroup.transition);
       }
     }
     
-    // 3. ϲ㣬СΧ͸ȣ
+    
     if (region.layers.core?.boundary) {
       regionMeshGroup.core = createAuroraBoundary(
         region.layers.core.boundary,
         i,
         'core',
-        { r: 0.0, g: 0.95, b: 1.0 }, // 亮青色
-        0.85 // 高透明度
+        { r: 0.0, g: 0.95, b: 1.0 }, 
+        0.85 
       );
       if (regionMeshGroup.core) {
         scene.value.add(regionMeshGroup.core);
@@ -784,37 +649,30 @@ const drawFuzzyRegions = async (regions) => {
     fuzzyRegionMeshes.value.push(regionMeshGroup);
   }
   
-  // 启动流光动画
+  
   startAuroraAnimation();
 };
 
-/**
- * 创建极光效果边界
- * @param {Array} boundary - 边界坐标数组
- * @param {number} regionIndex - 区域索引
- * @param {string} layerType - 层级类型（core/transition/outer）
- * @param {Object} color - 颜色对象 {r, g, b}
- * @param {number} baseAlpha - 基础透明度
- */
+
 const createAuroraBoundary = (boundary, regionIndex, layerType, color, baseAlpha) => {
   if (!boundary || boundary.length < 3) return null;
   
-  // 创建闭合边界点
+  
   const points = boundary.map(() => new THREE.Vector3(0, 0, 0));
   const geometry = new THREE.BufferGeometry().setFromPoints(points);
   
-  // 极光Shader材质
+  
   const material = new THREE.ShaderMaterial({
     uniforms: {
       uTime: { value: 0 },
       uBaseColor: { value: new THREE.Color(color.r, color.g, color.b) },
-      uColorStart: { value: new THREE.Color(0.0, 0.95, 1.0) }, // 青色
-      uColorEnd: { value: new THREE.Color(0.6, 0.3, 1.0) },    // 紫色
+      uColorStart: { value: new THREE.Color(0.0, 0.95, 1.0) }, 
+      uColorEnd: { value: new THREE.Color(0.6, 0.3, 1.0) },    
       uProgress: { value: 0 },
       uRegionIndex: { value: regionIndex },
       uLayerType: { value: layerType === 'core' ? 0 : layerType === 'transition' ? 1 : 2 },
       uBaseAlpha: { value: baseAlpha },
-      uIsActive: { value: 0 } // 是否被激活高亮
+      uIsActive: { value: 0 } 
     },
     vertexShader: `
       attribute float vertexProgress;
@@ -842,34 +700,34 @@ const createAuroraBoundary = (boundary, regionIndex, layerType, color, baseAlpha
       varying float vProgress;
       
       void main() {
-        // 流光流动速度根据层级不同
+        
         float speed = uLayerType == 0 ? 3.0 : uLayerType == 1 ? 2.0 : 1.0;
         float flow = fract(vUv.x * 4.0 - uTime * speed + uRegionIndex * 0.3);
         
-        // 动态渐变色：在 BaseColor 和 EndColor 之间变化
-        // uLayerType: 0=Core(Cyan), 1=Transition(Purple), 2=Outer(Blue)
+        
+        
         vec3 gradientColor = mix(uColorStart, uColorEnd, 0.5 + 0.5 * sin(flow * 3.14 + vUv.x));
         
-        // 混合基础色 (保持层级特征) 和 渐变色
+        
         vec3 finalColor = mix(uBaseColor, gradientColor, 0.6);
         
-        // 激活时增强亮度 (金色高亮)
+        
         if (uIsActive > 0.5) {
           finalColor = mix(finalColor, vec3(1.0, 0.9, 0.3), 0.6); 
         }
         
-        // 流光高亮带
+        
         float beam = smoothstep(0.0, 0.2, sin(flow * 3.14159)); 
         finalColor += vec3(1.0) * beam * 0.5;
 
-        // 透明度渐变效果
+        
         float alpha = uBaseAlpha;
         
-        // 绘制进度效果
+        
         if (vUv.x > uProgress) {
-          alpha *= 0.1; // 未绘制部分几乎透明
+          alpha *= 0.1; 
         } else {
-          // 已绘制部分有脉动效果
+          
           float pulse = 0.8 + 0.2 * sin(uTime * 4.0 + vUv.x * 10.0);
           alpha *= pulse;
         }
@@ -883,7 +741,7 @@ const createAuroraBoundary = (boundary, regionIndex, layerType, color, baseAlpha
     side: THREE.DoubleSide
   });
   
-  // 添加进度属性用于动画
+  
   const count = points.length;
   const progressArray = new Float32Array(count);
   for (let i = 0; i < count; i++) {
@@ -903,29 +761,27 @@ const createAuroraBoundary = (boundary, regionIndex, layerType, color, baseAlpha
   return mesh;
 };
 
-/**
- * 启动极光动画 + 描边绘制效果
- */
+
 let auroraAnimationId = null;
-let drawStartTime = null; // 描边动画开始时间
-const DRAW_DURATION = 2500; // 描边持续时间（毫秒）
+let drawStartTime = null; 
+const DRAW_DURATION = 2500; 
 
 const startAuroraAnimation = () => {
   if (auroraAnimationId) cancelAnimationFrame(auroraAnimationId);
   
-  drawStartTime = performance.now(); // 记录开始时间
+  drawStartTime = performance.now(); 
   
   const animate = () => {
     auroraAnimationId = requestAnimationFrame(animate);
     
     const time = getElapsedClockTime();
     const elapsed = performance.now() - drawStartTime;
-    const drawProgress = Math.min(elapsed / DRAW_DURATION, 1); // 0 -> 1
+    const drawProgress = Math.min(elapsed / DRAW_DURATION, 1); 
     
-    // 更新所有模糊区域的uniform
+    
     fuzzyRegionMeshes.value.forEach((regionGroup, regionIdx) => {
-      // 每个区域错开绘制时间，形成依次描边效果
-      const regionDelay = regionIdx * 400; // 每个区域延迟 400ms
+      
+      const regionDelay = regionIdx * 400; 
       const localElapsed = Math.max(0, elapsed - regionDelay);
       const localProgress = Math.min(localElapsed / DRAW_DURATION, 1);
       
@@ -934,8 +790,8 @@ const startAuroraAnimation = () => {
         if (mesh && mesh.material.uniforms) {
           mesh.material.uniforms.uTime.value = time;
           
-          // 每层也错开绘制，外层先画，核心层后画
-          const layerDelay = layerIdx * 200; // 层级延迟
+          
+          const layerDelay = layerIdx * 200; 
           const layerLocalElapsed = Math.max(0, localElapsed - layerDelay);
           const layerProgress = Math.min(layerLocalElapsed / (DRAW_DURATION * 0.8), 1);
           
@@ -949,9 +805,7 @@ const startAuroraAnimation = () => {
 };
 
 
-/**
- * 清除模糊区域
- */
+
 const clearFuzzyRegions = () => {
   fuzzyRegionMeshes.value.forEach(regionGroup => {
     ['outer', 'transition', 'core'].forEach(layerType => {
@@ -971,9 +825,7 @@ const clearFuzzyRegions = () => {
   }
 };
 
-/**
- * 高亮指定模糊区域
- */
+
 const highlightFuzzyRegion = (regionIndex) => {
   activeRegionIndex.value = regionIndex;
   
@@ -989,17 +841,14 @@ const highlightFuzzyRegion = (regionIndex) => {
   });
 };
 
-/**
- * 绘制模糊区域聚类边界（旧函数，保留兼容）
- * 使用流光笔描动画效果
- */
+
 const drawClusterBoundaries = async (clusters) => {
   if (!clusters || clusters.length === 0 || !scene.value) return;
   
   isDrawingCluster.value = true;
   clusterBoundaries.value = [];
   
-  // 清除旧的聚类边界
+  
   clusterBoundaries.value.forEach(mesh => {
     if (mesh && scene.value) {
       scene.value.remove(mesh);
@@ -1007,7 +856,7 @@ const drawClusterBoundaries = async (clusters) => {
     }
   });
   
-  // 为每个热点区域创建流光边界
+  
   for (let i = 0; i < clusters.length; i++) {
     const cluster = clusters[i];
     if (!cluster.boundary || cluster.boundary.length < 3) continue;
@@ -1022,25 +871,22 @@ const drawClusterBoundaries = async (clusters) => {
   isDrawingCluster.value = false;
 };
 
-/**
- * 创建流光边界线
- * 渐变色彩（蓝-紫流动光效）
- */
+
 const createFlowingBoundary = (boundary, index) => {
   if (!boundary || boundary.length < 3) return null;
   
-  // 创建几何体
+  
   const points = boundary.map(() => new THREE.Vector3(0, 0, 0));
   const geometry = new THREE.BufferGeometry().setFromPoints(points);
   
-  // 流光材质 - 渐变色彩
+  
   const material = new THREE.ShaderMaterial({
     uniforms: {
       uTime: { value: 0 },
-      uColorStart: { value: new THREE.Color('#00f2ff') }, // 青色起点
-      uColorEnd: { value: new THREE.Color('#a855f7') },   // 紫色终点
-      uProgress: { value: 0 }, // 绘制进度
-      uIndex: { value: index } // 边界索引，用于错开动画
+      uColorStart: { value: new THREE.Color('#00f2ff') }, 
+      uColorEnd: { value: new THREE.Color('#a855f7') },   
+      uProgress: { value: 0 }, 
+      uIndex: { value: index } 
     },
     vertexShader: `
       attribute float progress;
@@ -1064,23 +910,23 @@ const createFlowingBoundary = (boundary, index) => {
       varying float vProgress;
       
       void main() {
-        // 流光流动效果
+        
         float flow = fract(vUv.x * 3.0 - uTime * 2.0 + uIndex * 0.5);
         
-        // 渐变色彩混合
+        
         vec3 color = mix(uColorStart, uColorEnd, flow);
         
-        // 透明度随进度变化（笔描效果）
+        
         float alpha = 0.0;
         if (vUv.x <= uProgress) {
-          // 已绘制部分
+          
           alpha = 0.8 + 0.2 * sin(flow * 3.14159 * 2.0);
         } else if (vUv.x <= uProgress + 0.05) {
-          // 笔尖部分（渐变消失）
+          
           alpha = 0.8 * (1.0 - (vUv.x - uProgress) / 0.05);
         }
         
-        // 添加发光效果
+        
         float glow = 0.5 + 0.5 * sin(uTime * 3.0 + vUv.x * 10.0);
         color = mix(color, vec3(1.0), glow * 0.2);
         
@@ -1093,7 +939,7 @@ const createFlowingBoundary = (boundary, index) => {
     side: THREE.DoubleSide
   });
   
-  // 添加进度属性
+  
   const count = points.length;
   const progressArray = new Float32Array(count);
   for (let i = 0; i < count; i++) {
@@ -1108,9 +954,7 @@ const createFlowingBoundary = (boundary, index) => {
   return mesh;
 };
 
-/**
- * 更新聚类边界坐标（与地图同步）
- */
+
 const syncClusterBoundaries = () => {
   if (!mapInstance.value || !scene.value) return;
   
@@ -1132,25 +976,22 @@ const syncClusterBoundaries = () => {
     
     positions.needsUpdate = true;
     
-    // 更新材质时间
+    
     if (mesh.material.uniforms) {
       mesh.material.uniforms.uTime.value = getElapsedClockTime();
     }
   });
 };
 
-/**
- * 播放聚类动画
- * 逐笔绘制流光边界
- */
+
 const playClusterAnimation = async (clusters) => {
   if (!clusters || clusters.length === 0) return;
   
-  // 先创建所有边界
+  
   await drawClusterBoundaries(clusters);
   
-  // 逐笔绘制动画
-  const duration = 2000; // 2秒绘制一个边界
+  
+  const duration = 2000; 
   const startTime = Date.now();
   
   return new Promise((resolve) => {
@@ -1158,10 +999,10 @@ const playClusterAnimation = async (clusters) => {
       const elapsed = Date.now() - startTime;
       const progress = Math.min(elapsed / duration, 1);
       
-      // 更新每个边界的绘制进度
+      
       clusterBoundaries.value.forEach((mesh, index) => {
         if (mesh && mesh.material.uniforms) {
-          // 错开动画开始时间
+          
           const delay = index * 300;
           const localProgress = Math.max(0, Math.min((elapsed - delay) / duration, 1));
           mesh.material.uniforms.uProgress.value = localProgress;
@@ -1178,9 +1019,7 @@ const playClusterAnimation = async (clusters) => {
   });
 };
 
-/**
- * 清除聚类边界
- */
+
 const clearClusterBoundaries = () => {
   clusterBoundaries.value.forEach(mesh => {
     if (mesh && scene.value) {
@@ -1197,9 +1036,9 @@ const playNarrative = async () => {
   
   isPlaying.value = true;
   
-  // 如果有模糊区域，重新触发描边动画
+  
   if (fuzzyRegionMeshes.value.length > 0) {
-    startAuroraAnimation(); // 重新开始描边
+    startAuroraAnimation(); 
   }
   
   for (let i = 0; i < narrativeSteps.value.length; i++) {
@@ -1207,7 +1046,7 @@ const playNarrative = async () => {
     const step = narrativeSteps.value[i];
     currentVoiceText.value = step.voice_text;
     
-    // 优先使用 region_index（由 generateRegionBasedSteps 生成）
+    
     if (step.region_index !== undefined && step.region_index >= 0) {
       highlightFuzzyRegion(step.region_index);
     }
@@ -1215,12 +1054,12 @@ const playNarrative = async () => {
     if (step.focus !== 'overview') {
       let targetCoords = null;
       
-      // 1. 优先使用步骤中直接携带的坐标（由 generateRegionBasedSteps 生成）
+      
       if (step.center && step.center.lon && step.center.lat) {
         targetCoords = [step.center.lon, step.center.lat];
       }
       
-      // 2. 如果没有，尝试从模糊区域查找
+      
       if (!targetCoords && fuzzyRegions.value && fuzzyRegions.value.length > 0) {
         const targetRegion = fuzzyRegions.value.find(r => 
           r.id === step.region_id || 
@@ -1235,7 +1074,7 @@ const playNarrative = async () => {
         }
       }
       
-      // 3. 兜底：从 POI 中查找
+      
       if (!targetCoords) {
         const targetPoi = poiFeatures.value.find(p => p.properties.name === step.focus);
         if (targetPoi) {
@@ -1251,11 +1090,11 @@ const playNarrative = async () => {
         });
       }
     } else {
-      // 全景模式
+      
       if (mapInstance.value) {
         mapInstance.value.getView().animate({ zoom: 14, duration: 1500 });
       }
-      // 取消所有高亮
+      
       highlightFuzzyRegion(-1);
     }
 
@@ -1265,331 +1104,11 @@ const playNarrative = async () => {
   isPlaying.value = false;
   currentStepIndex.value = -1;
   currentVoiceText.value = '';
-  highlightFuzzyRegion(-1); // 清除高亮
+  highlightFuzzyRegion(-1); 
 };
 
 
 const goBack = () => router.push('/');
-
-// ==========================================
-// 语义区域识别与AI解说路由
-// ==========================================
-
-/**
- * 语义区域识别（RAG检索增强）
- * 从用户提问中提取空间意图，检索知识库中的区域语义描述
- */
-const identifySemanticRegions = async (userQuery) => {
-  // 调用后端API进行语义区域识别
-  try {
-    const response = await fetch('/api/ai/identify-regions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        query: userQuery,
-        viewport: mapInstance.value ? 
-          mapInstance.value.getView().calculateExtent(mapInstance.value.getSize()) : null
-      })
-    });
-    
-    if (!response.ok) throw new Error('语义区域识别失败');
-    
-    const result = await response.json();
-    return result.regions || [];
-  } catch (err) {
-    console.error('[Narrative] 语义区域识别失败:', err);
-    return [];
-  }
-};
-
-/**
- * 模糊边界生成（GIS拓扑构造）
- * POI㼯ܶȱ棬ȡʸ
- */
-const generateFuzzyBoundaries = async (regionCandidates) => {
-  if (!regionCandidates || regionCandidates.length === 0) return;
-  
-  // 使用已有的聚类数据生成模糊边界
-  const boundaries = [];
-  
-  for (const region of regionCandidates) {
-    // 查找匹配的聚类
-    const matchingCluster = spatialClusters.value.find(c => 
-      c.dominantCategories.some(cat => 
-        region.keywords.some(kw => cat.category.includes(kw))
-      )
-    );
-    
-    if (matchingCluster && matchingCluster.boundary) {
-      boundaries.push({
-        name: region.name,
-        type: region.type,
-        boundary: matchingCluster.boundary,
-        confidence: matchingCluster.confidence,
-        center: matchingCluster.center
-      });
-    }
-  }
-  
-  return boundaries;
-};
-
-/**
- * AI解说路由渲染（二维动画合成）
- * 流光笔描动画 + 字幕时序绑定
- */
-const renderAINarrative = async (script, boundaries) => {
-  if (!script || script.length === 0) return;
-  
-  isPlaying.value = true;
-  
-  // 1. 预加载所有边界线
-  if (boundaries && boundaries.length > 0) {
-    await drawClusterBoundaries(boundaries.map(b => ({
-      boundary: b.boundary,
-      center: b.center,
-      dominantCategories: [{ category: b.name }]
-    })));
-  }
-  
-  // 2. 逐句播放解说
-  for (let i = 0; i < script.length; i++) {
-    const step = script[i];
-    currentStepIndex.value = i;
-    currentVoiceText.value = step.voice_text;
-    
-    // 高亮当前区域
-    if (step.region_index !== undefined && clusterBoundaries.value[step.region_index]) {
-      const mesh = clusterBoundaries.value[step.region_index];
-      if (mesh.material.uniforms) {
-        mesh.material.uniforms.uColorStart.value = new THREE.Color('#ffeb3b');
-        mesh.material.uniforms.uColorEnd.value = new THREE.Color('#ff9800');
-      }
-    }
-    
-    // 镜头移动
-    if (step.center && mapInstance.value) {
-      mapInstance.value.getView().animate({
-        center: fromLonLat([step.center.lon, step.center.lat]),
-        zoom: step.zoom || 16,
-        duration: 1500
-      });
-    }
-    
-    // 等待解说时长
-    await new Promise(resolve => setTimeout(resolve, step.duration || 5000));
-    
-    // 恢复区域颜色
-    if (step.region_index !== undefined && clusterBoundaries.value[step.region_index]) {
-      const mesh = clusterBoundaries.value[step.region_index];
-      if (mesh.material.uniforms) {
-        mesh.material.uniforms.uColorStart.value = new THREE.Color('#00f2ff');
-        mesh.material.uniforms.uColorEnd.value = new THREE.Color('#a855f7');
-      }
-    }
-  }
-  
-  isPlaying.value = false;
-  currentStepIndex.value = -1;
-  currentVoiceText.value = '';
-};
-
-/**
- * 生成区域解说（新入口）
- * ׶ͨʶ -> ߽ -> Ⱦ
- * 优化：添加超时处理和错误恢复
- */
-const generateRegionNarrative = async () => {
-  if (isGenerating.value) return;
-  if (!mapInstance.value) return;
-  
-  isGenerating.value = true;
-  narrativeSteps.value = [];
-  aiResponse.value = '';
-  boundaryData.value = null;
-  poiFeatures.value = [];
-  spatialClusters.value = [];
-  vernacularRegions.value = [];
-  fuzzyRegions.value = [];
-  regionNarrativeSteps.value = [];
-  clearClusterBoundaries();
-  clearFuzzyRegions();
-  
-  const view = mapInstance.value.getView();
-  const extent = view.calculateExtent(mapInstance.value.getSize());
-  const bl = toLonLat([extent[0], extent[1]]);
-  const tr = toLonLat([extent[2], extent[3]]);
-  const viewport = [bl[0], bl[1], tr[0], tr[1]];
-  
-  // 创建AbortController用于超时控制
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => {
-    controller.abort();
-    console.log('[Narrative] 请求超时，已中止');
-  }, 60000); // 60秒超时
-  
-  try {
-    console.log('[Narrative] 开始生成区域解说...');
-    
-    const response = await fetch('/api/ai/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      signal: controller.signal,
-      body: JSON.stringify({
-        messages: [{
-          role: 'user',
-          content: '请深度分析当前这片区域，识别主要功能区（如商业区、文教区、居住区等），并生成区域解说脚本。'
-        }],
-        options: {
-          spatialContext: { mode: 'global', viewport: viewport },
-          strictBbox: true, // 严格限制在 bbox 范围内
-          quickMode: true
-        }
-      })
-    });
-    
-    clearTimeout(timeoutId);
-    
-    if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
-    
-    // 处理流式响应
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let currentEventType = null;
-    let buffer = '';
-    let lastActivityTime = Date.now();
-    
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      
-      // Ƿʱûݣӳ60룬ΪݼҪʱ䣩
-      if (Date.now() - lastActivityTime > 60000) {
-        console.warn('[Narrative] 响应流超时');
-        break;
-      }
-      lastActivityTime = Date.now();
-      
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-      
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith(':')) continue;
-        
-        if (trimmed.startsWith('event: ')) {
-          currentEventType = trimmed.slice(7).trim();
-        } else if (trimmed.startsWith('data: ')) {
-          const content = trimmed.slice(6);
-          if (content === '[DONE]') continue;
-          
-          try {
-            if (currentEventType === 'pois') {
-              const poisData = JSON.parse(content);
-              poiFeatures.value = poisData.map(p => ({
-                type: 'Feature',
-                geometry: { type: 'Point', coordinates: [p.lon, p.lat] },
-                properties: { ...p }
-              }));
-            } else if (currentEventType === 'boundary') {
-              boundaryData.value = JSON.parse(content);
-              nextTick(updateBoundaryLine);
-            } else if (currentEventType === 'spatial_clusters') {
-              const clusterData = JSON.parse(content);
-              spatialClusters.value = clusterData.hotspots || [];
-              nextTick(() => drawClusterBoundaries(spatialClusters.value));
-            } else if (currentEventType === 'vernacular_regions') {
-              const regionData = JSON.parse(content);
-              vernacularRegions.value = regionData || [];
-            } else if (currentEventType === 'fuzzy_regions') {
-              // 接收模糊区域数据（三层边界模型）
-              const fuzzyData = JSON.parse(content);
-              fuzzyRegions.value = fuzzyData || [];
-              console.log('[Narrative] 已同步模糊区域数据:', fuzzyRegions.value.length);
-              // 自动绘制模糊区域
-              nextTick(() => drawFuzzyRegions(fuzzyRegions.value));
-              // 基于模糊区域自动生成漫游步骤
-              if (fuzzyRegions.value.length > 0) {
-                narrativeSteps.value = generateRegionBasedSteps(fuzzyRegions.value);
-                console.log('[Narrative] 基于模糊区域生成漫游步骤:', narrativeSteps.value.length);
-              }
-            } else {
-              const data = JSON.parse(content);
-              if (data.content) aiResponse.value += data.content;
-            }
-          } catch (e) {
-            // 解析错误
-          }
-        }
-      }
-    }
-    
-    // 提取叙事脚本
-    const text = aiResponse.value;
-    const jsonMatch = text.match(/```json\s*(\{[\s\S]*?\})\s*```/) || text.match(/\{[\s\S]*"narrative_flow"[\s\S]*\}/);
-    
-    if (jsonMatch) {
-      try {
-        const jsonStr = jsonMatch[1] || jsonMatch[0];
-        const script = JSON.parse(jsonStr);
-        narrativeSteps.value = script.narrative_flow || [];
-        console.log('[Narrative] 已提取叙事脚本，步数:', narrativeSteps.value.length);
-      } catch (e) {
-        console.error('[Narrative] JSON脚本解析失败:', e);
-      }
-    }
-    
-  } catch (err) {
-    console.error('[Narrative] 生成解说失败:', err);
-  } finally {
-    isGenerating.value = false;
-  }
-};
-
-/**
- * 基于模糊区域生成漫游步骤
- * 将每个模糊区域作为一个"面"步骤，而不是单个 POI 点
- */
-const generateRegionBasedSteps = (regions) => {
-  if (!regions || regions.length === 0) return [];
-  
-  const steps = [];
-  
-  // Step 1: 全景概览
-  steps.push({
-    focus: 'overview',
-    voice_text: `当前区域共识别出 ${regions.length} 个主要功能分区，让我们依次了解。`,
-    duration: 4000,
-    region_id: null
-  });
-  
-  // Step 2~N: 每个模糊区域作为一个步骤
-  regions.forEach((region, index) => {
-    const name = region.name || region.candidates?.bestGuess || `区域 ${index + 1}`;
-    const theme = region.theme || '综合';
-    const categories = region.dominantCategories?.map(c => c.category).join('、') || '综合业态';
-    
-    steps.push({
-      focus: name,
-      voice_text: `这里是「${name}」，主要功能为${theme}，包含 ${region.pointCount || 0} 个 POI，核心业态包括 ${categories}。`,
-      duration: 5000,
-      region_id: region.id,
-      center: region.center,
-      region_index: index
-    });
-  });
-  
-  // 最后一步: 回到全景
-  steps.push({
-    focus: 'overview',
-    voice_text: '以上就是本区域的主要功能分区概览。',
-    duration: 3000,
-    region_id: null
-  });
-  
-  return steps;
-};
 
 onBeforeUnmount(() => {
   cleanupThree();
@@ -1612,7 +1131,7 @@ onBeforeUnmount(() => {
     color: rgba(255, 255, 255, 0.95);
 }
 
-/* 动态背景 (来自 Demo) */
+
 .bg-gradient {
     position: fixed;
     inset: 0;
@@ -1663,7 +1182,7 @@ onBeforeUnmount(() => {
     75% { transform: translate(20px, 30px) scale(1.05); }
 }
 
-/* 地图与特效画布 */
+
 .background-map {
     position: absolute;
     top: 0;
@@ -1683,7 +1202,7 @@ onBeforeUnmount(() => {
     pointer-events: none;
 }
 
-/* UI 控制层 */
+
 .narrative-ui {
     position: absolute;
     inset: 0;
@@ -1693,7 +1212,7 @@ onBeforeUnmount(() => {
 
 .narrative-ui > * { pointer-events: auto; }
 
-/* 进度指示器 (来自 Demo) */
+
 .progress-ring-container {
     position: fixed;
     bottom: 32px;
@@ -1731,7 +1250,7 @@ onBeforeUnmount(() => {
     letter-spacing: -0.5px;
 }
 
-/* 脚本面板升级 */
+
 .script-panel {
     position: absolute;
     left: 24px;
@@ -1803,7 +1322,7 @@ onBeforeUnmount(() => {
     line-height: 1.8;
 }
 
-/* 现代步骤条 (取代 Element Steps) */
+
 .modern-steps { display: flex; flex-direction: column; gap: 4px; }
 .modern-step-item {
     position: relative;
@@ -1848,7 +1367,7 @@ onBeforeUnmount(() => {
 .step-title { font-size: 14px; color: rgba(255,255,255,0.5); font-weight: 500; transition: all 0.3s ease; }
 .modern-step-item.active .step-title { color: #fff; font-weight: 600; }
 
-/* 底部按钮区 */
+
 .panel-footer {
     padding: 24px;
     background: rgba(0,0,0,0.2);
@@ -1891,7 +1410,7 @@ onBeforeUnmount(() => {
 .btn-play-narrative:active { transform: translateY(0); }
 .btn-play-narrative.playing { background: rgba(255,255,255,0.1); box-shadow: none; color: rgba(255, 255, 255, 0.5); cursor: not-allowed; }
 
-/* 字幕卡片升级 (来自 Demo) */
+
 .subtitle-card {
     position: fixed;
     bottom: 40px;
@@ -1964,7 +1483,7 @@ onBeforeUnmount(() => {
 
 @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
 
-/* 配音可视化 */
+
 .card-controls { margin-top: 24px; display: flex; justify-content: center; }
 .voice-visualizer { display: flex; align-items: flex-end; gap: 4px; height: 30px; }
 .audio-bar {
@@ -1977,7 +1496,7 @@ onBeforeUnmount(() => {
 
 @keyframes bar-dance { from { height: 6px; opacity: 0.4; } to { height: 24px; opacity: 1; } }
 
-/* 右下角工具按钮 */
+
 .action-buttons {
     position: absolute;
     right: 32px;
@@ -2007,7 +1526,7 @@ onBeforeUnmount(() => {
 .round-tool-btn:hover { background: #00d4ff; color: #fff; transform: scale(1.1) rotate(5deg); }
 .round-tool-btn.danger:hover { background: #ff6b6b; }
 
-/* 加载动画 */
+
 .loader-spinner-mini {
     width: 24px;
     height: 24px;
@@ -2029,14 +1548,14 @@ onBeforeUnmount(() => {
     font-size: 13px;
 }
 
-/* 动画过渡 */
+
 .up-enter-active, .up-leave-active { transition: all 0.8s cubic-bezier(0.34, 1.56, 0.64, 1); }
 .up-enter-from, .up-leave-to { opacity: 0; transform: translate(-50%, 100px); }
 
 .fade-slide-enter-active, .fade-slide-leave-active { transition: all 0.6s ease; }
 .fade-slide-enter-from, .fade-slide-leave-to { opacity: 0; transform: translateX(-50px); filter: blur(10px); }
 
-/* 隐藏地图组件的原有控制面板 */
+
 :deep(.map-filter-control) {
   display: none !important;
 }
@@ -2049,8 +1568,10 @@ onBeforeUnmount(() => {
 .response-body :deep(p) { margin-bottom: 12px; }
 .response-body :deep(ul) { padding-left: 20px; margin-bottom: 12px; }
 
-/*  */
+
 .script-content {
-    -ms-overflow-style: none; /* IE and Edge */
+    -ms-overflow-style: none; 
 }
 </style>
+
+

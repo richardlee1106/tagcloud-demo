@@ -29,7 +29,10 @@ const pythonService = {
   command: PYTHON_BIN,
   args: ['python_service/grpc_server.py'],
   cwd: ROOT,
-  env: {}
+  env: {
+    PYTHONUTF8: process.env.PYTHONUTF8 || '1',
+    PYTHONIOENCODING: process.env.PYTHONIOENCODING || 'utf-8'
+  }
 }
 
 const workerService = {

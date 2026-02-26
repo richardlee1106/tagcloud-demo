@@ -1040,6 +1040,171 @@ export async function findPOIsBySpatialFilter(options = {}) {
   }
 }
 
+/**
+ * 写入模板反馈事件（路线A学习层）。
+ * 表不存在时返回 false，不阻断主流程。
+ */
+export async function insertTemplateFeedbackEvent(payload = {}) {
+  const traceId = String(payload.trace_id || payload.traceId || '').trim()
+  const eventType = String(payload.event_type || payload.eventType || '').trim()
+  if (!traceId || !eventType) return false
+
+  const templateId = payload.template_id || payload.templateId || null
+  const intentMeta = payload.intent_meta || payload.intentMeta || {}
+  const intentMode = intentMeta?.intentMode || intentMeta?.intent_mode || null
+  const queryType = intentMeta?.queryType || intentMeta?.query_type || null
+  const eventTs = payload.ts ? new Date(payload.ts) : new Date()
+  const extraPayload = payload.extra || payload.client_metrics || null
+
+  const sql = `
+    INSERT INTO ai_template_feedback_events (
+      trace_id,
+      event_type,
+      template_id,
+      intent_mode,
+      query_type,
+      intent_payload,
+      extra_payload,
+      event_ts
+    )
+    VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8::timestamptz)
+  `
+
+  try {
+    await query(sql, [
+      traceId,
+      eventType,
+      templateId,
+      intentMode,
+      queryType,
+      JSON.stringify(intentMeta || {}),
+      JSON.stringify(extraPayload || {}),
+      eventTs.toISOString()
+    ])
+    return true
+  } catch (error) {
+    if (error?.code === '42P01') {
+      console.warn('[DB] ai_template_feedback_events not found, skip feedback write')
+      return false
+    }
+    throw error
+  }
+}
+
+/**
+ * 读取模板反馈聚合（离线权重脚本使用）。
+ */
+export async function getTemplateFeedbackAggregates(options = {}) {
+  const fromTs = Number(options.fromTs || Date.now() - 24 * 60 * 60 * 1000)
+  const toTs = Number(options.toTs || Date.now())
+
+  const sql = `
+    SELECT
+      COALESCE(template_id, 'unknown') AS template_id,
+      event_type,
+      COUNT(*)::bigint AS count
+    FROM ai_template_feedback_events
+    WHERE event_ts >= to_timestamp($1 / 1000.0)
+      AND event_ts < to_timestamp($2 / 1000.0)
+    GROUP BY COALESCE(template_id, 'unknown'), event_type
+  `
+
+  try {
+    const result = await query(sql, [fromTs, toTs])
+    return result.rows.map((row) => ({
+      template_id: row.template_id,
+      event_type: row.event_type,
+      count: Number(row.count || 0)
+    }))
+  } catch (error) {
+    if (error?.code === '42P01') {
+      return []
+    }
+    throw error
+  }
+}
+
+/**
+ * 拉取算子耗时样本（路线B热点识别脚本使用）。
+ */
+export async function getOperatorTimingRows(options = {}) {
+  const fromTs = Number(options.fromTs || Date.now() - 7 * 24 * 60 * 60 * 1000)
+  const toTs = Number(options.toTs || Date.now())
+
+  const sql = `
+    SELECT
+      operator_name,
+      total_time_ms,
+      query_type,
+      trace_id,
+      recorded_at
+    FROM ai_operator_timing_events
+    WHERE recorded_at >= to_timestamp($1 / 1000.0)
+      AND recorded_at < to_timestamp($2 / 1000.0)
+    ORDER BY recorded_at DESC
+  `
+
+  try {
+    const result = await query(sql, [fromTs, toTs])
+    return result.rows.map((row) => ({
+      operator_name: row.operator_name,
+      total_time_ms: Number(row.total_time_ms || 0),
+      query_type: row.query_type || null,
+      trace_id: row.trace_id || null,
+      recorded_at: row.recorded_at
+    }))
+  } catch (error) {
+    if (error?.code === '42P01') {
+      return []
+    }
+    throw error
+  }
+}
+
+/**
+ * 持久化算子耗时事件（可选）。
+ */
+export async function insertOperatorTimingEvents(rows = []) {
+  if (!Array.isArray(rows) || rows.length === 0) return 0
+
+  const values = []
+  const placeholders = []
+  let idx = 1
+
+  rows.forEach((row) => {
+    placeholders.push(`($${idx}, $${idx + 1}, $${idx + 2}, $${idx + 3}, $${idx + 4}::timestamptz)`)
+    values.push(
+      String(row.operator_name || row.operator || 'unknown'),
+      Number(row.total_time_ms || 0),
+      row.query_type || null,
+      row.trace_id || null,
+      new Date(row.recorded_at || Date.now()).toISOString()
+    )
+    idx += 5
+  })
+
+  const sql = `
+    INSERT INTO ai_operator_timing_events (
+      operator_name,
+      total_time_ms,
+      query_type,
+      trace_id,
+      recorded_at
+    ) VALUES ${placeholders.join(',')}
+  `
+
+  try {
+    const result = await query(sql, values)
+    return Number(result.rowCount || 0)
+  } catch (error) {
+    if (error?.code === '42P01') {
+      console.warn('[DB] ai_operator_timing_events not found, skip timing persistence')
+      return 0
+    }
+    throw error
+  }
+}
+
 export default {
   initDatabase,
   getPool,
@@ -1056,4 +1221,8 @@ export default {
   findPOIsBySpatialFilter,
   quickSearch,
   findPOIsTwoStageFilter,
+  insertTemplateFeedbackEvent,
+  getTemplateFeedbackAggregates,
+  getOperatorTimingRows,
+  insertOperatorTimingEvents,
 };

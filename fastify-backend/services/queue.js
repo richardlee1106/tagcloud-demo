@@ -6,6 +6,7 @@ import { EventEmitter } from 'events'
 import { randomUUID } from 'crypto'
 import IORedis from 'ioredis'
 import { Queue, QueueEvents, Worker } from 'bullmq'
+import telemetry from './telemetry.js'
 
 const QUEUE_NAME = process.env.SPATIAL_QUEUE_NAME || 'spatial-narrative'
 const JOB_EVENT_LIMIT = parseInt(process.env.SPATIAL_JOB_EVENT_LIMIT || '200', 10)
@@ -131,6 +132,7 @@ function appendEvent(jobId, type, payload = {}) {
   }
 
   eventBus.emit('job_event', event)
+  telemetry.incrementCounter('queue_event_total', { type: String(type || 'unknown') })
   return event
 }
 
@@ -518,6 +520,9 @@ export async function getQueueHealthSnapshot(options = {}) {
     : memory.pending
 
   const failed = queue ? Number(bullmq?.failed || 0) : snapshot_stats.failed
+
+  telemetry.setGauge('queue_backlog', backlog, { mode: getQueueMode() })
+  telemetry.setGauge('queue_failed', failed, { mode: getQueueMode() })
 
   const alerts = []
 

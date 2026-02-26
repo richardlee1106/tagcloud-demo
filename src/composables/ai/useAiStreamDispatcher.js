@@ -29,11 +29,24 @@ export function useAiStreamDispatcher({
     return mergedIntent
   }
 
+  function applySSEMetaToMessage(message, payload) {
+    if (!message || !payload || typeof payload !== 'object' || Array.isArray(payload)) return
+
+    const traceId = payload.trace_id || payload.traceId
+    const schemaVersion = payload.schema_version || payload.schemaVersion
+    const capabilities = Array.isArray(payload.capabilities) ? payload.capabilities.slice() : null
+
+    if (traceId) message.traceId = String(traceId)
+    if (schemaVersion) message.schemaVersion = String(schemaVersion)
+    if (capabilities) message.capabilities = capabilities
+  }
+
   function dispatchRefinedResult(data, aiMessageIndex) {
     const normalized = normalizeRefinedResultEvidence(data)
     const currentMsg = getMessage(aiMessageIndex)
 
     if (currentMsg) {
+      applySSEMetaToMessage(currentMsg, data)
       if (normalized.boundary) currentMsg.boundary = normalized.boundary
       if (normalized.spatialClusters) currentMsg.spatialClusters = normalized.spatialClusters
       if (normalized.vernacularRegions.length > 0) currentMsg.vernacularRegions = normalized.vernacularRegions
@@ -51,13 +64,36 @@ export function useAiStreamDispatcher({
   }
 
   function dispatchMetaEvent({ type, data, aiMessageIndex, fallbackIntentMode }) {
+    const currentMsg = getMessage(aiMessageIndex)
+
+    if (type === 'trace' && data && typeof data === 'object') {
+      if (currentMsg) {
+        const traceId = data.trace_id || data.traceId || data.request_id || data.requestId
+        if (traceId) currentMsg.traceId = String(traceId)
+      }
+      return {}
+    }
+
     if (type === 'stage') {
-      return { stage: data }
+      if (currentMsg) {
+        applySSEMetaToMessage(currentMsg, data)
+      }
+      const stageName = typeof data === 'string' ? data : data?.name
+      const normalizedStage = String(stageName || '').trim().toLowerCase()
+      if (currentMsg && normalizedStage) {
+        if (normalizedStage === 'general_qa' || normalizedStage === 'smalltalk') {
+          currentMsg.queryType = 'general_qa'
+          currentMsg.intentMode = 'llm_chat'
+        } else if (normalizedStage === 'irrelevant_input') {
+          currentMsg.queryType = 'irrelevant_input'
+          currentMsg.intentMode = 'out_of_scope'
+        }
+      }
+      return { stage: stageName || '' }
     }
 
     if (type === 'pois' && Array.isArray(data)) {
       extractedPOIsRef.value = data
-      const currentMsg = getMessage(aiMessageIndex)
       if (currentMsg) {
         currentMsg.pois = data
         currentMsg.intentMode = fallbackIntentMode
@@ -66,36 +102,36 @@ export function useAiStreamDispatcher({
     }
 
     if (type === 'boundary' && data) {
-      const currentMsg = getMessage(aiMessageIndex)
-      if (currentMsg) currentMsg.boundary = data
+      if (currentMsg) {
+        currentMsg.boundary = data
+        applySSEMetaToMessage(currentMsg, data)
+      }
       emit('ai-boundary', data)
       return {}
     }
 
     if (type === 'spatial_clusters' && data) {
-      const currentMsg = getMessage(aiMessageIndex)
       if (currentMsg) currentMsg.spatialClusters = data
+      if (currentMsg) applySSEMetaToMessage(currentMsg, data)
       emit('ai-spatial-clusters', data)
       return {}
     }
 
     if (type === 'vernacular_regions' && Array.isArray(data)) {
-      const currentMsg = getMessage(aiMessageIndex)
       if (currentMsg) currentMsg.vernacularRegions = data
       emit('ai-vernacular-regions', data)
       return {}
     }
 
     if (type === 'fuzzy_regions' && Array.isArray(data)) {
-      const currentMsg = getMessage(aiMessageIndex)
       if (currentMsg) currentMsg.fuzzyRegions = data
       emit('ai-fuzzy-regions', data)
       return {}
     }
 
     if (type === 'stats' && data && typeof data === 'object') {
-      const currentMsg = getMessage(aiMessageIndex)
       if (currentMsg) currentMsg.analysisStats = data
+      if (currentMsg) applySSEMetaToMessage(currentMsg, data)
       emit('ai-analysis-stats', data)
 
       const statsIntent = normalizeRefinedResultEvidence({
@@ -114,20 +150,21 @@ export function useAiStreamDispatcher({
     }
 
     if (type === 'progress' && data) {
-      const currentMsg = getMessage(aiMessageIndex)
       if (currentMsg) {
         currentMsg.progress = data.progress
+        applySSEMetaToMessage(currentMsg, data)
       }
       return {}
     }
 
     if (type === 'schema_error' && data) {
-      const currentMsg = getMessage(aiMessageIndex)
       if (currentMsg) {
         currentMsg.schemaWarning = {
           event: data.event,
-          errors: Array.isArray(data.errors) ? data.errors.slice(0, 3) : []
+          errors: Array.isArray(data.errors) ? data.errors.slice(0, 3) : [],
+          traceId: data.trace_id || data.traceId || null
         }
+        applySSEMetaToMessage(currentMsg, data)
       }
       return {}
     }

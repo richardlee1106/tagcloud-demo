@@ -37,6 +37,7 @@ describe('useIntentTemplateSelector', () => {
     expect(selected.some((item) => item.id === 'hotspot_overview')).toBe(true)
     expect(selected.some((item) => item.id === 'dominant_industry')).toBe(true)
     expect(selected.some((item) => item.id === 'industry_overlap_radiation')).toBe(true)
+    expect(selected.every((item) => Number.isFinite(item.score))).toBe(true)
   })
 
   it('prioritizes comparison digest for comparison intent', () => {

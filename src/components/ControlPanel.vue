@@ -284,12 +284,6 @@
           style="display: none;"
         />
         
-        <el-tooltip content="Enter Narrative Mode" placement="bottom">
-          <button class="narrative-mode-btn" @click="emit('go-narrative')">
-            Narrative
-          </button>
-        </el-tooltip>
-
         <el-select
           v-if="!drawEnabled"
           v-model="selectedDrawMode"
@@ -368,11 +362,11 @@
           </button>
         </el-tooltip>
 
-        <button @click="run" class="run-btn premium-run-btn">
+        <button @click="emit('go-narrative')" class="run-btn premium-run-btn">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" style="margin-right: 4px;">
             <path d="M8 5.14v14c0 .86.94 1.4 1.68.97l10.66-7.33a1.15 1.15 0 0 0 0-1.94L9.68 4.17c-.74-.43-1.68.11-1.68.97z"/>
           </svg>
-          渲染词云
+          地图叙事
         </button>
       </div>
     </div>
@@ -1036,30 +1030,6 @@ defineExpose({ setDrawEnabled, setSearchResult, setSearching, setCategorySelecti
   border-color: rgba(99, 102, 241, 0.6) !important;
   color: #a5b4fc;
   box-shadow: 0 0 15px rgba(99, 102, 241, 0.3);
-}
-
-.narrative-mode-btn {
-  height: 36px;
-  padding: 0 12px;
-  border-radius: 10px;
-  border: 1px solid rgba(99, 102, 241, 0.5);
-  background: rgba(99, 102, 241, 0.16);
-  color: #c7d2fe;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.3px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.narrative-mode-btn:hover {
-  transform: translateY(-1px);
-  background: rgba(99, 102, 241, 0.24);
-  box-shadow: 0 6px 16px rgba(99, 102, 241, 0.25);
-}
-
-.narrative-mode-btn:active {
-  transform: translateY(0);
 }
 
 .run-btn.premium-run-btn {

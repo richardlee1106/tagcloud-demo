@@ -1,4 +1,5 @@
 import { createTemplateRegistry } from '../../components/ai/templateRegistry'
+import { getTemplateWeight } from '../../services/aiTelemetry'
 
 const INTENT_TEMPLATE_BONUS = {
   macro: {
@@ -49,7 +50,9 @@ function scoreTemplate(template, context) {
   const baseScore = Number(template.score?.(context) || 0)
   const intentBonus = Number(INTENT_TEMPLATE_BONUS[context.intentType]?.[template.id] || 0)
   const richnessBonus = context.hotspots.length + context.regions.length + context.fuzzyRegions.length > 5 ? 2 : 0
-  return baseScore + intentBonus + richnessBonus
+  const learningWeight = context.traceId ? Number(getTemplateWeight(template.id) || 1) : 1
+  const learningBonus = Number.isFinite(learningWeight) ? (learningWeight - 1) * 25 : 0
+  return baseScore + intentBonus + richnessBonus + learningBonus
 }
 
 function resolveMaxTemplateCount(context, candidates) {
@@ -71,14 +74,15 @@ function hasCoreEvidence(context) {
   return context.hotspots.length > 0 || context.regions.length > 0 || context.fuzzyRegions.length > 0
 }
 
-function mapToWidget(template, context) {
+function mapToWidget(template, context, score = 0) {
   const built = template.build?.(context) || {}
   return {
     id: template.id,
     title: template.title,
     subtitle: template.subtitle,
     lines: toSafeTextList(built.lines),
-    actions: toSafeActions(built.actions)
+    actions: toSafeActions(built.actions),
+    score: Number(score) || 0
   }
 }
 
@@ -96,7 +100,8 @@ export function useIntentTemplateSelector() {
       confidence: context?.confidence || { score: 0, model: 'unknown' },
       risk: context?.risk || { score: 0, highAmbiguityCount: 0 },
       accessibility: context?.accessibility || { score: 0, basis: 'proxy' },
-      queryType: context?.queryType || null
+      queryType: context?.queryType || null,
+      traceId: context?.traceId || null
     }
 
     const availableTemplates = registry
@@ -113,14 +118,14 @@ export function useIntentTemplateSelector() {
       const fallback = FALLBACK_TEMPLATE_ORDER
         .map((id) => availableTemplates.find((item) => item.template.id === id))
         .find(Boolean)
-      if (fallback) return [mapToWidget(fallback.template, safeContext)]
-      return [mapToWidget(availableTemplates[0].template, safeContext)]
+      if (fallback) return [mapToWidget(fallback.template, safeContext, fallback.score)]
+      return [mapToWidget(availableTemplates[0].template, safeContext, availableTemplates[0].score)]
     }
 
     const maxCount = resolveMaxTemplateCount(safeContext, availableTemplates)
     return availableTemplates
       .slice(0, maxCount)
-      .map((item) => mapToWidget(item.template, safeContext))
+      .map((item) => mapToWidget(item.template, safeContext, item.score))
   }
 
   return {

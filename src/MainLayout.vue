@@ -1,8 +1,8 @@
-<template>
+﻿<template>
   <div id="app" class="app-layout">
-    <!-- ˶ -->
+    <!-- 硕 -->
     <header class="fixed-top-header desktop-only-flex">
-      <!-- 品牌 Logo 区 -->
+      <!-- 品牌 Logo 区域 -->
       <div class="header-logo">
         <div class="logo-icon">
           <!-- 地球 + 知识网络 Logo -->
@@ -39,9 +39,9 @@
         </div>
       </div>
 
-      <!-- 绝对定位锚点层 -->
+      <!-- 绝对定位锚点击-->
       
-      <!-- 锚点1：数据发现 (右对齐至屏幕中线 50%) -->
+      <!-- 锚点1：数据发(右对齐至屏幕中线 50%) -->
       <div class="layout-anchor-center-left">
         <ControlPanel ref="controlPanelRefMap"
                       panel-type="map"
@@ -61,10 +61,9 @@
                       :globalAnalysisEnabled="globalAnalysisEnabled" />
       </div>
 
-      <!-- 物理中线分隔符 -->
-      <div class="layout-divider-center"></div>
+      <!-- 中线分隔符（已移除） -->
 
-      <!-- ê2ռָ (ҶĻұԵ) -->
+      <!-- 锚2占指 (叶幕冶缘) -->
       <div class="layout-anchor-screen-right">
         <ControlPanel ref="controlPanelRefTag"
                       panel-type="tag"
@@ -120,7 +119,7 @@
       element-loading-text="正在加载数据..."
       element-loading-background="rgba(0, 0, 0, 0.7)"
     >
-      <!-- 三列横向布局 (AI展开时) | 两列布局 (默认) -->
+      <!-- 三列横向布局（AI 展开） | 两列布局（默认） -->
       <section class="left-section" :class="{ 'three-column': aiExpanded }" 
                :style="aiExpanded ? { width: splitPercentage1 + '%' } : {}">
         <!-- 地图面板 -->
@@ -147,16 +146,15 @@
           </div>
         </div>
         
-        <!-- 分隔条 (当 aiExpanded 时用于调节 Map/AI 比例，否则调节 Map/Tag 比例) -->
-        <!-- 分隔条 (当 aiExpanded 时自动隐藏，固定比例 3:2) -->
+        <!-- 分隔条（未展开 AI 时用于调整 Map/Tag 比例） -->
         <div class="splitter-inner" v-if="!aiExpanded" @mousedown="startDrag1">
           <div class="splitter-line"></div>
         </div>
         
-        <!-- 移动端 AI 面板遮罩层（点击收起） -->
+        <!-- 绉诲姩绔?AI 闈㈡澘閬僵灞傦紙鐐瑰嚮鏀惰捣锛?-->
         <div v-if="aiExpanded" class="mobile-ai-mask mobile-only-block" @click="aiExpanded = false"></div>
 
-        <!-- ǩ (ƶأAI չʱ) -->
+        <!-- 签 (贫兀AI 展时) -->
         <div class="tag-panel" 
              :style="tagPanelStyle" 
              :class="{ 
@@ -164,7 +162,7 @@
                'mobile-hidden': true,
                'panel-hidden': aiExpanded // AI 展开时隐藏标签云
              }">
-          <!-- 移动端抽屉提拉手柄 -->
+          <!-- 绉诲姩绔娊灞夋彁鎷夋墜鏌?-->
           <div class="mobile-drawer-handle mobile-only-block" @click="isTagDrawerExpanded = !isTagDrawerExpanded">
             <div class="handle-bar"></div>
           </div>
@@ -189,7 +187,7 @@
         </div>
       </section>
       
-      <!-- 右侧面板：AI 对话 - 动态宽度 -->
+      <!-- 右侧面板：AI 对话 - 动态宽度-->
       <section 
         class="right-panel ai-panel" 
         :class="{ 'panel-hidden': !aiExpanded }"
@@ -224,7 +222,7 @@
           <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
         </svg>
       </div>
-      <span class="ai-fab-text">GeoAI助手</span>
+      <span class="ai-fab-text">GeoAI鍔╂墜</span>
       <div class="ai-fab-badge" v-if="selectedFeatures.length > 0">{{ selectedFeatures.length }}</div>
     </div>
   </div>
@@ -248,8 +246,8 @@ const router = useRouter();
 // 多选区管理
 const { regions, getRegionsContext } = useRegions();
 
-// 组件引用
-// 组件引用
+// 缁勪欢寮曠敤
+// 缁勪欢寮曠敤
 const controlPanelRefMap = ref(null);
 const controlPanelRefTag = ref(null);
 const controlPanelRefMobile = ref(null);
@@ -263,8 +261,8 @@ const tagData = shallowRef([]); // 传递给 TagCloud 的数据（优化：使�
 const selectedAlgorithm = ref('basic'); // 当前选择的布局算法
 const spiralConfig = ref(null); // 螺旋布局配置
 const selectedBounds = ref(null); // 选中区域的边界
-const allPoiFeatures = shallowRef([]); // 所有加载的 POI 数据（优化：使用 shallowRef）
-const selectedFeatures = shallowRef([]); // 当前选中的 POI 集合（优化：使用 shallowRef）
+const allPoiFeatures = shallowRef([]); // 所有加载的 POI 数据（优化：使用 shallowRef
+const selectedFeatures = shallowRef([]); // 当前选中 POI 集合（优化：使用 shallowRef）
 const polygonCenter = ref(null); // 选中多边形的中心点（屏幕像素坐标）
 const selectedPolygon = ref(null); // 选中多边形的经纬度坐标数组
 const selectedCategoryPath = ref([]); // 当前选中的 POI 分类路径
@@ -279,14 +277,14 @@ const mapZoom = ref(null); // 当前地图缩放级别
 const isLoading = ref(false); // 全局/区域加载状态
 
 // 绘图模式状态
-const selectedDrawMode = ref(''); // 存储当前的绘图模式 ('Polygon' 或 'Circle')
-const circleCenterGeo = ref(null); // 存储圆心经纬度（用于地理布局校正）
+const selectedDrawMode = ref(''); // 存储当前的绘图模式('Polygon' 'Circle')
+const circleCenterGeo = ref(null); // 存储圆心经纬度（用于地理布局校正
 const circleRadiusMeters = ref(null); // Circle radius in meters for strict spatial clipping
 
 // AI 面板状态
-const aiExpanded = ref(false);  // AI 面板是否展开
-const aiPanelPercent = ref(33.33);  // AI 面板宽度百分比 (默认 1/3)
-const splitPercentage1 = ref(50);  // 分割线位置 (从左侧起算的百分比)
+const aiExpanded = ref(true); // 默认展开：左侧地图 + 右侧 AI 面板
+const aiPanelPercent = ref(33.33); // AI 面板宽度百分比（默认 1/3）
+const splitPercentage1 = ref(65); // 默认展开比例：Map 65% / AI 35%
 const isDragging1 = ref(false);
 const hSplitPercent = ref(50); // 已不再使用但保留以防依赖错误
 const isTagDrawerExpanded = ref(false); // 移动端标签云抽屉展开状态
@@ -302,7 +300,7 @@ const mapPanelStyle = computed(() => {
     };
   }
 
-  // 普通模式下：Map 宽度由 splitPercentage1 决定 (TagCloud 存在)
+  // 普通模式下：Map 宽度splitPercentage1 决定 (TagCloud 存在)
   return { 
     width: `calc(${splitPercentage1.value}% - 5px)`,
     height: '100%',
@@ -310,8 +308,8 @@ const mapPanelStyle = computed(() => {
   };
 });
 
-// 标签云面板样式（AI展开时为三列横向布局的第二列）
-// 标签云面板样式 (AI展开时隐藏，该样式仅在未展开时有效)
+// 标签云面板样式（AI 展开时为三列横向布局的第二列）
+// 标签云面板样式（AI 展开时隐藏，该样式仅在未展开时生效）
 const tagPanelStyle = computed(() => {
   if (aiExpanded.value) return { display: 'none' };
   
@@ -322,20 +320,20 @@ const tagPanelStyle = computed(() => {
   };
 });
 
-// 切换 AI 面板
+// 鍒囨崲 AI 闈㈡澘
 function toggleAiPanel() {
   aiExpanded.value = !aiExpanded.value;
   
-  // 设置默认比例
+  // 璁剧疆榛樿姣斾緥
 if (aiExpanded.value) {
-  // 展开时：默认 Map 占 65%, AI 占 35% -> 65:35 比例
+  // 灞曞紑鏃讹細榛樿 Map 鍗?65%, AI 鍗?35% -> 65:35 姣斾緥
   splitPercentage1.value = 65;
 } else {
-  // 收起时：恢复 50/50 分布
+  // 鏀惰捣鏃讹細鎭㈠ 50/50 鍒嗗竷
   splitPercentage1.value = 50;
 }
   
-  // 切换后需要多次触发 resize 确保布局正确
+  // 切换后需要多次触发resize 确保布局正确
   nextTick(() => {
     handleResize();
     // 动画期间持续触发 resize 确保渲染平滑
@@ -345,13 +343,13 @@ if (aiExpanded.value) {
       handleResize();
       if (Date.now() - startTime > duration) {
         clearInterval(interval);
-        // 最后确保一次
+        // 最后确保一
         handleResize();
         if (tagCloudRef.value && typeof tagCloudRef.value.resize === 'function') {
           tagCloudRef.value.resize();
         }
       }
-    }, 50); // 每 50ms 触发一次
+    }, 50); // 每 50ms 触发一
   });
 }
 
@@ -654,12 +652,12 @@ function resolveConstraintBounds(constraints, options = {}) {
 }
 
 function constraintToGeometryWKT(constraint, forBackend = false) {
-  // ͳһԼתΪɷ͸˵ WKTȷ̬ѡɸͬһѯ·
+  // 统一约转为煞透说 WKT确态选筛同一询路
   if (!constraint || typeof constraint !== 'object') {
     return null;
   }
 
-  // 优先使用选区原始 WKT，确保圆形等绘制边界与地图上看到的形状完全一致。
+  // 优先使用选区原始 WKT，确保圆形等绘制边界与地图上看到的形状完全一致
   if (typeof constraint.wkt === 'string' && constraint.wkt.trim()) {
     if (!forBackend || !shouldProjectToGcjForFilter) {
       return constraint.wkt.trim();
@@ -696,7 +694,7 @@ function hasManualSpatialSelection() {
 }
 
 function syncLegacySpatialStateFromConstraints() {
-  // ݾӿڣҽڵѡʱд legacy ֶΣѡʱյѡ̬
+  // 菥涌冢医诘选时写 legacy 侄危选时盏选态
   const constraints = resolveRegionConstraints();
 
   if (constraints.length !== 1) {
@@ -900,7 +898,7 @@ function boundsToBackend(bounds) {
 
 function normalizeFeatureCategoryText(feature) {
   const props = feature?.properties || {};
-  // 用 push 替代 filter().join() 减少临时数组分配，在万级 POI 场景下显著减少 GC 压力
+  // 用 push 替代 filter().join() 减少临时数组分配，在万级 POI 场景下显著减GC 压力
   const parts = [];
   if (props.name) parts.push(props.name);
   if (props['名称']) parts.push(props['名称']);
@@ -1013,7 +1011,7 @@ function isPointWithinAnyConstraint(point, constraints) {
   }
 
   return constraints.some((constraint) => {
-    // 先按边界多边形判断，确保“所见即所得”的严格裁剪结果。
+    // 先按边界多边形判断，确保“所见即所得”的严格裁剪结果
     const clipPolygon = getConstraintClipPolygon(constraint);
     if (clipPolygon.length >= 3) {
       return pointInPolygon(point, clipPolygon);
@@ -1033,7 +1031,7 @@ function filterFeaturesClientSide(features, categoryLeaves) {
     : [];
 
   const hasCategoryFilter = normalizedCategories.length > 0;
-  // 用 Set 做类别精确匹配前缀查找，替代 Array.some(includes) 的 O(m) 搜索
+  // 用 Set 做类别精确匹配前缀查找，替Array.some(includes) O(m) 搜索
   const categorySet = hasCategoryFilter ? new Set(normalizedCategories) : null;
   const constraints = resolveSpatialConstraints();
   const hasConstraintFilter = constraints.length > 0;
@@ -1041,12 +1039,12 @@ function filterFeaturesClientSide(features, categoryLeaves) {
     ? mapBounds.value
     : null;
 
-  // 快速路径：无任何过滤条件时直接返回原数组
+  // 快速路径：无任何过滤条件时直接返回原数据
   if (!hasConstraintFilter && !bounds && !hasCategoryFilter) {
     return Array.isArray(features) ? features : [];
   }
 
-  // Ԥȡ bounds ֵѭظ
+  // 预取 bounds 值循馗
   const [bMinLon, bMinLat, bMaxLon, bMaxLat] = bounds || [0, 0, 0, 0];
 
   return (Array.isArray(features) ? features : []).filter((feature) => {
@@ -1119,8 +1117,8 @@ async function refreshManualSelectionSource(options = {}) {
   const hasCategoryFilter = categoryLeaves.length > 0;
   const hasCustomArea = hasManualSpatialSelection();
 
-  // ҵԼδѡѡδѡʱֶɸѡر뱣ֿգ
-  // ҳʼʱԶȡӴ 20000 ¼ûͼһ¡
+  // 业约未选选未选时侄筛选乇氡Ｖ空?
+  // 页始时远取哟 20000 录没图一隆
   if (!hasCustomArea && !hasCategoryFilter && !allowViewportFallback) {
     return applySelectionResults([], {
       updateTagCloud,
@@ -1133,20 +1131,20 @@ async function refreshManualSelectionSource(options = {}) {
     const features = await fetchManualFilteredFeatures(categoryLeaves, { limit });
     if (requestToken !== manualFilterRequestToken) return [];
 
-    // 后端筛选结果仍进行一次前端严格裁剪，保证最终渲染 POI 100% 在约束内。
+    // 后端筛选结果仍进行一次前端严格裁剪，保证最终渲染 POI 100% 在约束内
     const strictFeatures = filterFeaturesClientSide(features, categoryLeaves);
     return applySelectionResults(strictFeatures, { updateTagCloud, fitView, keepMapHighlight });
   } catch (error) {
     if (requestToken !== manualFilterRequestToken) return [];
 
-    console.error('[App] 刷新手动筛选数据失败，回退到前端过滤:', error);
+    console.error('[App] 刷新手动筛选数据失败，回退到前端过滤', error);
     const fallbackFeatures = filterFeaturesClientSide(allPoiFeatures.value, categoryLeaves);
     applySelectionResults(fallbackFeatures, { updateTagCloud, fitView, keepMapHighlight });
 
     if (!silent) {
       ElNotification.warning({
         title: '已使用本地回退',
-        message: '后端筛选失败，已使用当前已加载数据进行近似筛选。',
+        message: '后端筛选失败，已回退为前端近似筛选。',
         offset: 80
       });
     }
@@ -1173,16 +1171,16 @@ const heatmapEnabled = ref(false); // 新增热力图同步状态
 
 // 权重渲染状态
 const weightEnabled = ref(false); // 是否启用权重渲染
-const showWeightValue = ref(false); // 是否显示权重值
+const showWeightValue = ref(false); // 鏄惁鏄剧ず鏉冮噸鍊?
 
-// 全域感知模式（开启后 AI 将综合分析所有类别 POI）
+// 全域感知模式（开启后 AI 将综合分析所有类型POI
 const globalAnalysisEnabled = ref(false);
 
 /**
  * 节流函数工具
- * ƸƵ¼ͼƶĴƵ
+ * 聘频录图贫拇频
  * @param {Function} func - 需要节流的函数
- * @param {number} limit - ʱ룩
+ * @param {number} limit - 时耄?
  */
 function throttle(func, limit) {
   let inThrottle;
@@ -1199,14 +1197,14 @@ function throttle(func, limit) {
 
 /**
  * 计算属性：过滤后的标签数据
- * 如果开启了实时过滤，则只显示当前地图视野内的 POI
- * 否则显示所有 tagData 中的数据（通常是绘图选中的数据）
+ * 如果开启了实时过滤，则只显示当前地图视野内个 POI
+ * 否则显示所有tagData 中的数据（通常是绘图选中的数据）
  */
 const filteredTagData = computed(() => {
   if (!filterEnabled.value || !mapBounds.value) {
     return tagData.value;
   }
-  // ԤȡҰ߽磬ѭظ
+  // 预取野呓纾?
   const [minLon, minLat, maxLon, maxLat] = mapBounds.value;
   return tagData.value.filter(f => {
     const coords = f.geometry.coordinates;
@@ -1228,7 +1226,7 @@ const mapPoiFeatures = computed(() => {
 watch(
   () => regions.value.map(region => `${region.id}:${region.type}:${region.boundaryWKT || ''}`).join('|'),
   () => {
-    // ѡģʽάѡ״̬ boundary/Բʵѡһ¡
+    // 选模式维选状态 boundary/圆实选一隆
     syncLegacySpatialStateFromConstraints();
   },
   { immediate: true }
@@ -1243,7 +1241,7 @@ onMounted(() => {
   tagData.value = [];
 });
 
-// 开始拖拽 - 地图/标签云分隔条
+// 开始拖- 地图/标签云分隔条
 function startDrag1(e) {
   if (e) e.preventDefault();
   isDragging1.value = true;
@@ -1265,7 +1263,7 @@ function onDrag(e) {
   const x = e.clientX - rect.left;
   const totalWidth = rect.width;
   
-  // 计算百分比并限制范围
+  // 璁＄畻鐧惧垎姣斿苟闄愬埗鑼冨洿
   let newPercent = (x / totalWidth) * 100;
   newPercent = Math.max(10, Math.min(90, newPercent));
   splitPercentage1.value = newPercent;
@@ -1274,7 +1272,7 @@ function onDrag(e) {
   handleResize();
 }
 
-// 停止拖拽
+// 鍋滄鎷栨嫿
 function stopDrag() {
   if (isDragging1.value) {
     isDragging1.value = false;
@@ -1288,7 +1286,7 @@ function stopDrag() {
   }
 }
 
-// 处理窗口大小调整，更新地图尺寸
+// 处理窗口大小调整，更新地图尺
 const handleResize = () => {
   if (map.value && typeof map.value.updateSize === 'function') {
     map.value.updateSize();
@@ -1335,15 +1333,15 @@ const handleRunAlgorithm = async (payload) => {
  */
 const handleDataLoaded = (payload) => {
   if (payload && payload.success && payload.features) {
-    // 构造新数据组
+    // 构造新数据
     const newGroup = { 
       name: payload.name, 
-      category: payload.category || payload.name, // 使用 category 作为唯一标识
+      category: payload.category || payload.name, // 浣跨敤 category 浣滀负鍞竴鏍囪瘑
       features: payload.features 
     };
     
     // 始终采用叠加/追加模式
-    // 检查该类别是否已加载
+    // 检查该类别是否已加
     const existsIndex = activeGroups.value.findIndex(g => g.category === newGroup.category);
     
     if (existsIndex >= 0) {
@@ -1356,7 +1354,7 @@ const handleDataLoaded = (payload) => {
     
     updateAllPoiFeatures();
 
-    // 分类数据变更后，重新同步“可分析 POI 池”，保证 AI 计数与词云来源一致。
+    // 分类数据变更后，重新同步“可分析 POI 池”，保证 AI 计数与词云来源一致
     const hasCategoryFilter = getSelectedCategoryLeaves(selectedCategoryPath.value).length > 0;
     const hasCustomArea = hasManualSpatialSelection();
     if (hasCategoryFilter || hasCustomArea) {
@@ -1398,12 +1396,12 @@ const handleDataRemoved = (categoryToRemove) => {
 
 
 /**
- * 更新所有 POI 特征，合并所有活动分组并分配颜色索引
+ * 更新所有POI 特征，合并所有活动分组并分配颜色索引
  */
 function updateAllPoiFeatures() {
   let merged = [];
   activeGroups.value.forEach((group, index) => {
-    // 为每个 feature 添加 _groupIndex 属性
+    // 为每个feature 添加 _groupIndex 属
     const taggedFeatures = group.features.map(f => {
       const newProps = { ...f.properties, _groupIndex: index };
       return { ...f, properties: newProps };
@@ -1412,7 +1410,7 @@ function updateAllPoiFeatures() {
   });
   allPoiFeatures.value = merged;
   
-  // MapContainer 组件会自动监听 poiFeatures 变化并根据当前 geometry 重新筛选
+  // MapContainer 组件会自动监听poiFeatures 变化并根据当前geometry 重新筛选
 }
 
 
@@ -1427,7 +1425,7 @@ async function handleWeightChange(payload) {
   weightEnabled.value = payload.enabled;
   showWeightValue.value = payload.showValue;
   
-  // 如果需要加载栅格
+  // 如果需要加载栅
   if (payload.needLoad && payload.enabled) {
     if (!tagCloudRef.value) {
       ElNotification.error({ title: '错误', message: '标签云组件未就绪', offset: 80 });
@@ -1445,7 +1443,7 @@ async function handleWeightChange(payload) {
         weightEnabled.value = false;
       }
     } catch (error) {
-      console.error('[App] 栅格加载失败:', error);
+      console.error('[App] 鏍呮牸鍔犺浇澶辫触:', error);
       ElNotification.error({ title: '错误', message: '栅格加载失败', offset: 80 });
       weightEnabled.value = false;
     }
@@ -1456,7 +1454,7 @@ async function handleWeightChange(payload) {
 
 const handleSearch = async (keyword) => {
   if (!keyword || !keyword.trim()) {
-    // 恢复显示所有选中点
+    // 恢复显示所有选中
     tagData.value = selectedFeatures.value;
     if (mapComponent.value) {
       mapComponent.value.showHighlights(selectedFeatures.value, { full: true });
@@ -1484,7 +1482,7 @@ const handleSearch = async (keyword) => {
       ? singleConstraint.radius
       : circleRadiusMeters.value;
 
-    // 构建空间上下文
+    // 构建空间上下
     // 优先使用绘制/上传的多边形选区，其次是当前地图视野
     const spatialContext = {
       viewport: mapBounds.value,
@@ -1500,17 +1498,17 @@ const handleSearch = async (keyword) => {
       }))
     };
     
-    // 调用智能语义搜索（自动判断走快速路径还是 RAG）
+    // 调用智能语义搜索（自动判断走快速路径还RAG
     const result = await semanticSearch(keyword.trim(), [], { 
       spatialContext,
       colorIndex: 0 
     });
     
-    // 如果需要 AI 助手处理（复杂查询）
+    // 如果需要AI 助手处理（复杂查询）
     if (result.needsAiAssistant) {
-      ElNotification.info({ title: 'AI 助手', message: '检测到复杂查询，正在启动 AI 助手...', offset: 80 });
+      ElNotification.info({ title: 'AI 助手', message: '检测到复杂查询，正在启动AI 助手...', offset: 80 });
       
-      // 1. 展开 AI 面板
+      // 1. 灞曞紑 AI 闈㈡澘
       if (!aiExpanded.value) {
         toggleAiPanel();
       }
@@ -1538,14 +1536,14 @@ const handleSearch = async (keyword) => {
     }
     
     if (filtered.length > 0) {
-      const expandInfo = result.expandedTerms?.length > 1 
-        ? ` (同义词扩展: ${result.expandedTerms.slice(0, 3).join(', ')}...)` 
+      const expandInfo = result.expandedTerms?.length > 1
+        ? ` (同义词扩展: ${result.expandedTerms.slice(0, 3).join(', ')}...)`
         : '';
       ElNotification.success({ title: '搜索完成', message: `搜索完成，找到 ${filtered.length} 条相关信息！${expandInfo}`, offset: 80 });
       // 通知子组件有搜索结果
       if (controlPanelRefMap.value?.setSearchResult) controlPanelRefMap.value.setSearchResult(true);
     } else {
-      ElNotification.warning({ title: '未找到结果', message: `未找到与「${keyword}」相关的 POI`, offset: 80 });
+      ElNotification.warning({ title: '未找到结果', message: `未找到与“${keyword}”相关的 POI`, offset: 80 });
       if (controlPanelRefMap.value?.setSearchResult) controlPanelRefMap.value.setSearchResult(false);
     }
   } catch (error) {
@@ -1556,7 +1554,7 @@ const handleSearch = async (keyword) => {
 };
 
 const handleClearSearch = () => {
-  // 恢复显示所有选中点
+  // 恢复显示所有选中
   tagData.value = selectedFeatures.value;
   // 通知子组件清除搜索结果
   if (controlPanelRefMap.value?.setSearchResult) controlPanelRefMap.value.setSearchResult(false);
@@ -1567,8 +1565,8 @@ const handleClearSearch = () => {
 };
 
 /**
- * 处理 AI 标签云的"渲染至地图"事件
- * @param {Array} pois - 从标签云传来的 POI 数组
+ * 处理 AI 标签云的"渲染至地图事件
+ * @param {Array} pois - 从标签云传来的POI 数组
  */
 function handleRenderPoisToMap(pois) {
   if (!pois || pois.length === 0) {
@@ -1576,21 +1574,21 @@ function handleRenderPoisToMap(pois) {
     return;
   }
   
-  console.log('[App] AI 标签云渲染 POI 到地图:', pois.length);
+  console.log('[App] AI 标签云渲染 POI 到地图', pois.length);
   
-  // 将 POI 数据转换为 GeoJSON Feature 格式（如果需要）
+  // 个 POI 数据转换为GeoJSON Feature 格式（如果需要）
   const features = pois.map(poi => {
-    // 如果已经是 GeoJSON Feature 格式
+    // 如果已经是GeoJSON Feature 格式
     if (poi.type === 'Feature' && poi.geometry) {
       return poi;
     }
     
-    // 如果是后端返回的简化格式，转换为 GeoJSON
+    // 如果是后端返回的简化格式，转换为GeoJSON
     const lon = poi.lon || poi.longitude || poi.geometry?.coordinates?.[0];
     const lat = poi.lat || poi.latitude || poi.geometry?.coordinates?.[1];
     
     if (!lon || !lat) {
-      console.warn('[App] POI 缺少坐标:', poi.name);
+      console.warn('[App] POI 缂哄皯鍧愭爣:', poi.name);
       return null;
     }
     
@@ -1602,11 +1600,11 @@ function handleRenderPoisToMap(pois) {
       },
       properties: {
         名称: poi.name || poi.名称 || '未知',
-        大类: poi.type || poi.大类 || '',
-        小类: poi.小类 || poi.category || '',
-        // 保留原始属性
+        澶х被: poi.type || poi.澶х被 || '',
+        灏忕被: poi.灏忕被 || poi.category || '',
+        // 保留原始属
         ...poi.properties,
-        // 标记来源
+        // 鏍囪鏉ユ簮
         _source: 'ai_tagcloud'
       }
     };
@@ -1631,7 +1629,7 @@ function handleRenderPoisToMap(pois) {
   }
   
   ElNotification.success({ 
-    title: '渲染成功', 
+    title: '娓叉煋鎴愬姛', 
     message: `已将 ${features.length} 个 POI 渲染到地图`, 
     offset: 80 
   });
@@ -1829,8 +1827,8 @@ function handleAiAnalysisStats(stats) {
 
 /**
  * 保存筛选结果为 CSV 文件
- * 优先级逻辑：
- * 1. 如果有搜索/筛选后的 tagData（标签云数据），保存 tagData
+ * 优先级逻辑
+ * 1. 如果有搜筛选后tagData（标签云数据），保存 tagData
  * 2. 如果没有 tagData 但有 selectedFeatures（绘制工具选中的点），保存 selectedFeatures
  * 3. 如果都没有，则没有可保存的数据
  */
@@ -1838,26 +1836,26 @@ function handleSaveResult() {
   let features = [];
   let dataSource = '';
   
-  console.log('[App] 保存检查 - tagData:', tagData.value?.length, 
+  console.log('[App] 保存检查- tagData:', tagData.value?.length, 
               'selectedFeatures:', selectedFeatures.value?.length,
               'filteredTagData:', filteredTagData.value?.length);
 
-  // 优先级 1: 如果开启了视野过滤且有数据
+  // 优先级1: 如果开启了视野过滤且有数据
   if (filterEnabled.value && filteredTagData.value && filteredTagData.value.length > 0) {
     features = filteredTagData.value;
     dataSource = '视野内筛选';
   }
-  // 优先级 2: 标签云/搜索结果数据
+  // 优先级2: 标签云搜索结果数据
   else if (tagData.value && tagData.value.length > 0) {
     features = tagData.value;
     dataSource = '标签云数据';
   }
-  // 优先级 3: 绘制工具选中的点（地图上高亮显示的点）
+  // 优先级3: 绘制工具选中的点（地图上高亮显示的点击
   else if (selectedFeatures.value && selectedFeatures.value.length > 0) {
     features = selectedFeatures.value;
     dataSource = '绘制选中区域';
   }
-  // 优先级 4: 所有加载的数据
+  // 优先级4: 所有加载的数据
   else if (allPoiFeatures.value && allPoiFeatures.value.length > 0) {
     features = allPoiFeatures.value;
     dataSource = '全部加载数据';
@@ -1882,7 +1880,7 @@ function handleSaveResult() {
     csvContent += `"${name}","${bigCategory}","${midCategory}","${smallCategory}",${coords[0]},${coords[1]}\n`;
   });
   
-  // 创建并下载文件
+  // 鍒涘缓骞朵笅杞芥枃浠?
   const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' }); // BOM for Excel
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
@@ -1893,40 +1891,40 @@ function handleSaveResult() {
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
   
-  ElNotification.success({ title: '保存成功', message: `已保存 ${features.length} 条 POI 数据 (${dataSource})`, offset: 80 });
+  ElNotification.success({ title: '保存成功', message: `已保存${features.length} 个 POI 数据 (${dataSource})`, offset: 80 });
 }
 
 /**
- * 处理开启/关闭绘制模式
- * @param {Object|boolean} payload - 包含模式信息的对象或布尔值(旧版)
+ * 处理开启关闭绘制模式
+ * @param {Object|boolean} payload - 包含模式信息的对象或布尔旧版)
  */
 const handleToggleDraw = (payload) => {
   if (!mapComponent.value) return;
   
-  // 支持布尔值（旧版兼容）和对象负载
+  // 鏀寔甯冨皵鍊硷紙鏃х増鍏煎锛夊拰瀵硅薄璐熻浇
   const enabled = (typeof payload === 'object') ? payload.active : payload;
   const mode = (typeof payload === 'object') ? payload.mode : 'Polygon';
 
   if (enabled) {
-    console.log(`[App] 开启绘制模式: ${mode}`);
+    console.log(`[App] 开启绘制模式 ${mode}`);
     mapComponent.value.openPolygonDraw(mode);
   } else {
-    console.log('[App] 关闭绘制模式');
+    console.log('[App] 鍏抽棴缁樺埗妯″紡');
     mapComponent.value.closePolygonDraw();
   }
 };
 
 /**
- * 处理实时过滤开关切换
+ * 处理实时过滤开关切
  * @param {boolean} enabled - 是否开启
  */
 const handleToggleFilter = (enabled) => {
   filterEnabled.value = enabled;
-  console.log('[App] ʵʱ״̬:', enabled ? '' : 'ر');
+  console.log('[App] 实时状态:', enabled ? '' : '乇');
   if (!enabled) {
     // 关闭时重置或保持当前状态
   } else {
-    // 开启时可能需要立即触发一次更新
+    // 开启时可能需要立即触发一次更
     if (mapComponent.value) {
        // mapComponent.value.emitBounds(); // 如果需要立即更新边界
     }
@@ -1939,7 +1937,7 @@ const handleToggleFilter = (enabled) => {
  */
 const handleGlobalAnalysisChange = (enabled) => {
   globalAnalysisEnabled.value = enabled;
-  console.log('[App] ȫ֪ģʽ:', enabled ? '' : 'ر');
+  console.log('[App] 全域感知模式:', enabled ? '开启' : '关闭');
 };
 
 /**
@@ -1990,26 +1988,26 @@ const handleFeatureClick = (feature) => {
 
 /**
  * 处理要素定位请求
- * 当在 TagCloud 点击标签时，只有地图飞向该 POI
- * @param {Object} feature - 目标要素对象
+ * 当在 TagCloud 点击标签时，只有地图飞向个 POI
+ * @param {Object} feature - 鐩爣瑕佺礌瀵硅薄
  */
 const handleFeatureLocate = (feature) => {
-  console.log('[App] 定位到地图要素');
+  console.log('[App] 定位到地图要素:', feature);
   
-  // 1. 更新高亮状态（橙色高亮）
+  // 1. 更新高亮状态（橙色高亮
   hoveredFeatureId.value = feature;
   
-  // 2. 地图飞向该 POI（TagCloud 不动）
+  // 2. 地图飞向个 POI（TagCloud 不动
   if (mapComponent.value) {
     mapComponent.value.flyTo(feature);
   }
 };
 
 /**
- * 处理多边形/圆形绘制完成
- * 接收地图组件筛选出的 POI 数据
+ * 处理多边界圆形绘制完成
+ * 接收地图组件筛选出个 POI 数据
  * 注意：绘制完成后仅保存选中数据，不自动渲染标签云
- * 用户需要点击"渲染标签云"按钮才会渲染
+ * 用户需要点击渲染标签云按钮才会渲染
  * @param {Object} payload - { polygon, center, selected, type, circleCenter, polygonCenter }
  */
 
@@ -2020,7 +2018,7 @@ const handlePolygonCompleted = async (payload) => {
   polygonCenter.value = payload?.center || null;
   selectedPolygon.value = Array.isArray(payload?.polygon) ? payload.polygon : null;
 
-  // 保留绘制模式与中心点，供词云布局和 AI 上下文使用。
+  // 保留绘制模式与中心点，供词云布局与 AI 上下文使用
   selectedDrawMode.value = payload?.type || 'Polygon';
   circleCenterGeo.value = payload?.circleCenter || payload?.polygonCenter || null;
   circleRadiusMeters.value = Number.isFinite(Number(payload?.circleRadius))
@@ -2028,9 +2026,9 @@ const handlePolygonCompleted = async (payload) => {
     : null;
   syncLegacySpatialStateFromConstraints();
 
-  console.log(`[App] 绘制完成 (${selectedDrawMode.value})，初筛 ${inside.length} 个要素`);
+  console.log(`[App] 绘制完成 (${selectedDrawMode.value})，初${inside.length} 个要素`);
 
-  // 同步控制面板状态，避免继续停留在绘制模式。
+  // 同步控制面板状态，避免继续停留在绘制模式
   if (controlPanelRefTag.value) {
     controlPanelRefTag.value.setDrawEnabled(false);
   }
@@ -2038,7 +2036,7 @@ const handlePolygonCompleted = async (payload) => {
     controlPanelRefMobile.value.setDrawEnabled(false);
   }
 
-  // ʹͳһԼȡ POI֤ѡ + 𡱰Ч
+  // 使统一约取 POI证选 + 稹卑效
   const refreshed = await refreshManualSelectionSource({
     updateTagCloud: false,
     fitView: false,
@@ -2063,7 +2061,7 @@ const handlePolygonCompleted = async (payload) => {
 };
 
 const handleRegionRemoved = async () => {
-  // ɾһѡ㲢ԼֵͼλԴ AI һ¡
+  // 删一选悴⒃贾低嘉辉?AI 一隆
   polygonCenter.value = null;
   syncLegacySpatialStateFromConstraints();
 
@@ -2076,7 +2074,7 @@ const handleRegionRemoved = async () => {
 };
 
 const handleRegionsCleared = async () => {
-  // ѡ˵ĬϲԣҰ + Լ¾ɵı߽״̬
+  // 选说默喜裕野 + 约戮傻谋呓状态
   polygonCenter.value = null;
   syncLegacySpatialStateFromConstraints();
 
@@ -2089,16 +2087,16 @@ const handleRegionsCleared = async () => {
 };
 
 /**
- * 处理地图初始化完成
+ * 处理地图初始化完
  * 获取 OpenLayers 地图实例引用
  */
 const handleMapReady = (mapInstance) => {
-  console.log('[App] 地图初始化完成:', mapInstance);
+  console.log('[App] 地图初始化完', mapInstance);
   map.value = mapInstance;
 };
 
 /**
- * 调试显示：渲染当前分组的所有 POI 为高亮
+ * 调试显示：渲染当前分组的所有POI 为高
  */
 function handleDebugShow(groupName) {
   if (!allPoiFeatures.value.length) {
@@ -2112,7 +2110,7 @@ function handleDebugShow(groupName) {
 
 /**
  * 处理上传的矢量面文件
- * 将上传的 GeoJSON 多边形渲染到地图上，并筛选 POI
+ * 将上传的 GeoJSON 多边形渲染到地图上，并筛选POI
  */
 // 处理上传的矢量面文件
 function handleVectorPolygonUploaded(feature) {
@@ -2123,7 +2121,7 @@ function handleVectorPolygonUploaded(feature) {
     return;
   }
   
-  // 获取多边形坐标
+  // 鑾峰彇澶氳竟褰㈠潗鏍?
   const geomType = feature.geometry.type;
   let coordinates;
   
@@ -2137,12 +2135,12 @@ function handleVectorPolygonUploaded(feature) {
   }
   
   // 调用 MapContainer 来渲染多边形并触发筛选
-  // 注意：MapContainer 内部现在会自动触发 onPolygonComplete，从而发射 polygon-completed 事件
-  // ﲻҪֶɸѡ
+  // 注意：MapContainer 内部现在会自动触发onPolygonComplete，从而发polygon-completed 事件
+  // 锊灰渡秆?
   if (mapComponent.value && mapComponent.value.addUploadedPolygon) {
     mapComponent.value.addUploadedPolygon(coordinates);
     // 移除重复提示
-    // ElNotification.success({ title: '成功', message: '已应用选区，正在筛选...', offset: 80 });
+    // ElNotification.success({ title: '成功', message: '已应用选区，正在筛选..', offset: 80 });
   } else {
     ElNotification.warning({ title: '提示', message: '地图组件未就绪', offset: 80 });
   }
@@ -2150,19 +2148,19 @@ function handleVectorPolygonUploaded(feature) {
 
 /**
  * 处理 AI 请求渲染到标签云
- * @param {Array} data - POI 名称数组 或 GeoJSON Feature 数组
+ * @param {Array} data - POI 名称数组 为 GeoJSON Feature 数组
  */
 function handleRenderAIResult(data) {
   if (!data || data.length === 0) return;
   
   let featuresToRender = [];
 
-  // 情况1: 传递的是 Feature 数组 (后端搜索结果)
+  // 情况1: 传递的Feature 数组 (后端搜索结果)
   if (typeof data[0] === 'object' && data[0].type === 'Feature') {
     featuresToRender = data;
     console.log('[App] 渲染外部 POI 数据:', featuresToRender.length);
   } 
-  // 2: ݵ (߼)
+  // 2: 莸 (呒)
   else if (typeof data[0] === 'string') {
     const nameSet = new Set(data);
     featuresToRender = allPoiFeatures.value.filter(p => 
@@ -2177,17 +2175,17 @@ function handleRenderAIResult(data) {
 
   // 更新选中数据
   selectedFeatures.value = featuresToRender;
-  // 关键修复：同时更新 tagData，确保标签云组件能够渲染这些数据
+  // 关键修复：同时更tagData，确保标签云组件能够渲染这些数据
   tagData.value = featuresToRender;
   
-  // 对于搜索结果，强制设置为第5组颜色（紫色），以区分常规数据
+  // 对于搜索结果，强制设置为组颜色（紫色），以区分常规数据
   featuresToRender.forEach(f => {
     if (f.properties) f.properties._groupIndex = 4;
   });
 
   // 联动地图高亮
   if (mapComponent.value) {
-    // ⲿݣҪڵͼ϶
+    // 獠枯Ｒ低枷?
     mapComponent.value.showHighlights(featuresToRender, { 
       fitView: true,
       clearPrevious: true 
@@ -2201,14 +2199,14 @@ function handleRenderAIResult(data) {
 
 /**
  * 初始化：清空所有数据
- * 重置所有状态到初始值
+ * 重置所有状态到初始
  */
 
 function handleReset() {
-  // ȡڽеɸѡ󣬱úɽд
+  // 取诮械筛选螅煤山写
   manualFilterRequestToken++;
 
-  // 清空词云与 AI 分析数据源。
+  // 清空词云AI 分析数据源
   tagData.value = [];
   selectedFeatures.value = [];
   polygonCenter.value = null;
@@ -2216,25 +2214,25 @@ function handleReset() {
   hoveredFeatureId.value = null;
   clickedFeatureId.value = null;
 
-  // 重置绘制状态。
+  // 重置绘制状态
   selectedDrawMode.value = '';
   circleCenterGeo.value = null;
   circleRadiusMeters.value = null;
 
-  // 清空分类约束与已加载分组，并同步三个控制面板。
+  // 清空分类约束与已加载分组，并同步三个控制面板
   selectedCategoryPath.value = [];
   activeGroups.value = [];
   allPoiFeatures.value = [];
   syncCategorySelectors([]);
 
-  // 清空地图上的选区和高亮。
+  // 清空地图上的选区和高亮
   if (mapComponent.value) {
     mapComponent.value.clearAllRegionsFromMap?.();
     mapComponent.value.clearPolygon();
     mapComponent.value.closePolygonDraw();
   }
 
-  // ÿ尴ť̬
+  // 每灏磁ヌ?
   if (controlPanelRefTag.value) {
     controlPanelRefTag.value.setDrawEnabled(false);
     controlPanelRefTag.value.setSearchResult(false);
@@ -2269,7 +2267,7 @@ html, body, #app {
   scrollbar-color: rgba(99, 102, 241, 0.3) transparent;
 }
 
-/* 全量统一的 Mesh 渐变背景，增强整体感 */
+/* 鍏ㄩ噺缁熶竴鐨?Mesh 娓愬彉鑳屾櫙锛屽寮烘暣浣撴劅 */
 .app-layout {
   display: flex;
   flex-direction: column;
@@ -2284,7 +2282,7 @@ html, body, #app {
   background-attachment: fixed;
 }
 
-/* .top-controls 已移除 */
+/* .top-controls 已移除*/
 
 .fixed-top-header {
   flex: 0 0 68px;
@@ -2311,7 +2309,7 @@ html, body, #app {
 }
 
 .header-logo {
-  position: absolute; /* ̶࣬ flex Էص */
+  position: absolute; /* 潭啵?flex 苑氐 */
   left: 40px;
   display: flex;
   align-items: center;
@@ -2319,47 +2317,38 @@ html, body, #app {
   z-index: 2001;
 }
 
-/* --- 全新绝对定位布局系统 --- */
+/* --- 鍏ㄦ柊缁濆瀹氫綅甯冨眬绯荤粺 --- */
 
 /* 锚点1：数据发现组 */
-/* ߼Right 뵽 50% (Ļ)ݴ */
+/* 呒Right 氲?50% (幕)荽 */
 .layout-anchor-center-left {
   position: absolute;
   top: 0;
   bottom: 0;
-  right: 50%; /* 右边缘贴紧屏幕中线 */
+  right: 50%; /* 右边缘贴紧屏幕中*/
   display: flex;
   align-items: center;
   padding-right: 24px; /* 距离中线分隔符的间距 */
   
-  /* ؼȣֹײ Logo (240px + some buffer) */
+  /* 丶龋止撞 Logo (240px + some buffer) */
   max-width: calc(50vw - 260px); 
   white-space: nowrap; /* 防止内容换行 */
 }
 
 /* 锚点2：空间指挥组 */
-/* ߼Right 뵽 0 (ĻԵ)ݴ */
+/* 呒Right 氲?0 (幕缘)荽 */
 .layout-anchor-screen-right {
   position: absolute;
   top: 0;
   bottom: 0;
-  right: 0; /* 右边缘贴紧屏幕 */
+  right: 0; /* 右边缘贴紧屏*/
   display: flex;
   align-items: center;
-  padding-right: 40px; /* 距离屏幕边缘的安全距离 */
+  padding-right: 40px; /* 距离屏幕边缘的安全间距 */
   white-space: nowrap;
 }
 
-/* 物理中线 */
-.layout-divider-center {
-  position: absolute;
-  left: 50%;
-  top: 22px;
-  bottom: 22px;
-  width: 1px;
-  background: rgba(255, 255, 255, 0.12);
-  transform: translateX(-50%); /* 精准居中 */
-}
+/* 中线分隔（已移除） */
 
 /* Logo 区域 */
 .header-logo {
@@ -2437,7 +2426,7 @@ html, body, #app {
 }
 
 .version-badge {
-  font-size: 13px; /* 字体加大 */
+  font-size: 13px; /* 瀛椾綋鍔犲ぇ */
   margin-top: 4px;
   color: #818cf8;
   font-weight: 700;
@@ -2451,8 +2440,8 @@ html, body, #app {
   color: #fbbf24;
 }
 
-/* 控制区整体框架 */
-/* 已重构为 section-discovery 和 section-command */
+/* 控制区整体框*/
+/* 已重构为 section-discovery 与 section-command */
 
 .control-group {
   display: flex;
@@ -2510,17 +2499,17 @@ html, body, #app {
 /* 左侧区域（包含地图和标签云） */
 .left-section {
   display: flex;
-  flex-direction: row; /* 默认模式：左右分布 */
+  flex-direction: row; /* 默认模式：左右分*/
   height: 100%;
   overflow: hidden;
   flex: 1;
   background: transparent;
 }
 
-/* 三列模式：地图 | 标签云 | AI面板 */
+/* 三列模式：地图| 标签云| AI面板 */
 .left-section.three-column {
   flex-direction: row; 
-  flex: none; /* 由 style 绑定的百分比控制宽度 */
+  flex: none; /* 鐢?style 缁戝畾鐨勭櫨鍒嗘瘮鎺у埗瀹藉害 */
 }
 
 .left-section {
@@ -2538,7 +2527,7 @@ html, body, #app {
               flex 0.6s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-/* 标签云面板 - 增强一体化 */
+/* 标签云面板- 增强一体化 */
 .tag-panel {
   overflow: hidden;
   background: rgba(15, 23, 42, 0.6); /* 半透明背景，透出全局 mesh */
@@ -2558,6 +2547,7 @@ html, body, #app {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
   background: linear-gradient(180deg, #0a0f1a 0%, #111827 100%);
 }
 
@@ -2584,13 +2574,16 @@ html, body, #app {
 
 .panel-content {
   flex: 1;
+  display: flex;
+  flex-direction: column;
   position: relative;
   overflow: hidden;
   width: 100%;
   height: 100%;
+  min-height: 0;
 }
 
-/* 垂直分隔条 */
+/* 鍨傜洿鍒嗛殧鏉?*/
 .splitter {
   width: 10px;
   background: linear-gradient(180deg, #2c3e50 0%, #1a252f 100%);
@@ -2608,8 +2601,8 @@ html, body, #app {
   color: #fff;
 }
 
-/* 统一分隔条样式 */
-/* 现代感分隔条 */
+/* 缁熶竴鍒嗛殧鏉℃牱寮?*/
+/* 鐜颁唬鎰熷垎闅旀潯 */
 .splitter-inner {
   width: 14px;
   min-width: 14px;
@@ -2648,16 +2641,16 @@ html, body, #app {
 }
 
 .ai-panel {
-  border-left: none !important; /* 我们使用 ai-border-line */
+  border-left: none !important; /* 鎴戜滑浣跨敤 ai-border-line */
 }
 
-/* 隐藏旧类名 */
+/* 隐藏旧类型*/
 .splitter, .splitter-ai, .splitter-horizontal {
   display: none !important;
 }
 
 
-/* AI 浮动按钮 */
+/* AI 娴姩鎸夐挳 */
 
 .ai-fab {
   position: fixed;
@@ -2752,7 +2745,7 @@ html, body, #app {
     overflow: hidden;
   }
   
-  /* 移动端地图全屏 */
+  /* 移动端地图全屏*/
   .left-section {
     width: 100% !important;
     height: 100% !important;
@@ -2768,12 +2761,12 @@ html, body, #app {
     z-index: 1;
   }
   
-  /* ƶ˱ǩƣ߼UI ʱ */
+  /* 贫吮签疲呒UI 时 */
   .tag-panel.mobile-hidden {
     display: none !important;
   }
 
-  /* 移动端 AI 面板遮罩 */
+  /* 绉诲姩绔?AI 闈㈡澘閬僵 */
   .mobile-ai-mask {
     position: fixed;
     top: 0;
@@ -2785,7 +2778,7 @@ html, body, #app {
     z-index: 1500;
   }
   
-  /* 移动端展开AI时：使用抽屉式全屏覆盖，平齐 Head 栏 */
+  /* 移动端展开AI时：使用抽屉式全屏覆盖，平齐 Head 栏*/
   .bottom-split.ai-expanded .right-panel {
     position: absolute;
     top: 68px; /* 进一步向上调整以对齐 header */
@@ -2807,7 +2800,7 @@ html, body, #app {
     to { transform: translateY(0); }
   }
 
-  /* 隐藏分隔条 */
+  /* 闅愯棌鍒嗛殧鏉?*/
   .splitter-inner, .splitter-line, .ai-border-line {
     display: none !important;
   }
@@ -2844,11 +2837,11 @@ html, body, #app {
 
 </style>
 
-<!-- ȫַǸʽǿƸ Element Plus Ĭ -->
+<!-- 全址歉式强聘 Element Plus 默 -->
 <style>
 /* 终极弹窗美化：科技极简，大道至简 */
 body .el-overlay .el-dialog.mirspatial-dialog {
-  background: #0b1120 !important; /* 更深邃、稳定的专业色 */
+  background: #0b1120 !important; /* 更深邃、稳定的专业*/
   backdrop-filter: blur(24px) !important;
   border: 1px solid rgba(255, 255, 255, 0.08) !important;
   border-radius: 12px !important;
@@ -2917,4 +2910,6 @@ body .el-overlay .el-dialog.mirspatial-dialog .el-button--primary {
   display: none !important;
 }
 </style>
+
+
 

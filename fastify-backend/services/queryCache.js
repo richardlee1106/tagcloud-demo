@@ -1,122 +1,392 @@
-/**
- * Phase 2 优化：查询结果缓存
- * 
- * 职责：
- * - 基于查询指纹缓存 Executor 结果
- * - 减少重复查询的计算开销
- * - 支持 TTL 自动过期
- * - 支持缓存命中统计
+﻿/**
+ * 查询结果缓存（L1 + L2）
+ *
+ * - L1: 进程内存缓存
+ * - L2: Redis 缓存（可选）
+ * - 防击穿: 指纹级短锁，避免并发回源重复计算
  */
 
 import { createHash } from 'crypto'
+import IORedis from 'ioredis'
 import h3 from 'h3-js'
+import telemetry from './telemetry.js'
 
-// 缓存存储（简单内存实现，生产环境建议使用 Redis）
-const cache = new Map()
+const l1Cache = new Map()
+const inFlightLocks = new Map()
 
-// 缓存统计
-const stats = {
-  hits: 0,
-  misses: 0,
-  sets: 0,
-  evictions: 0
-}
+let l2Client = null
+let l2InitPromise = null
 
-// 缓存配置
 const CACHE_CONFIG = {
-  // 不同类型查询的 TTL（毫秒）
   ttl: {
-    poi_search: 3 * 60 * 1000,      // POI 搜索：3 分钟
-    area_analysis: 10 * 60 * 1000,  // 区域分析：10 分钟
-    region_comparison: 10 * 60 * 1000, // 选区对比：10 分钟
-    default: 5 * 60 * 1000          // 默认：5 分钟
+    poi_search: 3 * 60 * 1000,
+    area_analysis: 10 * 60 * 1000,
+    region_comparison: 10 * 60 * 1000,
+    default: 5 * 60 * 1000
   },
-  
-  // 最大缓存条目数
   maxEntries: 500,
-
-  // 内存硬上限（字节），超过时强制淘汰最旧条目
-  // Ĭ 128MBͨ QUERY_CACHE_MAX_MEMORY_MB 
   maxMemoryBytes: (parseInt(process.env.QUERY_CACHE_MAX_MEMORY_MB || '128', 10)) * 1024 * 1024,
-  
-  // 空间指纹的 H3 分辨率（用于归一化空间坐标）
-  h3Resolution: 7, // ~1.2km 边长的六边形
-  
-  // 半径归一化步长（米）
-  radiusBucket: 500
+  h3Resolution: 7,
+  radiusBucket: 500,
+  l2Enabled: String(process.env.QUERY_CACHE_L2_ENABLED || 'true').toLowerCase() !== 'false',
+  l2KeyPrefix: process.env.QUERY_CACHE_L2_PREFIX || 'spatial:query-cache:',
+  lockTtlMs: Math.max(1000, parseInt(process.env.QUERY_CACHE_LOCK_TTL_MS || '6000', 10)),
+  lockWaitTimeoutMs: Math.max(500, parseInt(process.env.QUERY_CACHE_LOCK_WAIT_TIMEOUT_MS || '6500', 10))
 }
 
-/**
- * 生成查询指纹
- * 
- * 将查询计划和空间上下文转换为可缓存的唯一标识
- * 
- * @param {Object} queryPlan - 查询计划
- * @param {Object} spatialContext - 空间上下文
- * @returns {string} 查询指纹 (MD5 hash)
- */
+const stats = {
+  l1: {
+    hits: 0,
+    misses: 0,
+    sets: 0,
+    evictions: 0
+  },
+  l2: {
+    hits: 0,
+    misses: 0,
+    sets: 0,
+    errors: 0,
+    enabled: CACHE_CONFIG.l2Enabled
+  },
+  locks: {
+    acquired: 0,
+    waited: 0,
+    waitTimeouts: 0,
+    released: 0
+  },
+  serializationErrors: 0,
+  l1Fallbacks: 0
+}
+
+function getRedisConfig() {
+  const redisUrl = process.env.QUERY_CACHE_REDIS_URL || process.env.REDIS_URL
+  if (redisUrl) {
+    return { url: redisUrl }
+  }
+
+  if (process.env.REDIS_HOST) {
+    return {
+      host: process.env.REDIS_HOST,
+      port: parseInt(process.env.REDIS_PORT || '6379', 10),
+      password: process.env.REDIS_PASSWORD || undefined,
+      db: parseInt(process.env.REDIS_DB || '0', 10)
+    }
+  }
+
+  return null
+}
+
+async function getL2Client() {
+  if (!CACHE_CONFIG.l2Enabled) return null
+  if (l2Client) return l2Client
+
+  if (!l2InitPromise) {
+    l2InitPromise = (async () => {
+      const redisConfig = getRedisConfig()
+      if (!redisConfig) {
+        stats.l2.enabled = false
+        return null
+      }
+
+      try {
+        const client = redisConfig.url
+          ? new IORedis(redisConfig.url, {
+              maxRetriesPerRequest: 2,
+              enableReadyCheck: false,
+              lazyConnect: true
+            })
+          : new IORedis({
+              ...redisConfig,
+              maxRetriesPerRequest: 2,
+              enableReadyCheck: false,
+              lazyConnect: true
+            })
+
+        client.on('error', (err) => {
+          stats.l2.errors += 1
+          console.warn(`[QueryCache:L2] redis error: ${err.message}`)
+        })
+
+        await client.connect()
+        l2Client = client
+        stats.l2.enabled = true
+        console.log('[QueryCache:L2] Redis cache enabled')
+        return l2Client
+      } catch (error) {
+        stats.l2.errors += 1
+        stats.l2.enabled = false
+        console.warn(`[QueryCache:L2] Redis unavailable, fallback to L1 only: ${error.message}`)
+        l2InitPromise = null
+        return null
+      }
+    })()
+  }
+
+  return l2InitPromise
+}
+
+function ttlForType(queryType = 'default') {
+  return CACHE_CONFIG.ttl[queryType] || CACHE_CONFIG.ttl.default
+}
+
+function l2Key(fingerprint) {
+  return `${CACHE_CONFIG.l2KeyPrefix}${fingerprint}`
+}
+
+function serializeCachePayload(payload) {
+  try {
+    return JSON.stringify(payload)
+  } catch {
+    stats.serializationErrors += 1
+    return null
+  }
+}
+
+function deserializeCachePayload(payload) {
+  if (!payload || typeof payload !== 'string') return null
+  try {
+    return JSON.parse(payload)
+  } catch {
+    stats.serializationErrors += 1
+    return null
+  }
+}
+
+class CacheEntry {
+  constructor(data, ttlMs, queryType = 'default') {
+    this.data = data
+    this.queryType = queryType
+    this.createdAt = Date.now()
+    this.expiresAt = this.createdAt + ttlMs
+    this.hitCount = 0
+  }
+
+  isExpired() {
+    return Date.now() > this.expiresAt
+  }
+
+  hit() {
+    this.hitCount += 1
+    return this.data
+  }
+}
+
+function clonePayload(payload) {
+  if (!payload) return payload
+  try {
+    return structuredClone(payload)
+  } catch {
+    return deserializeCachePayload(serializeCachePayload(payload))
+  }
+}
+
+function getFromL1(fingerprint) {
+  const entry = l1Cache.get(fingerprint)
+  if (!entry) {
+    stats.l1.misses += 1
+    return null
+  }
+
+  if (entry.isExpired()) {
+    l1Cache.delete(fingerprint)
+    stats.l1.misses += 1
+    stats.l1.evictions += 1
+    return null
+  }
+
+  stats.l1.hits += 1
+  return clonePayload(entry.hit())
+}
+
+function setToL1(fingerprint, payload, queryType = 'default') {
+  if (l1Cache.size >= CACHE_CONFIG.maxEntries) {
+    evictOldestEntries(Math.ceil(CACHE_CONFIG.maxEntries * 0.1))
+  }
+
+  const memBytes = estimateMemoryBytes()
+  if (memBytes > CACHE_CONFIG.maxMemoryBytes) {
+    evictOldestEntries(Math.max(1, Math.ceil(l1Cache.size * 0.2)))
+  }
+
+  const entry = new CacheEntry(payload, ttlForType(queryType), queryType)
+  l1Cache.set(fingerprint, entry)
+  stats.l1.sets += 1
+}
+
+async function getFromL2(fingerprint) {
+  const client = await getL2Client()
+  if (!client) {
+    stats.l2.misses += 1
+    return null
+  }
+
+  try {
+    telemetry.recordKpiEvent('cache_l2_op', 1, { op: 'get' })
+    const raw = await client.get(l2Key(fingerprint))
+    if (!raw) {
+      stats.l2.misses += 1
+      return null
+    }
+
+    const parsed = deserializeCachePayload(raw)
+    if (!parsed) {
+      stats.l2.misses += 1
+      return null
+    }
+
+    stats.l2.hits += 1
+    return parsed
+  } catch (error) {
+    stats.l2.errors += 1
+    stats.l2.misses += 1
+    telemetry.recordKpiEvent('cache_l2_error', 1, { op: 'get', reason: error?.code || 'redis_error' })
+    return null
+  }
+}
+
+async function setToL2(fingerprint, payload, queryType = 'default') {
+  const client = await getL2Client()
+  if (!client) return
+
+  const serialized = serializeCachePayload(payload)
+  if (!serialized) return
+
+  try {
+    telemetry.recordKpiEvent('cache_l2_op', 1, { op: 'set', query_type: queryType })
+    const ttlSeconds = Math.max(1, Math.ceil(ttlForType(queryType) / 1000))
+    await client.set(l2Key(fingerprint), serialized, 'EX', ttlSeconds)
+    stats.l2.sets += 1
+  } catch {
+    stats.l2.errors += 1
+    telemetry.recordKpiEvent('cache_l2_error', 1, { op: 'set', query_type: queryType })
+  }
+}
+
+function evictOldestEntries(count) {
+  const entries = Array.from(l1Cache.entries()).sort((a, b) => a[1].createdAt - b[1].createdAt)
+  for (let i = 0; i < count && i < entries.length; i += 1) {
+    l1Cache.delete(entries[i][0])
+    stats.l1.evictions += 1
+  }
+}
+
+function parseHealthThreshold(rawValue, fallback) {
+  const value = Number(rawValue)
+  return Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback
+}
+
+function toFiniteNumber(value) {
+  const numeric = Number(value)
+  return Number.isFinite(numeric) ? numeric : null
+}
+
+function normalizeQuestionForFingerprint(question) {
+  return String(question || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+}
+
+function hashFragment(text) {
+  if (!text) return null
+  return createHash('sha1').update(text).digest('hex').slice(0, 20)
+}
+
+function buildBoundarySignature(boundary) {
+  if (!Array.isArray(boundary) || boundary.length < 3) {
+    return null
+  }
+
+  const normalizedPoints = boundary
+    .map((point) => {
+      if (Array.isArray(point) && point.length >= 2) {
+        const lon = toFiniteNumber(point[0])
+        const lat = toFiniteNumber(point[1])
+        if (lon === null || lat === null) return null
+        return `${lon.toFixed(5)},${lat.toFixed(5)}`
+      }
+
+      if (point && typeof point === 'object') {
+        const lon = toFiniteNumber(point.lon ?? point.lng ?? point.longitude)
+        const lat = toFiniteNumber(point.lat ?? point.latitude)
+        if (lon === null || lat === null) return null
+        return `${lon.toFixed(5)},${lat.toFixed(5)}`
+      }
+
+      return null
+    })
+    .filter(Boolean)
+
+  if (normalizedPoints.length < 3) {
+    return null
+  }
+
+  return {
+    point_count: normalizedPoints.length,
+    digest: hashFragment(normalizedPoints.join('|'))
+  }
+}
+
 export function generateQueryFingerprint(queryPlan, spatialContext = {}, extra = {}) {
   const fingerprintData = {}
-  
-  // 1. 查询类型
+
   fingerprintData.type = queryPlan.query_type || 'unknown'
-  
-  // 2. 类别列表（排序后）
-  fingerprintData.categories = (queryPlan.categories || []).sort()
-  
-  // 3. 空间指纹
-  // 将精确坐标归一化为 H3 网格，避免微小坐标差异导致缓存失效
+  fingerprintData.categories = Array.isArray(queryPlan.categories)
+    ? [...queryPlan.categories].sort()
+    : []
+
   if (spatialContext.center || (queryPlan.anchor?.lat && queryPlan.anchor?.lon)) {
     const lat = spatialContext.center?.lat || queryPlan.anchor.lat
     const lon = spatialContext.center?.lon || queryPlan.anchor.lon
-    
-    if (typeof lat === 'number' && typeof lon === 'number' &&
-        lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180) {
+
+    if (typeof lat === 'number' && typeof lon === 'number' && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180) {
       try {
         fingerprintData.h3_center = h3.latLngToCell(lat, lon, CACHE_CONFIG.h3Resolution)
-      } catch (e) {
-        console.warn('[QueryCache] H3 编码失败:', e.message)
-        // 使用粗粒度坐标作为后备
+      } catch {
         fingerprintData.approx_center = `${lat.toFixed(3)},${lon.toFixed(3)}`
       }
     }
   } else if (spatialContext.viewport) {
-    // 使用视野中心点
     const [minLon, minLat, maxLon, maxLat] = spatialContext.viewport
     const centerLat = (minLat + maxLat) / 2
     const centerLon = (minLon + maxLon) / 2
-    
+
     try {
       fingerprintData.h3_center = h3.latLngToCell(centerLat, centerLon, CACHE_CONFIG.h3Resolution)
-    } catch (e) {
+    } catch {
       fingerprintData.approx_center = `${centerLat.toFixed(3)},${centerLon.toFixed(3)}`
     }
+
+    const viewportBounds = [minLon, minLat, maxLon, maxLat].map((value) => toFiniteNumber(value))
+    if (viewportBounds.every((value) => value !== null)) {
+      fingerprintData.viewport_bounds = viewportBounds.map((value) => Number(value).toFixed(4))
+    }
   }
-  
-  // 4. 半径归一化
+
+  const boundarySignature = buildBoundarySignature(spatialContext.boundary)
+  if (boundarySignature) {
+    fingerprintData.boundary = boundarySignature
+  }
+
   if (queryPlan.radius_m) {
-    // 归一化到 500m 步长
     fingerprintData.radius_bucket = Math.ceil(queryPlan.radius_m / CACHE_CONFIG.radiusBucket) * CACHE_CONFIG.radiusBucket
   }
-  
-  // 5. 语义查询（如果有）
-  // 注意：语义查询的细微差异可能影响结果，所以直接包含
+
   if (queryPlan.semantic_query) {
     fingerprintData.semantic = queryPlan.semantic_query.trim().toLowerCase()
   }
-  
-  // 6. 聚合策略
+
   if (queryPlan.aggregation_strategy?.enable) {
     fingerprintData.aggregation = true
     fingerprintData.sampling = queryPlan.sampling_strategy?.method || 'default'
   }
-  
-  // 7. 选区对比模式
+
   if (queryPlan.target_regions) {
-    fingerprintData.regions = queryPlan.target_regions.sort()
+    fingerprintData.regions = Array.isArray(queryPlan.target_regions)
+      ? [...queryPlan.target_regions].sort()
+      : []
   }
 
-  // 8. Source policy（避免 UI 约束变化时复用错误缓存）
   const sourcePolicy = extra?.sourcePolicy || {}
   if (sourcePolicy && typeof sourcePolicy === 'object') {
     const selectedCategories = Array.isArray(sourcePolicy.selected_categories)
@@ -139,221 +409,244 @@ export function generateQueryFingerprint(queryPlan, spatialContext = {}, extra =
   if (extra?.route) {
     fingerprintData.route = String(extra.route)
   }
-  
-  // 生成 MD5 哈希
+
+  const normalizedQuestion = normalizeQuestionForFingerprint(extra?.userQuestion || extra?.query || '')
+  if (normalizedQuestion) {
+    fingerprintData.user_question_digest = hashFragment(normalizedQuestion)
+  }
+
   const dataString = JSON.stringify(fingerprintData)
-  const fingerprint = createHash('md5').update(dataString).digest('hex')
-  
-  return fingerprint
+  return createHash('md5').update(dataString).digest('hex')
 }
 
-/**
- * 缓存条目类
- */
-class CacheEntry {
-  constructor(data, ttl) {
-    this.data = data
-    this.createdAt = Date.now()
-    this.expiresAt = Date.now() + ttl
-    this.hitCount = 0
+export async function getFromCache(fingerprint, options = {}) {
+  const queryType = options.queryType || 'default'
+
+  const l1 = getFromL1(fingerprint)
+  if (l1) return l1
+
+  const l2 = await getFromL2(fingerprint)
+  if (l2) {
+    setToL1(fingerprint, clonePayload(l2), queryType)
+    return clonePayload(l2)
   }
-  
-  isExpired() {
-    return Date.now() > this.expiresAt
-  }
-  
-  hit() {
-    this.hitCount++
-    return this.data
-  }
+
+  return null
 }
 
-/**
- * 从缓存获取结果
- * 
- * @param {string} fingerprint - 查询指纹
- * @returns {Object|null} 缓存的 Executor 结果或 null
- */
-export function getFromCache(fingerprint) {
-  if (!cache.has(fingerprint)) {
-    stats.misses++
-    return null
-  }
-  
-  const entry = cache.get(fingerprint)
-  
-  // 检查是否过期
-  if (entry.isExpired()) {
-    cache.delete(fingerprint)
-    stats.misses++
-    stats.evictions++
-    return null
-  }
-  
-  stats.hits++
-  console.log(`[QueryCache] 缓存命中: ${fingerprint.slice(0, 8)}... (hitCount: ${entry.hitCount + 1})`)
-  
-  return entry.hit()
+export async function setToCache(fingerprint, payload, queryType = 'default') {
+  setToL1(fingerprint, clonePayload(payload), queryType)
+  await setToL2(fingerprint, payload, queryType)
 }
 
-/**
- * 将结果存入缓存
- * 
- * @param {string} fingerprint - 查询指纹
- * @param {Object} data - 要缓存的 Executor 结果
- * @param {string} queryType - 查询类型（用于确定 TTL）
- */
-export function setToCache(fingerprint, data, queryType = 'default') {
-  // 条目数上限检查
-  if (cache.size >= CACHE_CONFIG.maxEntries) {
-    evictOldestEntries(Math.ceil(CACHE_CONFIG.maxEntries * 0.1))
-  }
+export function acquireComputationLock(fingerprint, options = {}) {
+  const ttlMs = Number(options.ttlMs || CACHE_CONFIG.lockTtlMs)
+  const now = Date.now()
+  const existing = inFlightLocks.get(fingerprint)
 
-  // 内存硬上限检查：超过阈值时强制淘汰 20% 最旧条目
-  const memBytes = estimateMemoryBytes()
-  if (memBytes > CACHE_CONFIG.maxMemoryBytes) {
-    const evictCount = Math.max(1, Math.ceil(cache.size * 0.2))
-    console.warn(`[QueryCache] 内存超限 (${(memBytes / 1024 / 1024).toFixed(1)}MB > ${(CACHE_CONFIG.maxMemoryBytes / 1024 / 1024).toFixed(0)}MB)，淘汰 ${evictCount} 条`)
-    evictOldestEntries(evictCount)
-  }
-  
-  // 确定 TTL
-  const ttl = CACHE_CONFIG.ttl[queryType] || CACHE_CONFIG.ttl.default
-  
-  // 创建缓存条目
-  const entry = new CacheEntry(data, ttl)
-  cache.set(fingerprint, entry)
-  
-  stats.sets++
-  console.log(`[QueryCache] 缓存写入: ${fingerprint.slice(0, 8)}... (TTL: ${ttl / 1000}s, 内存: ${estimateMemoryUsage()})`)
-}
-
-/**
- * 驱逐最旧的缓存条目
- * @param {number} count - Ҫ
- */
-function evictOldestEntries(count) {
-  // 按创建时间排序
-  const entries = Array.from(cache.entries())
-    .sort((a, b) => a[1].createdAt - b[1].createdAt)
-  
-  for (let i = 0; i < count && i < entries.length; i++) {
-    cache.delete(entries[i][0])
-    stats.evictions++
-  }
-  
-  console.log(`[QueryCache] LRU 驱逐: ${count} 条`)
-}
-
-/**
- * 清理过期缓存条目
- */
-export function cleanupExpiredCache() {
-  let cleaned = 0
-  
-  for (const [key, entry] of cache) {
-    if (entry.isExpired()) {
-      cache.delete(key)
-      cleaned++
+  if (existing && existing.expiresAt > now) {
+    stats.locks.waited += 1
+    return {
+      acquired: false,
+      lockPromise: existing.promise,
+      release: () => {}
     }
   }
-  
-  if (cleaned > 0) {
-    stats.evictions += cleaned
-    console.log(`[QueryCache] 清理过期缓存: ${cleaned} 条`)
+
+  let resolver = () => {}
+  const promise = new Promise((resolve) => {
+    resolver = resolve
+  })
+
+  inFlightLocks.set(fingerprint, {
+    promise,
+    release: resolver,
+    expiresAt: now + Math.max(1000, ttlMs)
+  })
+
+  stats.locks.acquired += 1
+
+  return {
+    acquired: true,
+    lockPromise: promise,
+    release: () => {
+      const lock = inFlightLocks.get(fingerprint)
+      if (!lock) return
+      lock.release(true)
+      inFlightLocks.delete(fingerprint)
+      stats.locks.released += 1
+    }
   }
-  
+}
+
+export async function waitForComputationLock(fingerprint, options = {}) {
+  const waitTimeoutMs = Number(options.waitTimeoutMs || CACHE_CONFIG.lockWaitTimeoutMs)
+  const lock = inFlightLocks.get(fingerprint)
+  if (!lock) return true
+
+  stats.locks.waited += 1
+
+  const timeoutPromise = new Promise((resolve) => {
+    setTimeout(() => resolve(false), Math.max(200, waitTimeoutMs))
+  })
+
+  const resolved = await Promise.race([lock.promise.then(() => true), timeoutPromise])
+  if (!resolved) {
+    stats.locks.waitTimeouts += 1
+  }
+  return resolved
+}
+
+export function cleanupExpiredCache() {
+  let cleaned = 0
+  for (const [key, entry] of l1Cache) {
+    if (entry.isExpired()) {
+      l1Cache.delete(key)
+      cleaned += 1
+    }
+  }
+  if (cleaned > 0) {
+    stats.l1.evictions += cleaned
+  }
   return cleaned
 }
 
-/**
- * 使特定查询类型的缓存失效
- * @param {string} queryType - 查询类型
- */
 export function invalidateByType(queryType) {
   let invalidated = 0
-  
-  for (const [key, entry] of cache) {
-    // 简单实现：不存储类型，所以清理所有
-    // 生产环境可以在 CacheEntry 中存储 queryType
-    cache.delete(key)
-    invalidated++
+  for (const [key, entry] of l1Cache) {
+    if (!queryType || entry.queryType === queryType) {
+      l1Cache.delete(key)
+      invalidated += 1
+    }
   }
-  
-  console.log(`[QueryCache] 失效类型 "${queryType}": ${invalidated} 条`)
   return invalidated
 }
 
-/**
- * 清空所有缓存
- */
 export function clearCache() {
-  const size = cache.size
-  cache.clear()
-  console.log(`[QueryCache] 缓存已清空: ${size} 条`)
+  const size = l1Cache.size
+  l1Cache.clear()
   return size
 }
 
-/**
- * 获取缓存统计信息
- */
-export function getCacheStats() {
-  const hitRate = stats.hits + stats.misses > 0 
-    ? (stats.hits / (stats.hits + stats.misses) * 100).toFixed(2)
-    : 0
-  
-  return {
-    size: cache.size,
-    maxSize: CACHE_CONFIG.maxEntries,
-    hits: stats.hits,
-    misses: stats.misses,
-    hitRate: `${hitRate}%`,
-    sets: stats.sets,
-    evictions: stats.evictions,
-    memoryEstimate: estimateMemoryUsage()
-  }
-}
-
-/**
- * 估算内存使用量（字节数）
- */
 function estimateMemoryBytes() {
   let totalBytes = 0
-  
-  for (const [key, entry] of cache) {
-    // 粗略估计：key + JSON 序列化后的 data 大小
-    totalBytes += key.length * 2 // UTF-16
+  for (const [key, entry] of l1Cache) {
+    totalBytes += key.length * 2
     try {
       totalBytes += JSON.stringify(entry.data).length * 2
     } catch {
-      totalBytes += 4096 // 序列化异常时给一个安全估计值
+      totalBytes += 4096
     }
-    totalBytes += 200 // 对象开销
+    totalBytes += 200
   }
-  
   return totalBytes
 }
 
-/**
- * 格式化内存使用量为可读字符串
- */
 function estimateMemoryUsage() {
-  const totalBytes = estimateMemoryBytes()
-  if (totalBytes > 1024 * 1024) {
-    return `${(totalBytes / 1024 / 1024).toFixed(2)} MB`
+  const bytes = estimateMemoryBytes()
+  if (bytes > 1024 * 1024) {
+    return `${(bytes / 1024 / 1024).toFixed(2)} MB`
   }
-  return `${(totalBytes / 1024).toFixed(2)} KB`
+  return `${(bytes / 1024).toFixed(2)} KB`
 }
 
-// 定期清理：过期缓存 + 内存超限检查（每 2 分钟）
+export function getCacheStats() {
+  const totalHits = stats.l1.hits + stats.l2.hits
+  const totalMisses = stats.l1.misses + stats.l2.misses
+  const totalLookups = totalHits + totalMisses
+
+  const hitRate = totalLookups > 0 ? (totalHits / totalLookups) * 100 : 0
+
+  return {
+    size: l1Cache.size,
+    maxSize: CACHE_CONFIG.maxEntries,
+    hits: totalHits,
+    misses: totalMisses,
+    hitRate: `${hitRate.toFixed(2)}%`,
+    sets: stats.l1.sets + stats.l2.sets,
+    evictions: stats.l1.evictions,
+    memoryEstimate: estimateMemoryUsage(),
+    l1: {
+      ...stats.l1
+    },
+    l2: {
+      ...stats.l2
+    },
+    locks: {
+      ...stats.locks
+    },
+    serializationErrors: stats.serializationErrors,
+    l1Fallbacks: stats.l1Fallbacks
+  }
+}
+
+export function getCacheHealthSnapshot(options = {}) {
+  const statsSnapshot = getCacheStats()
+  const thresholds = {
+    l2ErrorRateWarn: Number(options.l2ErrorRateWarn || process.env.CACHE_L2_ERROR_RATE_WARN || 0.01),
+    lockTimeoutWarn: parseHealthThreshold(options.lockTimeoutWarn || process.env.CACHE_LOCK_TIMEOUT_WARN, 10)
+  }
+
+  const l2Ops = Number(statsSnapshot.l2.hits) + Number(statsSnapshot.l2.misses) + Number(statsSnapshot.l2.sets)
+  const l2ErrorRate = l2Ops > 0 ? Number(statsSnapshot.l2.errors) / l2Ops : 0
+
+  const alerts = []
+
+  if (CACHE_CONFIG.l2Enabled && !statsSnapshot.l2.enabled) {
+    alerts.push({
+      code: 'cache_l2_unavailable',
+      severity: 'warning',
+      message: 'L2 Redis 未启用或不可用，当前仅使用 L1 内存缓存。'
+    })
+  }
+
+  if (l2ErrorRate >= thresholds.l2ErrorRateWarn) {
+    alerts.push({
+      code: 'cache_l2_error_rate_high',
+      severity: 'warning',
+      message: 'L2 Redis 错误率超过阈值。',
+      value: l2ErrorRate,
+      threshold: thresholds.l2ErrorRateWarn
+    })
+  }
+
+  if (Number(statsSnapshot.locks.waitTimeouts) >= thresholds.lockTimeoutWarn) {
+    alerts.push({
+      code: 'cache_lock_timeout_high',
+      severity: 'warning',
+      message: '缓存防击穿等待超时次数超过阈值。',
+      value: Number(statsSnapshot.locks.waitTimeouts),
+      threshold: thresholds.lockTimeoutWarn
+    })
+  }
+
+  return {
+    sampled_at: new Date().toISOString(),
+    l2_enabled: CACHE_CONFIG.l2Enabled,
+    stats: statsSnapshot,
+    metrics: {
+      l2_error_rate: l2ErrorRate,
+      lock_wait_timeouts: Number(statsSnapshot.locks.waitTimeouts)
+    },
+    thresholds,
+    alerts
+  }
+}
+
 setInterval(() => {
   cleanupExpiredCache()
-  // 即使没有过期条目，也检查内存是否超限
   const memBytes = estimateMemoryBytes()
   if (memBytes > CACHE_CONFIG.maxMemoryBytes) {
-    const evictCount = Math.max(1, Math.ceil(cache.size * 0.15))
-    console.warn(`[QueryCache] 定期检查：内存超限，淘汰 ${evictCount} 条`)
-    evictOldestEntries(evictCount)
+    evictOldestEntries(Math.max(1, Math.ceil(l1Cache.size * 0.15)))
+  }
+
+  const now = Date.now()
+  for (const [fingerprint, lock] of inFlightLocks.entries()) {
+    if (now > lock.expiresAt) {
+      lock.release(false)
+      inFlightLocks.delete(fingerprint)
+      stats.locks.waitTimeouts += 1
+    }
   }
 }, 2 * 60 * 1000)
 
@@ -361,8 +654,11 @@ export default {
   generateQueryFingerprint,
   getFromCache,
   setToCache,
+  acquireComputationLock,
+  waitForComputationLock,
   cleanupExpiredCache,
   invalidateByType,
   clearCache,
-  getCacheStats
+  getCacheStats,
+  getCacheHealthSnapshot
 }

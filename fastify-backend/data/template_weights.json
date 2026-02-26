@@ -1,0 +1,14 @@
+{
+  "generated_at": "2026-02-26T03:37:45.369Z",
+  "version": "bootstrap",
+  "weights": {
+    "hotspot_overview": 1,
+    "dominant_industry": 1,
+    "industry_overlap_radiation": 1,
+    "opportunity_window": 1,
+    "risk_radar": 1,
+    "accessibility_snapshot": 1,
+    "comparison_digest": 1,
+    "confidence_watch": 1
+  }
+}

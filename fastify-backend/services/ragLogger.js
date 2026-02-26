@@ -300,81 +300,121 @@ class RAGSession {
    */
   generateReadableSummary() {
     const parts = [];
-    parts.push(`用户问题: "${this.summary.userQuery}"`);
-    
+    parts.push(`User Query: "${this.summary.userQuery || ''}"`);
+
     if (this.summary.parsedIntent) {
       const intent = this.summary.parsedIntent;
-      parts.push(`ͼ: ê=${intent.place_name || ''}, 뾶=${intent.radius || 'Ĭ'}, =${intent.category || 'ȫ'}`);
+      const queryType = intent.query_type || intent.intent_mode || 'unknown';
+      const categories = Array.isArray(intent.categories)
+        ? intent.categories.slice(0, 6).join(', ')
+        : '';
+      parts.push(`Intent: query_type=${queryType}${categories ? `, categories=${categories}` : ''}`);
     }
-    
+
     const services = [];
-    if (this.summary.vectorCalled) services.push('pgvector向量检索');
-    if (this.summary.postgisCalled) services.push('PostGIS空间查询');
-    parts.push(`调用服务: ${services.join(' + ') || '无'}`);
-    
-    parts.push(`检索POI数: ${this.summary.totalPOIsRetrieved}`);
-    
-    // 显示 Token 消耗
-    const stats = this.summary.tokenStats;
+    if (this.summary.vectorCalled) services.push('Vector');
+    if (this.summary.postgisCalled) services.push('PostGIS');
+    parts.push(`Services: ${services.length ? services.join(' + ') : 'none'}`);
+    parts.push(`Retrieved POIs: ${this.summary.totalPOIsRetrieved}`);
+
+    const stats = this.summary.tokenStats || { total: 0, planner: 0, writer: 0 };
     if (stats.total > 0) {
-      parts.push(`Token消耗: ${stats.total} (Planner: ${stats.planner}, Writer: ${stats.writer})`);
+      parts.push(`Tokens: total=${stats.total}, planner=${stats.planner}, writer=${stats.writer}`);
     } else {
-      parts.push(`预估Token: ${this.summary.tokensEstimated}`);
+      parts.push(`Tokens (estimated): ${this.summary.tokensEstimated || 0}`);
     }
-    
-    parts.push(`状态: ${this.summary.success ? '✅成功' : '❌失败'}`);
-    
+
+    const stageTrace = this.logs
+      .filter((item) => item.component === 'Pipeline' && item.action === 'Stage')
+      .map((item) => item.details?.stage)
+      .filter(Boolean);
+    if (stageTrace.length) {
+      parts.push(`Stage Path: ${stageTrace.join(' -> ')}`);
+    }
+
+    parts.push(`Result: ${this.summary.success ? 'success' : 'failed'}`);
     return parts.join('\n');
   }
 
   /**
-   * 生成 Markdown 格式日志
+   * Generate markdown log with clear request timeline and stage path.
    */
   generateMarkdownLog() {
-    let md = `## 🔍 RAG Session: ${this.sessionId}\n\n`;
-    md += `**时间**: ${this.startTime.toLocaleString('zh-CN')}\n\n`;
-    md += `### 用户问题\n> ${this.summary.userQuery}\n\n`;
-    
+    const startMs = this.startTime.getTime();
+    const stageTrace = this.logs
+      .filter((item) => item.component === 'Pipeline' && item.action === 'Stage')
+      .map((item) => item.details?.stage)
+      .filter(Boolean);
+    const stats = this.summary.tokenStats || { total: 0, planner: 0, writer: 0 };
+
+    const compactDetails = (details) => {
+      if (details == null) return '';
+      let text = '';
+      if (typeof details === 'string') {
+        text = details;
+      } else {
+        try {
+          text = JSON.stringify(details);
+        } catch {
+          text = '[unserializable]';
+        }
+      }
+      text = text.replace(/\|/g, '\\|').replace(/\n/g, ' ');
+      return text.length > 140 ? `${text.slice(0, 140)}...` : text;
+    };
+
+    let md = `## RAG Session: ${this.sessionId}\n\n`;
+    md += `### Request Overview\n`;
+    md += `- Start: ${this.startTime.toLocaleString('zh-CN')}\n`;
+    md += `- Log entries: ${this.logs.length}\n`;
+    md += `- Status: ${this.summary.success ? 'success' : 'failed'}\n`;
+    md += `- Retrieved POIs: ${this.summary.totalPOIsRetrieved}\n`;
+    md += `- Tokens: ${stats.total || this.summary.tokensEstimated || 0}\n\n`;
+
+    md += `### User Query\n> ${this.summary.userQuery || '(empty)'}\n\n`;
+
     if (this.summary.parsedIntent) {
-      md += `### 解析意图\n\`\`\`json\n${JSON.stringify(this.summary.parsedIntent, null, 2)}\n\`\`\`\n\n`;
+      md += `### Parsed Intent\n\`\`\`json\n${JSON.stringify(this.summary.parsedIntent, null, 2)}\n\`\`\`\n\n`;
     }
-    
-    md += `### 调用链路\n`;
-    this.logs.forEach(log => {
-      const duration = log.duration ? ` (${log.duration}ms)` : '';
-      md += `- **[${log.component}]** ${log.action}${duration}\n`;
+
+    md += `### Stage Path\n`;
+    if (stageTrace.length) {
+      stageTrace.forEach((stage, idx) => {
+        md += `${idx + 1}. ${stage}\n`;
+      });
+    } else {
+      md += `- no stage events\n`;
+    }
+    md += '\n';
+
+    md += `### Event Timeline\n`;
+    md += `| Offset(ms) | Component | Action | Details |\n`;
+    md += `|---:|---|---|---|\n`;
+    this.logs.forEach((log) => {
+      const ts = Date.parse(log.timestamp);
+      const offset = Number.isFinite(ts) ? Math.max(0, ts - startMs) : 0;
+      md += `| ${offset} | ${log.component} | ${log.action} | ${compactDetails(log.details)} |\n`;
     });
     md += '\n';
-    
+
     if (this.finalPOIs && this.finalPOIs.length > 0) {
-      md += `### 最终使用的 POI 数据\n`;
-      md += `| 名称 | 小类 | 距离 |\n|------|------|------|\n`;
-      this.finalPOIs.slice(0, 20).forEach(poi => {
+      md += `### Final POIs (Top 20)\n`;
+      md += `| Name | Category | Distance |\n|---|---|---|\n`;
+      this.finalPOIs.slice(0, 20).forEach((poi) => {
         const dist = poi.distance ? `${Math.round(poi.distance)}m` : '-';
         md += `| ${poi.name} | ${poi.category} | ${dist} |\n`;
       });
       if (this.finalPOIs.length > 20) {
-        md += `| ... 共 ${this.finalPOIs.length} 条 | | |\n`;
+        md += `| ... total ${this.finalPOIs.length} items | | |\n`;
       }
       md += '\n';
     }
-    
-    md += `### 统计摘要\n`;
-    md += `- 调用 pgvector: ${this.summary.vectorCalled ? '✅' : '❌'}\n`;
-    md += `- 调用 PostGIS: ${this.summary.postgisCalled ? '✅' : '❌'}\n`;
-    md += `- 检索 POI 数: ${this.summary.totalPOIsRetrieved}\n`;
-    
-    const stats = this.summary.tokenStats;
-    if (stats.total > 0) {
-      md += `- Token 消耗: **${stats.total}**\n`;
-      md += `  - Planner: ${stats.planner}\n`;
-      md += `  - Writer: ${stats.writer}\n`;
-    } else {
-      md += `- 预估 Token: ${this.summary.tokensEstimated}\n`;
-    }
-    
-    md += `- 结果: ${this.summary.success ? '✅ 成功' : '❌ 失败'}\n`;
-    
+
+    md += `### Stats\n`;
+    md += `- Vector used: ${this.summary.vectorCalled ? 'yes' : 'no'}\n`;
+    md += `- PostGIS used: ${this.summary.postgisCalled ? 'yes' : 'no'}\n`;
+    md += `- Token breakdown: total=${stats.total}, planner=${stats.planner}, writer=${stats.writer}\n`;
+
     return md;
   }
 }

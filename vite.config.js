@@ -68,21 +68,21 @@ export default defineConfig({
   server: {
     proxy: {
       '/api/ai': {
-        target: 'http://localhost:3200',
+        target: 'http://127.0.0.1:3200',
         changeOrigin: true,
         timeout: 120000,
       },
       '/api/category': {
-        target: 'http://localhost:3200',
+        target: 'http://127.0.0.1:3200',
         changeOrigin: true,
       },
       '/api/spatial': {
-        target: 'http://localhost:3200',
+        target: 'http://127.0.0.1:3200',
         changeOrigin: true,
         timeout: 120000,
       },
       '/api/search': {
-        target: 'http://localhost:3200',
+        target: 'http://127.0.0.1:3200',
         changeOrigin: true,
         timeout: 30000,
       },

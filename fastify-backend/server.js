@@ -16,6 +16,7 @@ import jobRoutes from './routes/jobs/index.js'
 import spatialRoutes from './routes/spatial/index.js'
 import searchRoutes from './routes/search.js'
 import categoryRoutes from './routes/category.js'
+import opsRoutes from './routes/ops/index.js'
 
 // 基础服务：数据库、向量库、任务队列、gRPC 客户端、worker。
 import { initDatabase, closeDatabase } from './services/database.js'
@@ -40,6 +41,7 @@ fastify.register(jobRoutes, { prefix: '/api/jobs' })
 fastify.register(spatialRoutes, { prefix: '/api/spatial' })
 fastify.register(searchRoutes, { prefix: '/api/search' })
 fastify.register(categoryRoutes, { prefix: '/api/category' })
+fastify.register(opsRoutes, { prefix: '/api/ops' })
 
 // 最小健康探针：用于 docker healthcheck / k8s 探活。
 fastify.get('/health', async () => {
@@ -95,7 +97,7 @@ const start = async () => {
     }
 
     const port = parseInt(process.env.PORT || '3200', 10)
-    const host = '0.0.0.0'
+    const host = process.env.HOST || '127.0.0.1'
     await fastify.listen({ port, host })
 
     console.log(`\nGeoLoom-RAG backend: http://${host}:${port}`)

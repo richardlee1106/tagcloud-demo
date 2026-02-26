@@ -1,6 +1,4 @@
 /**
- * 兼容层 AI 路由。
- * 目标是在不改前端的情况下，打通 Jobs 与 Python 计算链路。
  */
 import { randomUUID } from 'crypto'
 
@@ -18,15 +16,21 @@ import {
   runNarrativeSpatialJob,
   toLegacySSEPayload
 } from '../../services/spatialJobRunner.js'
+import telemetry from '../../services/telemetry.js'
 import { parseIntent } from './planner.js'
+import templateFeedbackRoutes from './templateFeedback.js'
 import { validateSSEEventPayload } from '../../../shared/sseEventSchema.js'
 
-// 会话内存缓存：保存本次请求的日志上下文与结果。
-// LRU Ӳ޷ֹ߲ڴۻ
+const SSE_SCHEMA_VERSION = 'v1.1'
+const SSE_CAPABILITIES = Object.freeze([
+  'intent_meta',
+  'template_learning',
+  'l2_cache'
+])
+
 const ragSessions = new Map()
 const RAG_SESSION_MAX = parseInt(process.env.RAG_SESSION_MAX || '200', 10)
 
-// ڻչڻỰֹڴʱۻ
 setInterval(() => {
   const now = Date.now()
   const maxAge = 30 * 60 * 1000
@@ -37,7 +41,6 @@ setInterval(() => {
     }
   }
 
-  // 即便无过期会话，也检查总量是否超过硬上限
   if (ragSessions.size > RAG_SESSION_MAX) {
     const overflow = ragSessions.size - RAG_SESSION_MAX
     const iterator = ragSessions.keys()
@@ -45,19 +48,45 @@ setInterval(() => {
       const oldestKey = iterator.next().value
       if (oldestKey !== undefined) ragSessions.delete(oldestKey)
     }
-    console.warn(`[AI Routes] ragSessions 超限淘汰 ${overflow} 条，当前 ${ragSessions.size} 条`)
+    console.warn(`[AI Routes] ragSessions overflow pruned ${overflow}, current size ${ragSessions.size}`)
   }
 }, 5 * 60 * 1000)
 
 /**
  */
 /**
- * 写入具名 SSE 事件（event + data）。
  */
-function writeSSEEvent(reply, eventName, payload) {
+function attachSSEMeta(payload, meta = {}) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return payload
+  }
+
+  return {
+    ...payload,
+    trace_id: meta.traceId || payload.trace_id || undefined,
+    schema_version: meta.schemaVersion || payload.schema_version || SSE_SCHEMA_VERSION,
+    capabilities: Array.isArray(meta.capabilities) ? meta.capabilities : payload.capabilities || SSE_CAPABILITIES
+  }
+}
+
+function writeSSEEvent(reply, eventName, payload, meta = {}) {
   if (reply.raw.destroyed) return
-  const validation = validateSSEEventPayload(eventName, payload)
+  const payloadWithMeta = attachSSEMeta(payload, meta)
+  telemetry.incrementCounter('sse_event_total', { event: String(eventName || 'unknown') })
+  telemetry.recordKpiEvent('sse_event', 1, { event: String(eventName || 'unknown') })
+
+  const validation = validateSSEEventPayload(eventName, payloadWithMeta)
   if (!validation.ok) {
+    telemetry.incrementCounter('sse_event_error_total', { event: String(eventName || 'unknown'), reason: 'schema' })
+    telemetry.recordKpiEvent('sse_event_error', 1, {
+      event: String(eventName || 'unknown'),
+      reason: 'schema',
+      trace_id: meta.traceId || ''
+    })
+    telemetry.recordKpiEvent('sse_schema_error', 1, {
+      event: String(eventName || 'unknown'),
+      trace_id: meta.traceId || ''
+    })
     console.warn('[AI Routes] SSE schema mismatch', {
       event: eventName,
       errors: validation.errors.slice(0, 5)
@@ -65,7 +94,10 @@ function writeSSEEvent(reply, eventName, payload) {
     if (eventName !== 'schema_error') {
       const schemaErrorPayload = {
         event: String(eventName || 'unknown'),
-        errors: validation.errors
+        errors: validation.errors,
+        trace_id: meta.traceId || undefined,
+        schema_version: meta.schemaVersion || SSE_SCHEMA_VERSION,
+        capabilities: Array.isArray(meta.capabilities) ? meta.capabilities : SSE_CAPABILITIES
       }
       reply.raw.write('event: schema_error\n')
       reply.raw.write(`data: ${JSON.stringify(schemaErrorPayload)}\n\n`)
@@ -73,13 +105,12 @@ function writeSSEEvent(reply, eventName, payload) {
     return
   }
   reply.raw.write(`event: ${eventName}\n`)
-  reply.raw.write(`data: ${JSON.stringify(payload)}\n\n`)
+  reply.raw.write(`data: ${JSON.stringify(payloadWithMeta)}\n\n`)
 }
 
 /**
  */
 /**
- * 写入默认 SSE 文本分片（仅 data）。
  */
 function writeSSEText(reply, content) {
   if (reply.raw.destroyed) return
@@ -89,11 +120,48 @@ function writeSSEText(reply, content) {
 /**
  */
 /**
- * 将返回结果同步到 Session，便于日志落盘与复盘。
  */
-function applyResultToSession(session, legacyPayload) {
+function summarizeForRagLog(value, maxLength = 800) {
+  if (value == null) return value
+  if (typeof value === 'string') {
+    return value.length > maxLength ? `${value.slice(0, maxLength)}...` : value
+  }
+  if (typeof value !== 'object') return value
+
+  try {
+    const serialized = JSON.stringify(value)
+    if (serialized.length <= maxLength) return value
+    return { preview: `${serialized.slice(0, maxLength)}...` }
+  } catch {
+    return { preview: '[unserializable]' }
+  }
+}
+
+function logSessionStage(session, stage, payload = {}) {
+  if (!session?.log) return
+  session.log('Pipeline', 'Stage', {
+    stage: String(stage || ''),
+    payload: summarizeForRagLog(payload)
+  })
+}
+
+function applyResultToSession(session, legacyPayload, fullResult = null) {
   if (!session || !legacyPayload) {
     return
+  }
+
+  if (fullResult?.query_plan) {
+    session.setIntent?.(fullResult.query_plan)
+  }
+
+  if (fullResult?.diagnostics) {
+    session.log?.('Pipeline', 'Diagnostics', summarizeForRagLog(fullResult.diagnostics))
+  }
+
+  if (typeof fullResult?.answer === 'string') {
+    session.log?.('Writer', 'AnswerSummary', {
+      chars: fullResult.answer.length
+    })
   }
 
   if (legacyPayload.pois?.length) {
@@ -120,40 +188,38 @@ function applyResultToSession(session, legacyPayload) {
 /**
  */
 /**
- * ǰ˷ͼ¼ȷ UI 졣
  */
-function emitLegacyEvents(reply, legacyPayload) {
+function emitLegacyEvents(reply, legacyPayload, sseMeta = {}) {
   if (legacyPayload.pois?.length) {
-    writeSSEEvent(reply, 'pois', legacyPayload.pois)
+    writeSSEEvent(reply, 'pois', legacyPayload.pois, sseMeta)
   }
 
   if (legacyPayload.boundary) {
-    writeSSEEvent(reply, 'boundary', legacyPayload.boundary)
+    writeSSEEvent(reply, 'boundary', legacyPayload.boundary, sseMeta)
   }
 
   if (legacyPayload.spatial_clusters?.hotspots?.length) {
-    writeSSEEvent(reply, 'spatial_clusters', legacyPayload.spatial_clusters)
+    writeSSEEvent(reply, 'spatial_clusters', legacyPayload.spatial_clusters, sseMeta)
   }
 
   if (legacyPayload.vernacular_regions?.length) {
-    writeSSEEvent(reply, 'vernacular_regions', legacyPayload.vernacular_regions)
+    writeSSEEvent(reply, 'vernacular_regions', legacyPayload.vernacular_regions, sseMeta)
   }
 
   if (legacyPayload.fuzzy_regions?.length) {
-    writeSSEEvent(reply, 'fuzzy_regions', legacyPayload.fuzzy_regions)
+    writeSSEEvent(reply, 'fuzzy_regions', legacyPayload.fuzzy_regions, sseMeta)
   }
 
   if (legacyPayload.stats && typeof legacyPayload.stats === 'object') {
-    writeSSEEvent(reply, 'stats', legacyPayload.stats)
+    writeSSEEvent(reply, 'stats', legacyPayload.stats, sseMeta)
   }
 }
 
 /**
  */
 /**
- * 初始化 SSE 响应头并启动 heartbeat。
  */
-function beginSSE(reply, providerInfo = {}) {
+function beginSSE(reply, providerInfo = {}, traceId = '') {
   reply.raw.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
@@ -161,6 +227,7 @@ function beginSSE(reply, providerInfo = {}) {
     'Access-Control-Allow-Origin': '*',
     'X-AI-Provider': providerInfo.provider || 'unknown',
     'X-AI-Provider-Name': providerInfo.providerName || 'Unknown Provider',
+    'X-Trace-Id': traceId,
     'X-Accel-Buffering': 'no'
   })
 
@@ -181,13 +248,13 @@ function beginSSE(reply, providerInfo = {}) {
 /**
  */
 /**
- * AI 路由注册入口。
  */
 async function aiRoutes(fastify) {
+  await fastify.register(templateFeedbackRoutes)
+
   /**
    */
   fastify.get('/status', async () => {
-    // 复用 llm.js 的 30s 可用性缓存，避免每次请求独立发 HTTP 探测
     const providerInfo = await getActiveProviderInfo()
     return {
       online: true,
@@ -213,7 +280,6 @@ async function aiRoutes(fastify) {
         return { provider: 'local', models: data.data || [] }
       }
     } catch {
-            // 本地模型端点不可用，继续走兜底模型列表
     }
 
     return {
@@ -228,13 +294,19 @@ async function aiRoutes(fastify) {
   /**
    */
   /**
-   * 兼容主路由 `/api/ai/chat`。
-   * - sync：直接返回流式结果。
-   * - async：先返回 job 状态，再渐进推送结果。
    */
   fastify.post('/chat', async (request, reply) => {
     const { messages = [], poiFeatures = [], options = {} } = request.body || {}
     const spatialContext = options.spatialContext || request.body?.spatialContext || {}
+    const requestId = options.requestId || options.request_id || randomUUID()
+    const traceId = requestId
+    const sseMeta = {
+      traceId,
+      schemaVersion: SSE_SCHEMA_VERSION,
+      capabilities: SSE_CAPABILITIES
+    }
+    const requestStartedAt = Date.now()
+    let firstTokenAt = null
 
     if (!messages || messages.length === 0) {
       return reply.status(400).send({ error: 'messages is required' })
@@ -243,7 +315,6 @@ async function aiRoutes(fastify) {
     const sessionId = options.sessionId || `session_${Date.now()}`
     let session = ragSessions.get(sessionId)
     if (!session) {
-      // 创建新 session 前检查容量，超限时淘汰最早的
       if (ragSessions.size >= RAG_SESSION_MAX) {
         const oldestKey = ragSessions.keys().next().value
         if (oldestKey !== undefined) ragSessions.delete(oldestKey)
@@ -259,32 +330,64 @@ async function aiRoutes(fastify) {
     }
 
     session.setUserQuery(userQuestion)
+    session.log?.('Session', 'RequestMeta', {
+      trace_id: traceId,
+      poi_count: Array.isArray(poiFeatures) ? poiFeatures.length : 0
+    })
 
     const providerInfo = await getActiveProviderInfo()
-    const closeSSE = beginSSE(reply, providerInfo)
+    const closeSSE = beginSSE(reply, providerInfo, traceId)
 
-    // 统一分流规则，避免不同入口阈值不一致。
+    telemetry.incrementCounter('ai_chat_requests_total', { mode: 'incoming' })
+    telemetry.logStructured('info', 'ai_chat_start', {
+      trace_id: traceId,
+      session_id: sessionId,
+      user_question: userQuestion,
+      poi_count: Array.isArray(poiFeatures) ? poiFeatures.length : 0
+    })
+    if (options.clientMetrics && typeof options.clientMetrics === 'object') {
+      telemetry.logStructured('info', 'ai_chat_client_metrics', {
+        trace_id: traceId,
+        client_metrics: options.clientMetrics
+      })
+      session.log?.('Client', 'Metrics', summarizeForRagLog(options.clientMetrics))
+    }
+
     const decision = decideExecutionMode({
       spatialContext,
       queryPlan: options.queryPlan || null,
       options,
       estimatedPoiCount: options.estimatedCandidates ?? poiFeatures.length
     })
+    telemetry.incrementCounter('ai_chat_mode_total', { mode: decision.mode })
+    session.log?.('Pipeline', 'ModeDecision', summarizeForRagLog(decision))
 
     writeSSEEvent(reply, 'job', {
       mode: decision.mode,
       decision
-    })
+    }, sseMeta)
 
     let shouldCloseImmediately = true
+
+    const writeTextChunk = (textChunk) => {
+      if (!firstTokenAt) {
+        firstTokenAt = Date.now()
+        const firstTokenLatency = firstTokenAt - requestStartedAt
+        telemetry.observeHistogram('first_token_latency_ms', firstTokenLatency, { mode: decision.mode })
+        telemetry.recordKpiEvent('first_token_latency_ms', firstTokenLatency, {
+          mode: decision.mode,
+          trace_id: traceId
+        })
+      }
+      writeSSEText(reply, textChunk)
+    }
 
     try {
       // =====================
       // =====================
-      // 异步模式：入队 + 订阅事件流。
       if (decision.mode === 'async') {
         const enqueueResult = await enqueueSpatialJob({
-          request_id: options.requestId || randomUUID(),
+          request_id: requestId,
           query: userQuestion,
           messages,
           poiFeatures,
@@ -302,11 +405,12 @@ async function aiRoutes(fastify) {
           mode: 'async',
           status: 'queued',
           decision
-        })
+        }, sseMeta)
 
         shouldCloseImmediately = false
 
         let streamedText = false
+        let asyncTextChars = 0
 
         const unsubscribe = subscribeJobEvents(enqueueResult.jobId, async (event) => {
           try {
@@ -315,31 +419,34 @@ async function aiRoutes(fastify) {
             }
 
           if (event.type === 'queued' || event.type === 'started') {
+            logSessionStage(session, event.payload?.stage || event.type, event.payload || {})
             writeSSEEvent(reply, 'stage', {
               name: event.payload?.stage || event.type
-            })
+            }, sseMeta)
             return
           }
 
           if (event.type === 'stage') {
+            logSessionStage(session, event.payload?.stage || 'processing', event.payload || {})
             writeSSEEvent(reply, 'stage', {
               name: event.payload?.stage || 'processing',
               ...event.payload
-            })
+            }, sseMeta)
             return
           }
 
           if (event.type === 'progress') {
-            writeSSEEvent(reply, 'progress', event.payload)
+            writeSSEEvent(reply, 'progress', event.payload, sseMeta)
             return
           }
 
           if (event.type === 'partial') {
             if (event.payload?.text_chunk) {
               streamedText = true
-              writeSSEText(reply, event.payload.text_chunk)
+              asyncTextChars += String(event.payload.text_chunk || '').length
+              writeTextChunk(event.payload.text_chunk)
             } else {
-              writeSSEEvent(reply, 'partial', event.payload)
+              writeSSEEvent(reply, 'partial', event.payload, sseMeta)
             }
             return
           }
@@ -349,15 +456,30 @@ async function aiRoutes(fastify) {
             const result = snapshot?.result || event.payload?.result
 
             if (result?.answer && !streamedText) {
-              writeSSEText(reply, result.answer)
+              asyncTextChars += String(result.answer || '').length
+              writeTextChunk(result.answer)
             }
 
             const legacyPayload = toLegacySSEPayload(result)
-            applyResultToSession(session, legacyPayload)
+            applyResultToSession(session, legacyPayload, result)
+            session.log?.('Writer', 'StreamSummary', { chars: asyncTextChars, mode: 'async' })
 
-            writeSSEEvent(reply, 'refined_result', result)
-            emitLegacyEvents(reply, legacyPayload)
+            writeSSEEvent(reply, 'refined_result', result, sseMeta)
+            emitLegacyEvents(reply, legacyPayload, sseMeta)
             reply.raw.write('data: [DONE]\n\n')
+
+            const endToEndLatency = Date.now() - requestStartedAt
+            telemetry.observeHistogram('end_to_end_latency_ms', endToEndLatency, { mode: 'async' })
+            telemetry.recordKpiEvent('end_to_end_latency_ms', endToEndLatency, {
+              mode: 'async',
+              trace_id: traceId
+            })
+            telemetry.logStructured('info', 'ai_chat_complete', {
+              trace_id: traceId,
+              mode: 'async',
+              end_to_end_latency_ms: endToEndLatency,
+              response_length: result?.answer?.length || 0
+            })
 
             session.markSuccess?.()
             session.log?.('Pipeline', 'Completed', { mode: 'async', responseLength: result?.answer?.length || 0 })
@@ -369,14 +491,54 @@ async function aiRoutes(fastify) {
           }
 
           if (event.type === 'failed') {
-            writeSSEEvent(reply, 'error', { message: event.payload?.error || 'Job failed' })
+            session.log?.('Pipeline', 'Failed', {
+              mode: 'async',
+              error: event.payload?.error || 'Job failed'
+            })
+            writeSSEEvent(reply, 'error', { message: event.payload?.error || 'Job failed' }, sseMeta)
+            telemetry.incrementCounter('ai_chat_failures_total', { mode: 'async', reason: 'job_failed' })
+            telemetry.recordKpiEvent('sse_event_error', 1, {
+              mode: 'async',
+              reason: 'job_failed',
+              trace_id: traceId
+            })
+            const failedLatency = Date.now() - requestStartedAt
+            telemetry.observeHistogram('end_to_end_latency_ms', failedLatency, { mode: 'async', status: 'failed' })
+            telemetry.recordKpiEvent('end_to_end_latency_ms', failedLatency, {
+              mode: 'async',
+              status: 'failed',
+              trace_id: traceId
+            })
+            telemetry.logStructured('error', 'ai_chat_failed', {
+              trace_id: traceId,
+              mode: 'async',
+              error: event.payload?.error || 'Job failed'
+            })
             session.save?.()
             unsubscribe()
             closeSSE()
           }
           } catch (eventErr) {
             console.error('[AI Chat] async stream event failed:', eventErr)
-            writeSSEEvent(reply, 'error', { message: eventErr.message })
+            writeSSEEvent(reply, 'error', { message: eventErr.message }, sseMeta)
+            telemetry.incrementCounter('ai_chat_failures_total', { mode: 'async', reason: 'event_exception' })
+            telemetry.recordKpiEvent('sse_event_error', 1, {
+              mode: 'async',
+              reason: 'event_exception',
+              trace_id: traceId
+            })
+            const failedLatency = Date.now() - requestStartedAt
+            telemetry.observeHistogram('end_to_end_latency_ms', failedLatency, { mode: 'async', status: 'failed' })
+            telemetry.recordKpiEvent('end_to_end_latency_ms', failedLatency, {
+              mode: 'async',
+              status: 'failed',
+              trace_id: traceId
+            })
+            telemetry.logStructured('error', 'ai_chat_stream_event_exception', {
+              trace_id: traceId,
+              mode: 'async',
+              error: eventErr.message
+            })
             session.save?.()
             unsubscribe()
             closeSSE()
@@ -394,10 +556,11 @@ async function aiRoutes(fastify) {
 
       // =====================
       // =====================
-      // 同步模式：当次请求内直接执行完整链路。
+      let syncTextChars = 0
+      let syncFirstTextLogged = false
       const result = await runNarrativeSpatialJob(
         {
-          request_id: options.requestId || randomUUID(),
+          request_id: requestId,
           query: userQuestion,
           messages,
           poiFeatures,
@@ -409,37 +572,86 @@ async function aiRoutes(fastify) {
         },
         {
           reportStage: async (stage, payload = {}) => {
-            writeSSEEvent(reply, 'stage', { name: stage, ...payload })
+            logSessionStage(session, stage, payload)
+            writeSSEEvent(reply, 'stage', { name: stage, ...payload }, sseMeta)
           },
           reportProgress: async (progress, payload = {}) => {
-            writeSSEEvent(reply, 'progress', { progress, ...payload })
+            if (payload?.stage) {
+              session.log?.('Pipeline', 'Progress', {
+                progress,
+                stage: payload.stage
+              })
+            }
+            writeSSEEvent(reply, 'progress', { progress, ...payload }, sseMeta)
           },
           reportPartial: async (payload = {}) => {
             if (payload.text_chunk) {
-              writeSSEText(reply, payload.text_chunk)
+              syncTextChars += String(payload.text_chunk || '').length
+              writeTextChunk(payload.text_chunk)
             } else {
-              writeSSEEvent(reply, 'partial', payload)
+              writeSSEEvent(reply, 'partial', payload, sseMeta)
             }
           },
           reportText: async (textChunk) => {
-            writeSSEText(reply, textChunk)
+            const chunkLength = String(textChunk || '').length
+            syncTextChars += chunkLength
+            if (!syncFirstTextLogged && chunkLength > 0) {
+              session.log?.('Writer', 'FirstTextChunk', { chars: chunkLength, mode: 'sync' })
+              syncFirstTextLogged = true
+            }
+            writeTextChunk(textChunk)
           }
         }
       )
 
       const legacyPayload = toLegacySSEPayload(result)
-      applyResultToSession(session, legacyPayload)
+      applyResultToSession(session, legacyPayload, result)
+      session.log?.('Writer', 'StreamSummary', { chars: syncTextChars, mode: 'sync' })
 
-      writeSSEEvent(reply, 'refined_result', result)
-      emitLegacyEvents(reply, legacyPayload)
+      writeSSEEvent(reply, 'refined_result', result, sseMeta)
+      emitLegacyEvents(reply, legacyPayload, sseMeta)
 
       reply.raw.write('data: [DONE]\n\n')
+      const endToEndLatency = Date.now() - requestStartedAt
+      telemetry.observeHistogram('end_to_end_latency_ms', endToEndLatency, { mode: 'sync' })
+      telemetry.recordKpiEvent('end_to_end_latency_ms', endToEndLatency, {
+        mode: 'sync',
+        trace_id: traceId
+      })
+      telemetry.logStructured('info', 'ai_chat_complete', {
+        trace_id: traceId,
+        mode: 'sync',
+        end_to_end_latency_ms: endToEndLatency,
+        response_length: result?.answer?.length || 0
+      })
       session.markSuccess?.()
       session.log?.('Pipeline', 'Completed', { mode: 'sync', responseLength: result?.answer?.length || 0 })
       session.save?.()
     } catch (err) {
       console.error('[AI Chat] pipeline failed:', err)
-      writeSSEEvent(reply, 'error', { message: err.message })
+      session.log?.('Pipeline', 'Failed', {
+        mode: decision.mode,
+        error: err.message
+      })
+      writeSSEEvent(reply, 'error', { message: err.message }, sseMeta)
+      telemetry.incrementCounter('ai_chat_failures_total', { mode: decision.mode, reason: 'pipeline_error' })
+      telemetry.recordKpiEvent('sse_event_error', 1, {
+        mode: decision.mode,
+        reason: 'pipeline_error',
+        trace_id: traceId
+      })
+      const failedLatency = Date.now() - requestStartedAt
+      telemetry.observeHistogram('end_to_end_latency_ms', failedLatency, { mode: decision.mode, status: 'failed' })
+      telemetry.recordKpiEvent('end_to_end_latency_ms', failedLatency, {
+        mode: decision.mode,
+        status: 'failed',
+        trace_id: traceId
+      })
+      telemetry.logStructured('error', 'ai_chat_failed', {
+        trace_id: traceId,
+        mode: decision.mode,
+        error: err.message
+      })
       session.save?.()
     } finally {
       if (shouldCloseImmediately) {
@@ -515,7 +727,6 @@ async function aiRoutes(fastify) {
       return { success: true, query, total: 0, results: [] }
     }
 
-    // ֱһɹ+֣ filter+sort ظƴַ
     const scored = []
     for (let i = 0; i < poiFeatures.length; i++) {
       const props = poiFeatures[i].properties || {}

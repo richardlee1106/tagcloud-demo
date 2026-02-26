@@ -1,22 +1,9 @@
-/**
- * 阶段 1: Planner (查询规划器)
- * 
- * 职责：
- * - 将用户自然语言问题转换为结构化 QueryPlan JSON
- * - 绝不访问 POI 数据，只做意图解析
- * - Token 消耗: < 500
- */
-
-import { getLLMConfig } from '../../services/llm.js'
 import { extractCategoriesFromQuestion, expandCategory, CATEGORY_ONTOLOGY } from '../../services/categoryOntology.js'
 import { shouldHardBlockInput } from '../../services/relevanceGate.js'
 
-/**
- * QueryPlan 默认值
- */
 export const QUERY_PLAN_DEFAULTS = {
   query_type: null,
-  intent_mode: null, // 'macro_overview' | 'local_search'
+  intent_mode: null,
   anchor: {
     type: 'unknown',
     name: null,
@@ -25,337 +12,154 @@ export const QUERY_PLAN_DEFAULTS = {
     lat: null,
     lon: null
   },
-  radius_m: 3000,  // 增加默认半径
+  radius_m: 3000,
   categories: [],
   rating_range: [null, null],
   semantic_query: '',
-  max_results: 30,  // 增加默认结果数
+  max_results: 30,
   sort_by: 'distance',
-  
-  // ͨ
   aggregation_strategy: {
     enable: false,
-    method: 'h3',       // 'h3' | 'cluster' | 'administrative'
-    resolution: 9,      // H3 分辨率
-    max_bins: 60        // 传给 Writer 的最大网格/聚类数 (增加)
+    method: 'h3',
+    resolution: 9,
+    max_bins: 60
   },
   sampling_strategy: {
     enable: false,
-    method: 'representative', // 'representative' | 'random' | 'top_k'
-    count: 50,                // 默认 50，支持 coarse aggregation
-    rules: ['diversity']      // 采样规则: 'diversity' (多样性), 'density' (高密区), 'outlier' (异常点)
+    method: 'representative',
+    count: 50,
+    rules: ['diversity']
   },
-  
   need_global_context: false,
   need_landmarks: false,
   need_graph_reasoning: false,
   clarification_question: null,
-  
-  // Phase 1 新增：置信度评分
   confidence: {
-    score: 0,           // 0-10 分
-    level: 'unknown',   // 'high' | 'medium' | 'low' | 'unknown'
-    reasons: []         // 置信度来源说明
+    score: 0,
+    level: 'unknown',
+    reasons: []
   }
 }
 
-/**
- * 图推理关键词（用于检测是否需要启用图推理）
- */
+const QUICK_TOKEN_USAGE = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
+
 const GRAPH_REASONING_KEYWORDS = [
-  // 网络/可达性
-  'ɴ', 'ͨ', '·', 'ͨ', 'ͨ', '',
-  // 枢纽/节点
-  '枢纽', '核心节点', '中心节点', '交通中心', '商业中心', '核心区',
-  // 路径/连接
-  '路径', '连接', '串联', '贯穿', '衔接', '辐射',
-  // 结构/拓扑
-  '结构', '网络结构', '空间结构', '拓扑', '布局',
-  // 关系
-  '关联', '协同', '共生', '聚集效应', '生态圈', '生活圈'
+  'network',
+  'accessibility',
+  'reachable',
+  'topology',
+  'path',
+  'connection',
+  '\u8def\u7f51',
+  '\u53ef\u8fbe\u6027',
+  '\u8def\u5f84',
+  '\u8fde\u63a5',
+  '\u62d3\u6251',
+  '\u7ed3\u6784',
+  '\u5173\u7cfb',
+  '\u8f90\u5c04',
+  '\u6838\u5fc3\u8282\u70b9',
+  '\u7a7a\u95f4\u7ed3\u6784'
 ]
 
-/**
- * ǷҪͼ
- * @param {string} question - 用户问题
- * @returns {boolean}
- */
+const LOCAL_HINTS = [
+  '\u9644\u8fd1',
+  '\u5468\u8fb9',
+  '\u5468\u56f4',
+  '\u6700\u8fd1',
+  '\u627e',
+  '\u54ea\u91cc\u6709',
+  '\u6709\u6ca1\u6709',
+  '\u63a8\u8350',
+  '\u4e1c\u4fa7',
+  '\u897f\u4fa7',
+  '\u5357\u4fa7',
+  '\u5317\u4fa7',
+  '\u4e1c\u8fb9',
+  '\u897f\u8fb9',
+  '\u5357\u8fb9',
+  '\u5317\u8fb9'
+]
+
+const MACRO_HINTS = [
+  '\u5206\u6790',
+  '\u6982\u51b5',
+  '\u7279\u5f81',
+  '\u89c4\u5f8b',
+  '\u5206\u5e03',
+  '\u8bc4\u4f30',
+  '\u5982\u4f55',
+  '\u7ed3\u6784',
+  '\u8d8b\u52bf',
+  '\u753b\u50cf'
+]
+
+const DIRECTION_HINTS = [
+  '\u4e1c\u4fa7',
+  '\u897f\u4fa7',
+  '\u5357\u4fa7',
+  '\u5317\u4fa7',
+  '\u4e1c\u8fb9',
+  '\u897f\u8fb9',
+  '\u5357\u8fb9',
+  '\u5317\u8fb9',
+  '\u5411\u4e1c',
+  '\u5411\u897f',
+  '\u5411\u5357',
+  '\u5411\u5317'
+]
+
+const TRANSPORT_INTENT_HINTS = [
+  '\u4ea4\u901a',
+  '\u51fa\u884c',
+  '\u901a\u52e4',
+  '\u53ef\u8fbe\u6027',
+  '\u5730\u94c1',
+  '\u516c\u4ea4',
+  '\u505c\u8f66',
+  'transit',
+  'traffic',
+  'commute',
+  'mobility'
+]
+
+const MOBILITY_ONLY_CATEGORIES = new Set([
+  '\u505c\u8f66\u573a',
+  '\u5730\u94c1\u7ad9',
+  '\u516c\u4ea4\u7ad9',
+  '\u516c\u4ea4\u8f66\u7ad9',
+  '\u8f68\u9053\u4ea4\u901a',
+  '\u4ea4\u901a\u8bbe\u65bd'
+].map((item) => normalizeToken(item)))
+
+function normalizeToken(value) {
+  return String(value || '').trim().toLowerCase().replace(/\s+/g, '')
+}
+
+function uniq(items = []) {
+  const seen = new Set()
+  const output = []
+  for (const item of items) {
+    const text = String(item || '').trim()
+    if (!text) continue
+    const key = normalizeToken(text)
+    if (seen.has(key)) continue
+    seen.add(key)
+    output.push(text)
+  }
+  return output
+}
+
 function detectGraphReasoningNeed(question) {
-  if (!question) return false
-  const q = question.toLowerCase()
-  return GRAPH_REASONING_KEYWORDS.some(kw => q.includes(kw))
+  const normalized = String(question || '').toLowerCase()
+  if (!normalized) return false
+  return GRAPH_REASONING_KEYWORDS.some((kw) => normalized.includes(kw))
 }
 
-// =====================================================
-// Phase 1 优化：置信度评分 + 澄清问题生成
-// =====================================================
-
-/**
- * 计算 QueryPlan 的置信度评分
- * 
- * 评分维度 (总分 10 分)：
- * - query_type 明确性: 2 分
- * - intent_mode 一致性: 2 分  
- * - anchor 有效性: 2 分
- * - categories 非空: 1.5 分
- * - semantic_query 有效: 1 分
- * - 无冲突关键词: 1.5 分
- * 
- * @param {Object} plan - QueryPlan
- * @param {string} question - 原始问题
- * @returns {Object} { score: number, level: string, reasons: string[] }
- */
-function calculatePlanConfidence(plan, question) {
-  let score = 0
-  const reasons = []
-  const q = question?.toLowerCase() || ''
-
-  // 1. query_type 明确性 (2分)
-  if (plan.query_type && plan.query_type !== 'area_analysis') {
-    // 非默认值，说明 LLM 做出了明确判断
-    score += 2
-    reasons.push('query_type 已明确')
-  } else if (plan.query_type === 'area_analysis') {
-    // 是默认值，检查是否有宏观分析的关键词
-    const macroKeywords = ['分析', '概况', '分布', '评估', '特征', '怎么样']
-    if (macroKeywords.some(kw => q.includes(kw))) {
-      score += 2
-      reasons.push('query_type 与关键词匹配')
-    } else {
-      score += 0.5
-      reasons.push('query_type 为默认值')
-    }
-  }
-
-  // 2. intent_mode 一致性 (2分)
-  if (plan.intent_mode) {
-    // 检查 intent_mode 与 query_type 是否一致
-    const consistent = 
-      (plan.intent_mode === 'local_search' && plan.query_type === 'poi_search') ||
-      (plan.intent_mode === 'macro_overview' && plan.query_type === 'area_analysis')
-    
-    if (consistent) {
-      score += 2
-      reasons.push('intent_mode 与 query_type 一致')
-    } else {
-      score += 1
-      reasons.push('intent_mode 与 query_type 不完全一致')
-    }
-  } else {
-    score += 0
-    reasons.push('intent_mode 未设置')
-  }
-
-  // 3. anchor 有效性 (2分)
-  if (plan.anchor?.type === 'landmark' && plan.anchor?.name) {
-    score += 2
-    reasons.push('anchor 已明确设置')
-  } else if (plan.anchor?.type === 'coordinate' && plan.anchor?.lat && plan.anchor?.lon) {
-    score += 2
-    reasons.push('anchor 坐标已设置')
-  } else if (plan.anchor?.type === 'unknown') {
-    // 检查问题中是否有地名
-    const hasPlaceName = /(?:||ȥ||ܱ|Ա)[^]+/.test(question)
-    if (!hasPlaceName) {
-      score += 1 // 问题中没有地名，unknown 是合理的
-      reasons.push('anchor 未知但问题中无明确地名')
-    } else {
-      score += 0
-      reasons.push('anchor 未能解析问题中的地名')
-    }
-  }
-
-  // 4. categories 非空 (1.5分)
-  if (plan.categories && plan.categories.length > 0) {
-    score += 1.5
-    reasons.push(`categories 已设置 (${plan.categories.length} 个)`)
-  } else {
-    // 全域分析也是合理的
-    const wholeAreaKeywords = ['整体', '全部', '所有', '这片', '这个区域']
-    if (wholeAreaKeywords.some(kw => q.includes(kw))) {
-      score += 1
-      reasons.push('全域分析模式')
-    } else {
-      score += 0
-      reasons.push('categories 为空')
-    }
-  }
-
-  // 5. semantic_query 有效 (1分)
-  if (plan.semantic_query && plan.semantic_query.length > 2) {
-    score += 1
-    reasons.push('semantic_query 已设置')
-  }
-
-  // 6. 无冲突关键词 (1.5分)
-  const localKeywords = ['附近', '最近', '找', '哪里有', '有没有']
-  const macroKeywords = ['分析', '概况', '分布', '评估', '结构']
-  const hasLocal = localKeywords.some(kw => q.includes(kw))
-  const hasMacro = macroKeywords.some(kw => q.includes(kw))
-  
-  if (hasLocal && hasMacro) {
-    // 同时包含微观和宏观关键词，可能有歧义
-    score += 0
-    reasons.push('ͻؼ (΢+)')
-  } else {
-    score += 1.5
-    reasons.push('无冲突关键词')
-  }
-
-  // 计算等级
-  let level = 'unknown'
-  if (score >= 8) level = 'high'
-  else if (score >= 5) level = 'medium'
-  else if (score >= 2) level = 'low'
-  else level = 'very_low'
-
-  return {
-    score: Math.round(score * 10) / 10,
-    level,
-    reasons
-  }
-}
-
-/**
- * 生成澄清问题
- * 
- * ŶȵʱԵĳ
- * 
- * @param {Object} plan - 当前解析的 QueryPlan
- * @param {string} question - 原始用户问题
- * @param {Object} confidence - 置信度评分结果
- * @returns {string|null} 澄清问题或 null
- */
-function generateClarificationQuestion(plan, question, confidence) {
-  const issues = []
-
-  // 分析置信度低的原因
-  if (confidence.reasons.includes('ͻؼ (΢+)')) {
-    // 意图模糊：同时有微观和宏观词
-    return `ͬʱ漰͡룺
-1️⃣ **找具体的点** - 如"推荐几家附近的餐厅"
-2️⃣ **分析区域整体情况** - 如"这片区域的餐饮分布如何"
-
-请选择或换一种方式描述您的需求。`
-  }
-
-  if (confidence.reasons.includes('anchor 未能解析问题中的地名')) {
-    // 地名解析失败
-    return `我注意到您提到了一个地点，但我没能准确识别。请问您说的是：
-- 📍 一个具体的地名（如"武汉大学"、"光谷广场"）?  
-- 9015 ǰͼҰΧ?  
-
-请提供更具体的位置描述，或者在地图上选择一个区域。`
-  }
-
-  if (confidence.reasons.includes('categories 为空') && 
-      !confidence.reasons.includes('全域分析模式') &&
-      plan.query_type === 'poi_search') {
-    // POI 搜索但没有类别
-    return `您想找什么类型的地点呢？例如：
-- 90 ʳ̲...
-- 🏪 购物消费（商场、超市、便利店...）
-- 🚇 交通出行（地铁站、公交站、停车场...）
-- 🏥 生活服务（医院、银行、药店...）
-
-请告诉我您具体想找什么。`
-  }
-
-  if (confidence.score < 3) {
-    // 整体置信度很低
-    return `抱歉，我没太理解您的问题。您是想：
-1️⃣ 在某个位置**找特定类型的地点**？
-2️⃣ **分析**某个区域的**整体情况**？
-3️⃣ 了解**两地之间的距离或路线**？
-
-请用更具体的描述告诉我。`
-  }
-
-  return null
-}
-
-/**
- * 净化类别列表：移除过于泛化的类别
- * 
- * ⳡLLM  ["", ""]
- * - "" ƥвȣûĽ
- * - 应该只保留精确的 "咖啡厅" 类别
- * 
- * @param {string[]} categories - LLM 输出的类别列表
- * @returns {string[]} 净化后的类别列表
- */
-function sanitizeCategories(categories) {
-  if (!categories || categories.length === 0) return []
-  if (categories.length === 1) return categories
-  
-  // 定义泛化类别及其精确子类
-  const generalizationMap = {
-    '餐厅': {
-      generalKeywords: ['', '', ''],
-      preciseCategories: ['', 'ȹ', '', '̲', '', '', 'տ', '', '', '']
-    },
-    '商店': {
-      generalKeywords: ['商店', '店铺', '门店'],
-      preciseCategories: ['超市', '便利店', '商场', '药店']
-    },
-    '服务': {
-      generalKeywords: ['服务', '生活服务'],
-      preciseCategories: ['', 'ʾ', '']
-    }
-  }
-  
-  const result = []
-  const hasPrecise = new Set()
-  
-  // 第一轮：识别精确类别
-  for (const cat of categories) {
-    const catLower = cat.toLowerCase()
-    for (const [general, config] of Object.entries(generalizationMap)) {
-      if (config.preciseCategories.some(p => catLower.includes(p.toLowerCase()))) {
-        hasPrecise.add(general)
-      }
-    }
-  }
-  
-  // 第二轮：过滤掉泛化类别
-  for (const cat of categories) {
-    const catLower = cat.toLowerCase()
-    let isGeneral = false
-    
-    for (const [general, config] of Object.entries(generalizationMap)) {
-      // 如果这是一个泛化类别，且已经有了精确类别，则跳过
-      if (config.generalKeywords.some(kw => catLower.includes(kw.toLowerCase()))) {
-        if (hasPrecise.has(general)) {
-          isGeneral = true
-          console.log(`[Planner] 净化类别: 移除泛化类别 "${cat}"，保留精确类别`)
-          break
-        }
-      }
-    }
-    
-    if (!isGeneral) {
-      result.push(cat)
-    }
-  }
-  
-  // 如果净化后为空（不应该发生），返回原列表
-  return result.length > 0 ? result : categories
-}
-
-/**
- * 检测问题中是否存在意图冲突
- * @param {string} question
- * @returns {Object} { hasConflict: boolean, localScore: number, macroScore: number }
- */
 function detectIntentConflict(question) {
-  const q = question.toLowerCase()
-  
-  const localKeywords = ['附近', '周围', '周边', '最近', '找', '哪里有', '有没有', '推荐', '去哪']
-  const macroKeywords = ['分析', '概况', '特征', '分布', '评估', '怎么样', '如何', '结构', '便利度']
-  
-  const localScore = localKeywords.filter(kw => q.includes(kw)).length
-  const macroScore = macroKeywords.filter(kw => q.includes(kw)).length
-  
+  const normalized = String(question || '').toLowerCase()
+  const localScore = LOCAL_HINTS.filter((kw) => normalized.includes(kw)).length
+  const macroScore = MACRO_HINTS.filter((kw) => normalized.includes(kw)).length
   return {
     hasConflict: localScore > 0 && macroScore > 0,
     localScore,
@@ -363,37 +167,107 @@ function detectIntentConflict(question) {
   }
 }
 
+function isMetaQuestionExamplesRequest(question = '') {
+  const normalized = String(question || '').trim().toLowerCase()
+  if (!normalized) return false
+  const compact = normalized.replace(/\s+/g, '')
 
-// 对明显简单请求走规则快路，减少 Router LLM 开销。
+  const directPatterns = [
+    /(?:\u7ed9\u6211|\u63d0\u4f9b|\u5217\u51fa|\u751f\u6210).{0,12}(?:\u95ee\u9898|\u95ee\u6cd5|\u63d0\u95ee).{0,8}(?:\u793a\u4f8b|\u4f8b\u5b50|\u6a21\u677f)/u,
+    /(?:\u600e\u4e48\u63d0\u95ee|\u5982\u4f55\u63d0\u95ee|\u600e\u4e48\u95ee|\u95ee\u6cd5\u5efa\u8bae)/u,
+    /(?:question|questions|query).{0,8}(?:example|examples|template|templates|prompt|prompts)/u
+  ]
+  if (directPatterns.some((pattern) => pattern.test(compact))) {
+    return true
+  }
+
+  const exampleTokens = [
+    '\u793a\u4f8b',
+    '\u4f8b\u5b50',
+    '\u6a21\u677f',
+    '\u63d0\u793a\u8bcd',
+    '\u95ee\u6cd5',
+    'prompt',
+    'template',
+    'example'
+  ]
+  const questionTokens = [
+    '\u95ee\u9898',
+    '\u63d0\u95ee',
+    '\u95ee\u6cd5',
+    'question',
+    'query',
+    'queries'
+  ]
+
+  return exampleTokens.some((token) => compact.includes(token)) &&
+    questionTokens.some((token) => compact.includes(token))
+}
+
+function isGeneralHelpRequest(question = '') {
+  const normalized = String(question || '').trim().toLowerCase()
+  if (!normalized) return false
+  const patterns = [
+    /\u4f60\u662f\u8c01/u,
+    /\u4f60\u80fd\u505a\u4ec0\u4e48/u,
+    /\u600e\u4e48\u7528/u,
+    /\u5982\u4f55\u4f7f\u7528/u,
+    /\u80fd\u529b/u,
+    /\bhelp\b/i,
+    /who are you/i,
+    /what can you do/i
+  ]
+  return patterns.some((pattern) => pattern.test(normalized))
+}
+
+function inferCategoriesFromQuestion(question, fallbackCategories = []) {
+  const detected = extractCategoriesFromQuestion(question)
+  if (!Array.isArray(detected) || detected.length === 0) {
+    return uniq(fallbackCategories)
+  }
+
+  const expanded = []
+  for (const category of detected) {
+    const canon = String(category || '').trim()
+    if (!canon) continue
+    expanded.push(canon)
+    if (CATEGORY_ONTOLOGY[canon]) {
+      const children = expandCategory(canon)
+      if (Array.isArray(children) && children.length > 0) {
+        expanded.push(...children)
+      }
+    }
+  }
+
+  return uniq(expanded)
+}
 
 function shouldUseRuleFastPath(question, context = {}) {
   const normalized = String(question || '').trim().toLowerCase()
-  if (!normalized) {
-    return { bypass: true, reason: 'empty_question' }
-  }
-
-  // 先执行硬规则兜底，拦截明显噪声/无关输入
-  if (shouldHardBlockInput(question)) {
-    return { bypass: true, reason: 'irrelevant_input' }
-  }
+  if (!normalized) return { bypass: true, reason: 'empty_question' }
+  if (shouldHardBlockInput(question)) return { bypass: true, reason: 'irrelevant_input' }
+  if (isMetaQuestionExamplesRequest(question)) return { bypass: true, reason: 'general_qa_meta' }
+  if (isGeneralHelpRequest(question)) return { bypass: true, reason: 'general_qa_help' }
 
   const complexHints = [
-    '选区', '比较', '对比', '差异', '关系', '多步', '连通', '拓扑', '演化',
-    'fuzzy', 'vernacular', 'narrative', 'region_comparison', 'graph'
+    '\u9009\u533a',
+    '\u6bd4\u8f83',
+    '\u5bf9\u6bd4',
+    '\u5dee\u5f02',
+    '\u62d3\u6251',
+    'fuzzy',
+    'vernacular',
+    'graph',
+    'region_comparison'
   ]
-
   if (complexHints.some((hint) => normalized.includes(hint))) {
     return { bypass: false, reason: 'complex_hint_detected' }
   }
 
-  const localHints = ['附近', '周边', '周围', '最近', '找', '哪里有', '推荐', '有没有']
-  const macroHints = ['分析', '分布', '概况', '评估', '特征', '结构', '画像']
-  const directionHints = ['东侧', '西侧', '南侧', '北侧', '东边', '西边', '南边', '北边', '向东', '向西', '向南', '向北']
-  const hasIntentHints = localHints.some((hint) => normalized.includes(hint)) ||
-    macroHints.some((hint) => normalized.includes(hint))
-  const hasDirectionHints = directionHints.some((hint) => normalized.includes(hint))
+  const hasIntentHints = LOCAL_HINTS.some((hint) => normalized.includes(hint)) ||
+    MACRO_HINTS.some((hint) => normalized.includes(hint))
+  const hasDirectionHints = DIRECTION_HINTS.some((hint) => normalized.includes(hint))
   const hasCategoryHints = extractCategoriesFromQuestion(question).length > 0
-
   const hasAreaContext = Boolean(context?.hasSelectedArea)
   const isShortQuery = normalized.length <= 36
 
@@ -408,11 +282,34 @@ function shouldUseRuleFastPath(question, context = {}) {
   return { bypass: false, reason: 'router_needed' }
 }
 
-// 统一构建快路径输出，确保规则路径与 Router 快路径结构一致。
-function buildQuickPlannerOutput(userQuestion, { routerResult = null, reason = 'rule_fast_path', startTime = Date.now() } = {}) {
-  // 如果是无关输入
-  if (reason === "irrelevant_input") {
-    const duration = Date.now() - startTime
+function buildQuickPlannerOutput(userQuestion, { reason = 'rule_fast_path', startTime = Date.now() } = {}) {
+  if (reason === 'general_qa_meta' || reason === 'general_qa_help') {
+    return {
+      success: true,
+      queryPlan: {
+        ...QUERY_PLAN_DEFAULTS,
+        query_type: 'general_qa',
+        intent_mode: 'llm_chat',
+        categories: [],
+        semantic_query: '',
+        confidence: {
+          score: 9,
+          level: 'high',
+          reasons: reason === 'general_qa_meta'
+            ? ['meta_question_examples', 'skip_spatial_compute']
+            : ['general_help_request', 'skip_spatial_compute']
+        }
+      },
+      tokenUsage: QUICK_TOKEN_USAGE,
+      duration: Date.now() - startTime,
+      confidence: 'high',
+      fastPath: true,
+      routerUsed: false,
+      fastPathReason: reason
+    }
+  }
+
+  if (reason === 'irrelevant_input') {
     return {
       success: true,
       queryPlan: {
@@ -427,8 +324,8 @@ function buildQuickPlannerOutput(userQuestion, { routerResult = null, reason = '
           reasons: ['hard_rule_block', 'query_not_geo_related']
         }
       },
-      tokenUsage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-      duration,
+      tokenUsage: QUICK_TOKEN_USAGE,
+      duration: Date.now() - startTime,
       confidence: 'high',
       fastPath: true,
       routerUsed: false,
@@ -437,822 +334,168 @@ function buildQuickPlannerOutput(userQuestion, { routerResult = null, reason = '
   }
 
   const quickPlan = quickIntentClassify(userQuestion)
-
-  if (routerResult?.anchor) {
-    quickPlan.anchor = { type: 'landmark', name: routerResult.anchor, lat: null, lon: null }
-  }
-  if (routerResult?.categories?.length > 0) {
-    quickPlan.categories = routerResult.categories
-  }
-  if (routerResult?.intent) {
-    quickPlan.query_type = routerResult.intent === 'search' ? 'poi_search' : 'area_analysis'
-    quickPlan.intent_mode = routerResult.intent === 'search' ? 'local_search' : 'macro_overview'
-  }
-
-  if (!quickPlan.need_graph_reasoning && detectGraphReasoningNeed(userQuestion)) {
-    quickPlan.need_graph_reasoning = true
-  }
-
-  quickPlan.confidence = {
-    score: routerResult ? 8 : 7,
-    level: 'high',
-    reasons: routerResult
-      ? ['LLM ·ж', '']
-      : ['规则引擎快速路径', reason]
-  }
-
-  const duration = Date.now() - startTime
   return {
     success: true,
     queryPlan: quickPlan,
-    tokenUsage: routerResult?.tokenUsage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-    duration,
-    confidence: 'high',
+    tokenUsage: QUICK_TOKEN_USAGE,
+    duration: Date.now() - startTime,
+    confidence: quickPlan?.confidence?.level || 'medium',
     fastPath: true,
-    routerUsed: Boolean(routerResult),
+    routerUsed: false,
     fastPathReason: reason
   }
 }
 
-// =====================================================
-// LLM Router: ⸴Ӷȷ
-// 使用极短 prompt，预期响应时间 < 1秒
-// =====================================================
+export function applyAreaAnalysisCategoryGuard(queryPlan, userQuestion = '') {
+  const plan = queryPlan && typeof queryPlan === 'object' ? { ...queryPlan } : { ...QUERY_PLAN_DEFAULTS }
+  const queryType = String(plan.query_type || '').trim().toLowerCase()
 
-const ROUTER_PROMPT = `判断这个空间查询的复杂度，返回JSON:
-- complexity: "simple"(找地点/分析单一区域) 或 "complex"(对比多选区/关系/多步推理)
-- intent: "search"(找具体POI) 或 "analysis"(区域分析) 或 "comparison"(多选区对比)
-- anchor: 提取的地名(如"武汉大学")，无则null
-- categories: 类别数组(如["咖啡厅"])
-- regions: ȡѡ("ѡ1ѡ4"򷵻[1,4])[]
+  if (queryType !== 'area_analysis') return plan
+  if (!Array.isArray(plan.categories) || plan.categories.length === 0) return plan
 
-只返回JSON，不要解释。`
+  const normalizedQuestion = String(userQuestion || '').toLowerCase()
+  const hasExplicitTransportIntent = TRANSPORT_INTENT_HINTS.some((hint) => normalizedQuestion.includes(hint))
+  if (hasExplicitTransportIntent) return plan
 
-/**
- * LLM Router: ٷ⸴Ӷ
- * 使用极短 prompt，预期 < 1秒完成
- * 
- * @param {string} question - 用户问题
- * @returns {Promise<{isSimple: boolean, intent: string, anchor: string|null, categories: string[]}>}
- */
-async function classifyQueryComplexity(question) {
-  const startTime = Date.now()
-  
-  try {
-    const { baseUrl, model, apiKey, isLocal } = await getLLMConfig()
-    
-    const headers = { 'Content-Type': 'application/json' }
-    if (apiKey) {
-      headers['Authorization'] = `Bearer ${apiKey}`
-    }
-    
-    const response = await fetch(`${baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: 'system', content: ROUTER_PROMPT },
-          { role: 'user', content: question }
-        ],
-        temperature: 0,      // 零温度，确保确定性输出
-        max_tokens: 100,     // 极短输出
-      }),
-    })
-    
-    if (!response.ok) {
-      throw new Error(`Router API error: ${response.status}`)
-    }
-    
-    const data = await response.json()
-    const content = data.choices?.[0]?.message?.content || ''
-    
-    // 解析 JSON
-    const jsonMatch = content.match(/\{[\s\S]*\}/)
-    if (!jsonMatch) {
-      console.warn('[Router] 无法解析 JSON，降级到完整分析')
-      return { isSimple: false, error: 'router_parse_failed' }
-    }
-    
-    const parsed = JSON.parse(jsonMatch[0])
-    const duration = Date.now() - startTime
-    
-    // 检测是否为多选区对比
-    const isComparison = parsed.intent === 'comparison' || (parsed.regions && parsed.regions.length > 1)
-    
-    console.log(`[Router] 分类完成 (${duration}ms): ${parsed.complexity}, intent=${parsed.intent}${isComparison ? ', regions=' + JSON.stringify(parsed.regions) : ''}`)
-    
-    return {
-      isSimple: parsed.complexity === 'simple' && !isComparison,
-      isComparison,
-      intent: parsed.intent,
-      anchor: parsed.anchor,
-      categories: parsed.categories || [],
-      regions: parsed.regions || [],
-      tokenUsage: data.usage
-    }
-  } catch (err) {
-    console.warn('[Router] 分类失败，降级到完整分析:', err.message)
-    return { isSimple: false, error: err.message }
-  }
+  plan.categories = plan.categories.filter((category) => !MOBILITY_ONLY_CATEGORIES.has(normalizeToken(category)))
+  return plan
 }
 
-/**
- * Planner System Prompt
- * 严格约束 LLM 只做意图解析，不做回答
- */
-const PLANNER_SYSTEM_PROMPT = `你是一个"空间查询规划器"，职责是将自然语言转换为结构化 QueryPlan。
-
-## 核心职责：区分"宏观概括"与"微观检索"
-这是最关键的决策！你必须判断用户是想看**整体区域的统计特征**，还是想找**具体的点**。
-
-### 模式 A: 宏观概括 (Macro Overview) / query_type="area_analysis"
-- **用户意图**：了解区域整体情况、分布规律、业态结构、交通便利度等。
-- ****"Ƭ""ʲôص""ͨô""ҵֲ"
-- **配置**：
-  - \`query_type\`: "area_analysis"
-  - \`intent_mode\`: "macro_overview"
-  - \`aggregation_strategy.enable\`: true (必须开启! 看统计数据)
-  - \`radius_m\`: 3000 ~ 5000 (大范围)
-  - \`sampling_strategy.enable\`: true (选代表点)
-  - \`categories\`: 
-    - "ͨ": ["վ", "վ", "ͣ", ...]
-    - 问"商业": ["商场", "超市", ...]
-    - 问"整体": [] (空数组代表全域)
-
-### 模式 B: 微观检索 (Local Search) / query_type="poi_search"
-- **用户意图**：寻找特定的店、设施，或者查询某个具体地点周边的信息。
-- ****"кóԵ""Ŀȹ""人ѧʲô""ͣ"
-- **配置**：
-  - \`query_type\`: "poi_search"
-  - \`intent_mode\`: "local_search"
-  - \`aggregation_strategy.enable\`: false (看明细!)
-  - \`radius_m\`: 500 ~ 1500 (小范围)
-  - \`categories\`: 必须指定具体类别! (如 ["咖啡厅", "中餐厅"])
-  - \`max_results\`: 10 ~ 20
-
-## JSON 结构定义
-{
-  "query_type": "area_analysis" | "poi_search" | "distance_query",
-  "intent_mode": "macro_overview" | "local_search", // 显式标记意图模式
-  "anchor": { ... },
-  "radius_m": number,
-  "categories": ["cat1", "cat2"], 
-  "semantic_query": "...", // 用于 pgvector 搜索
-  
-  "aggregation_strategy": {
-    "enable": boolean,
-    "method": "h3",
-    "resolution": number
-  },
-  
-  "sampling_strategy": { ... },
-  
-  // 图推理开关
-  "need_graph_reasoning": boolean // 是否需要图结构分析（可达性/枢纽/网络结构）
-}
-
-## 类别映射表 (必须严格遵守)
-| 领域 | 关键词 | categories |
-|---|---|---|
-| **ͨ/ͨ** | ͨ,,,,ͣ | ["վ", "վ", "ͣ", "վ", "վ"] |
-| **教育/学校** | 教育,上学,学校,培训 | ["学校", "幼儿园", "小学", "中学", "大学", "培训机构"] |
-| **医疗/健康** | 医院,看病,药店 | ["医院", "诊所", "药店", "社区卫生服务中心"] |
-| **购物/商业** | 购物,商场,买东西 | ["商场", "购物中心", "超市", "便利店"] |
-| **/ʳ** | Է,óԵ, | ["", "в", "", "С", ""] |
-
-## 决策逻辑
-1. **关键词匹配**：
-   - 有"分析"、"概况"、"特征"、"分布"、"便利度" → **Macro Overview**
-   - 有"附近"、"最近"、"找..."、"哪里有" → **Local Search**
-
-2. **语义推断**：
-   - "评估当前区域交通" → Area Analysis (Traffic Topic)
-   - "最近的地铁站在哪" → POI Search (Traffic Topic)
-
-3. **Pgvector 触发**：
-   - 凡是意图模糊或涉及形容词（"好玩的", "高档的"），必须生成 \`semantic_query\`。
-
-4. **图推理触发 (Graph Reasoning)**：
-   - 涉及"可达性"、"枢纽"、"连接"、"网络结构"、"辐射"、"生活圈"时，设置 \`need_graph_reasoning: true\`。
-   - 图推理用于分析：区域核心节点、桥梁连接点、功能社区划分。
-
-### 模式 C: 多选区对比 (Region Comparison) / query_type="region_comparison"
-- **用户意图**：对比多个已绘制选区的差异、相似性、优劣势等。
-- ****"ѡ1ѡ4Ĳҵṹʲô""Աѡ2ѡ3ҵֲ"
-- **配置**：
-  - \`query_type\`: "region_comparison"
-  - \`intent_mode\`: "comparison"
-  - \`target_regions\`: [1, 4] (用户提到的选区编号)
-  - \`comparison_dimensions\`: ["产业结构", "商业分布"] (用户关注的对比维度)
-  - \`aggregation_strategy.enable\`: true (需要统计数据来对比)
-
-## 示例
-
-用户："评估当前区域的交通便利程度"
-输出：
-{
-  "query_type": "area_analysis",
-  "intent_mode": "macro_overview",
-  "categories": ["公交站", "地铁站", "停车场", "加油站", "火车站"],
-  "radius_m": 3000,
-  "aggregation_strategy": { "enable": true, "method": "h3", "resolution": 9 },
-  "sampling_strategy": { "enable": true, "count": 25 },
-  "semantic_query": "ͨ ͨŦ վ վ",
-  "need_landmarks": true
-}
-
-用户："武汉大学附近有什么好吃的"
-输出：
-{
-  "query_type": "poi_search",
-  "intent_mode": "local_search",
-  "anchor": { "type": "landmark", "name": "武汉大学" },
-  "categories": ["", "в", "С", ""],
-  "radius_m": 1000,
-  "aggregation_strategy": { "enable": false },
-  "semantic_query": "美食 餐厅 好吃的",
-  "max_results": 20
-}
-
-用户："分析选区1和选区4的产业结构差异"
-输出：
-{
-  "query_type": "region_comparison",
-  "intent_mode": "comparison",
-  "target_regions": [1, 4],
-  "comparison_dimensions": ["产业结构", "业态分布"],
-  "aggregation_strategy": { "enable": true, "method": "h3", "resolution": 9 },
-  "semantic_query": "产业结构 业态 商业分布"
-}
-`
-
-/**
- * 构建上下文提示字符串
- * @param {Object} context - 上下文信息
- * @returns {string} 格式化的上下文字符串
- */
-function buildContextString(context) {
-  const lines = []
-  
-  if (context.hasSelectedArea) {
-    lines.push('- 用户已选择了一个地图区域')
-  } else {
-    lines.push('- ûδѡҪеĵλ')
-  }
-  
-  if (context.poiCount) {
-    lines.push(`- 当前选区内 POI 总数: ${context.poiCount}`)
-  }
-  
-  if (context.selectedCategories?.length > 0) {
-    lines.push(`- 已筛选的类别: ${context.selectedCategories.slice(0, 5).join(', ')}`)
-  }
-  
-  if (context.viewportCenter) {
-    lines.push(`- 当前视图中心: ${context.viewportCenter.lat.toFixed(4)}, ${context.viewportCenter.lon.toFixed(4)}`)
-  }
-  
-  // 多选区上下文
-  if (context.regions && context.regions.length > 0) {
-    lines.push(`- 用户已绘制 ${context.regions.length} 个选区: ${context.regions.map(r => r.name).join(', ')}`)
-    context.regions.forEach(r => {
-      lines.push(`  - ${r.name}: ${r.poiCount || 0} 个 POI`)
-    })
-  }
-  
-  // 多选区对比上下文
-  if (context.isComparison && context.targetRegions?.length > 0) {
-    lines.push(`- 用户正在对比选区: ${context.targetRegions.map(id => '选区' + id).join(' vs ')}`)
-    lines.push('- 请使用 query_type: "region_comparison" 并设置 target_regions 字段')
-  }
-  
-  return lines.length > 0 ? lines.join('\n') : '޶'
-}
-
-/**
- * 清理 LLM 输出，提取 JSON
- * @param {string} content - LLM 原始输出
- * @returns {Object|null} 解析后的 JSON 或 null
- */
-function extractJSON(content) {
-  if (!content) return null
-  
-  // 1. 移除 <think> 标签
-  let cleaned = content.replace(/<think>[\s\S]*?<\/think>/g, '').trim()
-  
-  // 2. 移除 Markdown 代码块标记
-  cleaned = cleaned.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim()
-  
-  // 3. 尝试提取 JSON 对象
-  const jsonMatch = cleaned.match(/\{[\s\S]*\}/)
-  if (!jsonMatch) return null
-  
-  try {
-    return JSON.parse(jsonMatch[0])
-  } catch (err) {
-    console.error('[Planner] JSON 解析失败:', err.message)
-    console.error('[Planner] 原始内容:', jsonMatch[0].slice(0, 200))
-    return null
-  }
-}
-
-/**
- * 验证并规范化 QueryPlan
- * @param {Object} plan - 原始解析的 plan
- * @returns {Object} 规范化后的 QueryPlan
- */
-function validateAndNormalize(plan) {
-  if (!plan || typeof plan !== 'object') {
-    return { ...QUERY_PLAN_DEFAULTS }
-  }
-  
-  const normalized = { ...QUERY_PLAN_DEFAULTS }
-  
-  // query_type
-  const validTypes = ['poi_search', 'area_analysis', 'distance_query', 'recommendation', 'path_query', 'clarification_needed']
-  if (validTypes.includes(plan.query_type)) {
-    normalized.query_type = plan.query_type
-  }
-  
-  // anchor
-  if (plan.anchor && typeof plan.anchor === 'object') {
-    normalized.anchor = {
-      type: ['landmark', 'coordinate', 'area', 'unknown'].includes(plan.anchor.type) 
-        ? plan.anchor.type 
-        : 'unknown',
-      name: plan.anchor.name || null,
-      gate: plan.anchor.gate || null,
-      direction: plan.anchor.direction || null,
-      lat: typeof plan.anchor.lat === 'number' ? plan.anchor.lat : null,
-      lon: typeof plan.anchor.lon === 'number' ? plan.anchor.lon : null
-    }
-  }
-  
-  // radius_m
-  if (typeof plan.radius_m === 'number' && plan.radius_m > 0) {
-    normalized.radius_m = Math.min(plan.radius_m, 10000) // 最大 10km
-  }
-  
-  // categories
-  if (Array.isArray(plan.categories)) {
-    normalized.categories = plan.categories.filter(c => typeof c === 'string').slice(0, 10)
-    
-    // Phase 1 修复：净化 categories，避免泛化类别覆盖精确类别
-    // 磺["", ""]  ["", "ȹ", "ȵ"] (Ƴ""չ)
-    normalized.categories = sanitizeCategories(normalized.categories)
-  }
-  
-  // rating_range
-  if (Array.isArray(plan.rating_range) && plan.rating_range.length === 2) {
-    normalized.rating_range = [
-      typeof plan.rating_range[0] === 'number' ? plan.rating_range[0] : null,
-      typeof plan.rating_range[1] === 'number' ? plan.rating_range[1] : null
-    ]
-  }
-  
-  // semantic_query
-  if (typeof plan.semantic_query === 'string') {
-    normalized.semantic_query = plan.semantic_query.slice(0, 200)
-  }
-  
-  // max_results
-  if (typeof plan.max_results === 'number' && plan.max_results > 0) {
-    normalized.max_results = Math.min(plan.max_results, 50)
-  }
-  
-  // sort_by
-  if (['distance', 'rating', 'relevance'].includes(plan.sort_by)) {
-    normalized.sort_by = plan.sort_by
-  }
-  
-  // 布尔开关
-  normalized.need_global_context = !!plan.need_global_context
-  normalized.need_landmarks = !!plan.need_landmarks
-  
-  // 图推理开关：LLM 判断 + 后端关键词检测双保险
-  normalized.need_graph_reasoning = !!plan.need_graph_reasoning
-  
-  // intent_mode (支持宏观/微观意图)
-  if (['macro_overview', 'local_search'].includes(plan.intent_mode)) {
-    normalized.intent_mode = plan.intent_mode
-  } else {
-    // 简单的推断
-    if (normalized.query_type === 'poi_search') normalized.intent_mode = 'local_search'
-    else if (normalized.query_type === 'area_analysis') normalized.intent_mode = 'macro_overview'
-  }
-  
-  // aggregation_strategy
-  if (plan.aggregation_strategy) {
-    normalized.aggregation_strategy = {
-      enable: !!plan.aggregation_strategy.enable,
-      method: 'h3',
-      // 允许根据范围动态调整: 大范围用8，小范围用9或10
-      resolution: plan.aggregation_strategy.resolution || (normalized.radius_m > 5000 ? 8 : 9),
-      max_bins: plan.aggregation_strategy.max_bins || (normalized.radius_m > 5000 ? 60 : 50)
-    }
-  }
-
-  // sampling_strategy
-  if (plan.sampling_strategy) {
-    normalized.sampling_strategy = {
-      enable: !!plan.sampling_strategy.enable,
-      method: plan.sampling_strategy.method || 'representative',
-      // 【强制修复】宏观分析模式下，强制设为 50，不管 LLM 说了什么
-      count: (normalized.intent_mode === 'macro_overview' || normalized.query_type === 'area_analysis') ? 50 : (plan.sampling_strategy.count || 20),
-      rules: Array.isArray(plan.sampling_strategy.rules) ? plan.sampling_strategy.rules : ['diversity']
-    }
-  }
-
-  // clarification_question
-  if (typeof plan.clarification_question === 'string') {
-    normalized.clarification_question = plan.clarification_question
-  }
-  
-  // 语义查询增强逻辑
-  if (!normalized.semantic_query) {
-    if (normalized.intent_mode === 'macro_overview') {
-       // 宏观模式：地标优先
-       normalized.semantic_query = '具有代表性的地标 购物中心 商场 大厦 广场 公园 医院 学校 交通枢纽'
-       console.log('[Planner] 宏观模式：自动生成全域地标语义查询')
-    } else if (normalized.intent_mode === 'local_search' && normalized.categories.length > 0) {
-       // 微观搜索：基于类别生成 (e.g. "好吃的 餐厅")
-       normalized.semantic_query = `好评 ${normalized.categories.join(' ')}`
-       console.log('[Planner] 微观模式：自动生成基于类别的语义查询:', normalized.semantic_query)
-    }
-  }
-  
-  return normalized
-}
-
-/**
- * ûԶƶ POI 𣨺߼
- * 当 LLM 没有正确识别专题时，后端自动补充
- * 
- * Phase 1 优化：使用类别本体进行更精确的匹配
- */
-function inferCategoriesFromQuestion(question, existingCategories) {
-  // 如果已经有非空 categories，直接返回
-  if (existingCategories && existingCategories.length > 0) {
-    return existingCategories
-  }
-  
-  // 使用类别本体提取类别
-  const detected = extractCategoriesFromQuestion(question)
-  
-  if (detected.length > 0) {
-    // 取置信度最高的类别，并展开为子类别
-    const topCategory = detected[0].category
-    const expanded = expandCategory(topCategory)
-    console.log(`[Planner] 类别本体推断：检测到 "${topCategory}"，展开为 ${expanded.length} 个类别`)
-    return expanded.slice(0, 8) // 限制最多 8 个
-  }
-  
-  // 兜底：使用原来的硬编码映射
-  const q = question.toLowerCase()
-  
-  const topicMapping = {
-    traffic: {
-      keywords: ['ͨ', '', 'ͨ', '', '', '', '', 'ͣ'],
-      categories: ['վ', 'վ', 'ͣ', 'վ', 'վ', 'վ', 'վ', '']
-    },
-    education: {
-      keywords: ['教育', '学校', '上学', '幼儿园', '小学', '中学', '大学', '培训'],
-      categories: ['学校', '幼儿园', '小学', '中学', '高中', '大学', '培训机构', '图书馆']
-    },
-    medical: {
-      keywords: ['医疗', '看病', '就医', '医院', '诊所', '药店', '卫生'],
-      categories: ['医院', '诊所', '卫生院', '药店', '社区卫生服务中心']
-    },
-    shopping: {
-      keywords: ['购物', '买东西', '商场', '超市', '商业'],
-      categories: ['商场', '超市', '购物中心', '百货', '便利店']
-    },
-    food: {
-      keywords: ['', 'Է', 'ʳ', '', 'С', 'ó'],
-      categories: ['', '', '', 'С', '', '̲']
-    },
-    entertainment: {
-      keywords: ['娱乐', '休闲', '玩', '电影', '公园', '景点'],
-      categories: ['电影院', 'KTV', '游乐场', '公园', '景区', '健身房']
-    },
-    finance: {
-      keywords: ['银行', '金融', 'ATM', '理财'],
-      categories: ['银行', 'ATM', '证券', '保险']
-    },
-    lodging: {
-      keywords: ['住宿', '酒店', '宾馆', '民宿'],
-      categories: ['酒店', '宾馆', '民宿', '公寓']
-    }
-  }
-  
-  for (const [topic, config] of Object.entries(topicMapping)) {
-    for (const keyword of config.keywords) {
-      if (q.includes(keyword)) {
-        console.log(`[Planner] 后备推断：检测到专题 "${topic}"，自动设置 categories`)
-        return config.categories
-      }
-    }
-  }
-  
-  return []
-}
-
-/**
- * 阶段 1 主入口：解析用户意图
- * 
- * @param {string} userQuestion - 用户问题
- * @param {Object} context - 上下文信息
- *   @param {boolean} context.hasSelectedArea - 是否已选区域
- *   @param {number} context.poiCount - 选区内 POI 数量
- *   @param {string[]} context.selectedCategories - 已选类别
- *   @param {Object} context.viewportCenter - 当前视图中心 {lat, lon}
- * @returns {Promise<{success: boolean, queryPlan: Object, error?: string, tokenUsage?: Object}>}
- */
-export async function parseIntent(userQuestion, context = {}) {
-  const startTime = Date.now()
-  
-  console.log(`[Planner] 开始解析意图: "${userQuestion.slice(0, 50)}..."`)
-  
-  // =========================================================
-  // ٹ·ȣԼⲻٵȴ LLM Router
-  // =========================================================
-  const fastPathDecision = shouldUseRuleFastPath(userQuestion, context)
-  if (fastPathDecision.bypass) {
-    const quickOutput = buildQuickPlannerOutput(userQuestion, {
-      reason: fastPathDecision.reason,
-      startTime
-    })
-
-    console.log(`[Planner] ⚡ 规则快速路径 (${quickOutput.duration}ms): ${quickOutput.queryPlan.query_type}`)
-    console.log(`[Planner] fast-path reason: ${fastPathDecision.reason}`)
-    return quickOutput
-  }
-
-  const routerResult = await classifyQueryComplexity(userQuestion)
-
-  // Router ʱֱӻ˹棬һ LLM ԡ
-  if (routerResult?.error) {
-    const fallbackOutput = buildQuickPlannerOutput(userQuestion, {
-      reason: `router_failed:${routerResult.error}`,
-      startTime
-    })
-
-    fallbackOutput.confidence = 'medium'
-    fallbackOutput.queryPlan.confidence = {
-      score: 6,
-      level: 'medium',
-      reasons: ['router 失败回退', routerResult.error]
-    }
-
-    console.log(`[Planner] ⚡ Router 失败回退规则路径 (${fallbackOutput.duration}ms)`)
-    return fallbackOutput
-  }
-
-  if (routerResult.isSimple) {
-    const quickOutput = buildQuickPlannerOutput(userQuestion, {
-      routerResult,
-      reason: 'router_simple',
-      startTime
-    })
-
-    console.log(`[Planner] ⚡ 智能快速路径 (${quickOutput.duration}ms): ${quickOutput.queryPlan.query_type}`)
-    console.log(`[Planner] categories: ${quickOutput.queryPlan.categories?.join(', ') || '(全域分析)'}`)
-    return quickOutput
-  }
-  
-  // 多选区对比模式
-  if (routerResult.isComparison) {
-    console.log(`[Planner] 📊 检测到多选区对比请求，目标选区: ${routerResult.regions.join(', ')}`)
-  }
-  
-  console.log(`[Planner] 🧠 复杂问题，使用完整 LLM 解析...`)
-  
-  // =========================================================
-  // 原有路径：调用 LLM 进行解析
-  // =========================================================
-  
-  // 如果是多选区对比，增强上下文
-  let enhancedContext = { ...context }
-  if (routerResult.isComparison && routerResult.regions.length > 0) {
-    enhancedContext.targetRegions = routerResult.regions
-    enhancedContext.isComparison = true
-  }
-  
-  // 构建上下文
-  const contextStr = buildContextString(enhancedContext)
-  const systemPrompt = PLANNER_SYSTEM_PROMPT.replace('{context}', contextStr)
-  
-  try {
-    // 获取 LLM 配置（自动选择本地或云端）
-    const { baseUrl, model, apiKey, isLocal } = await getLLMConfig()
-    
-    console.log(`[Planner] 使用 ${isLocal ? '本地' : '云端'} 模型: ${model}`)
-    
-    // 构建请求头
-    const headers = { 'Content-Type': 'application/json' }
-    if (apiKey) {
-      headers['Authorization'] = `Bearer ${apiKey}`
-    }
-    
-    const response = await fetch(`${baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userQuestion }
-        ],
-        temperature: 0.1,  // 低温度保证输出稳定
-        max_tokens: 500,   // 限制输出 token
-      }),
-    })
-    
-    if (!response.ok) {
-      throw new Error(`LLM API error: ${response.status} ${response.statusText}`)
-    }
-    
-    const data = await response.json()
-    const content = data.choices?.[0]?.message?.content || ''
-    
-    // 提取并解析 JSON
-    const rawPlan = extractJSON(content)
-    let queryPlan = validateAndNormalize(rawPlan)
-    
-    // Phase 1 核心优化：计算置信度评分
-    const confidence = calculatePlanConfidence(queryPlan, userQuestion)
-    queryPlan.confidence = confidence
-    
-    console.log(`[Planner] 置信度评分: ${confidence.score}/10 (${confidence.level})`)
-    console.log(`[Planner] 置信度原因:`, confidence.reasons.join(', '))
-    
-    // 低置信度时触发澄清机制
-    if (confidence.level === 'very_low' || confidence.level === 'low') {
-      const clarificationQ = generateClarificationQuestion(queryPlan, userQuestion, confidence)
-      if (clarificationQ) {
-        console.log('[Planner] 触发澄清机制')
-        queryPlan.query_type = 'clarification_needed'
-        queryPlan.clarification_question = clarificationQ
-      }
-    }
-    
-    // ؼ߼ LLM ûȷ categoriesԶƶ
-    if (queryPlan.query_type !== 'clarification_needed') {
-      queryPlan.categories = inferCategoriesFromQuestion(userQuestion, queryPlan.categories)
-    }
-    
-    // ͼ󱸼⣺ LLM ûʶͼ󣬵аؼʣǿƿ
-    if (!queryPlan.need_graph_reasoning && detectGraphReasoningNeed(userQuestion)) {
-      queryPlan.need_graph_reasoning = true
-      console.log('[Planner] 后备检测：启用图推理通道')
-    }
-    
-    const duration = Date.now() - startTime
-    console.log(`[Planner] 解析完成 (${duration}ms): ${queryPlan.query_type}, 置信度: ${confidence.level}`)
-    console.log(`[Planner] categories: ${queryPlan.categories?.join(', ') || '(全域分析)'}`)
-    console.log(`[Planner] QueryPlan:`, JSON.stringify(queryPlan).slice(0, 200))
-    
-    return {
-      success: true,
-      queryPlan,
-      tokenUsage: data.usage,
-      duration,
-      confidence: confidence.level
-    }
-  } catch (err) {
-    console.error('[Planner] 意图解析失败:', err.message)
-    
-    // 返回默认的区域分析 plan
-    return {
-      success: false,
-      error: err.message,
-      queryPlan: {
-        ...QUERY_PLAN_DEFAULTS,
-        query_type: 'area_analysis',
-        need_global_context: true,
-        need_landmarks: true,
-        confidence: { score: 0, level: 'error', reasons: [err.message] }
-      }
-    }
-  }
-}
-
-/**
- * 快速意图分类（不调用 LLM，用于简单场景）
- * @param {string} question - 用户问题
- * @returns {Object} 简化的 QueryPlan
- */
 export function quickIntentClassify(question) {
-  const q = question.toLowerCase()
+  const q = String(question || '').toLowerCase()
   const plan = { ...QUERY_PLAN_DEFAULTS }
-  
-  // 1. 明确的微观检索 (Local Search)
-  // ؼʣΧܱߡҡСûСƼ
-  const localKeywords = ['附近', '周围', '周边', '最近', '找', '哪里有', '有没有', '推荐几个', '东侧', '西侧', '南侧', '北侧', '东边', '西边', '南边', '北边']
-  if (localKeywords.some(kw => q.includes(kw))) {
-    plan.query_type = 'poi_search'
-    plan.intent_mode = 'local_search'
-    plan.radius_m = 1000 // 默认小范围
-    plan.aggregation_strategy.enable = false // 不聚合，看明细
-    
-    // 尝试提取锚点 (地标)
-    // 匹配模式: "XX附近"、"XX周边"、"XX旁边" 等
-    const anchorPatterns = [
-      /(.{2,15})(附近|周边|周围|旁边)/,  // "湖北大学附近"
-      /在(.{2,15})(附近|周边)/,           // "在武汉大学附近"
-      /去(.{2,15})/                       // "去光谷广场"
-    ]
-    
-    for (const pattern of anchorPatterns) {
-      const match = question.match(pattern)
-      if (match && match[1]) {
-        const anchorName = match[1].trim()
-        // 过滤掉太短或太通用的词
-        if (anchorName.length >= 2 && !['', '', '', 'Ǳ', ''].includes(anchorName)) {
-          plan.anchor = { type: 'landmark', name: anchorName, lat: null, lon: null }
-          console.log(`[Planner Quick] 提取到锚点: "${anchorName}"`)
-          break
-        }
-      }
+
+  if (isMetaQuestionExamplesRequest(question) || isGeneralHelpRequest(question)) {
+    plan.query_type = 'general_qa'
+    plan.intent_mode = 'llm_chat'
+    plan.categories = []
+    plan.semantic_query = ''
+    plan.confidence = {
+      score: 9,
+      level: 'high',
+      reasons: ['general_qa_shortcut', 'skip_spatial_compute']
     }
-    
-    // 尝试提取类别
-    const categories = inferCategoriesFromQuestion(q, [])
-    if (categories.length > 0) {
-      plan.categories = categories
-      // 生成语义查询
-      plan.semantic_query = categories.join(' ')
-    } else {
-      // 尝试从问题中截取（简单启发式）
-      const match = q.match(/(?:||û|óԵ|)(.+)/)
-      if (match) {
-        plan.semantic_query = match[1].trim()
-      }
-    }
-    
-    // 设置置信度
-    plan.confidence = { 
-      score: plan.anchor?.name ? 8 : 6, 
-      level: plan.anchor?.name ? 'high' : 'medium', 
-      reasons: plan.anchor?.name ? ['ƥɹ', 'êȡ'] : ['ƥɹ'] 
-    }
-    
     return plan
   }
-  
-  // 2. 明确的宏观分析 (Macro Overview)
-  // 关键词：分析、概况、特征、规律、分布、评估、怎么样、如何、特点、报告
-  const macroKeywords = ['分析', '概况', '特征', '规律', '分布', '评估', '怎么样', '如何', '特点', '报告']
-  if (macroKeywords.some(kw => q.includes(kw))) {
+
+  if (LOCAL_HINTS.some((kw) => q.includes(kw))) {
+    plan.query_type = 'poi_search'
+    plan.intent_mode = 'local_search'
+    plan.radius_m = 1000
+    plan.aggregation_strategy.enable = false
+    plan.categories = inferCategoriesFromQuestion(q, [])
+    if (plan.categories.length > 0) {
+      plan.semantic_query = plan.categories.join(' ')
+    }
+    plan.confidence = {
+      score: 7,
+      level: 'high',
+      reasons: ['local_keyword_match']
+    }
+    return plan
+  }
+
+  if (MACRO_HINTS.some((kw) => q.includes(kw))) {
     plan.query_type = 'area_analysis'
     plan.intent_mode = 'macro_overview'
-    plan.radius_m = 3000 // 默认大范围
-    
-    // 必须开启聚合
+    plan.radius_m = 3000
     plan.aggregation_strategy = { enable: true, method: 'h3', resolution: 9, max_bins: 60 }
     plan.sampling_strategy = { enable: true, method: 'representative', count: 50, rules: ['diversity'] }
     plan.need_global_context = true
     plan.need_landmarks = true
-    
-    // 专题推断
     plan.categories = inferCategoriesFromQuestion(q, [])
-    return plan
-  }
-  
-  // 3. 检查是否需要图推理
-  if (detectGraphReasoningNeed(question)) {
-    plan.need_graph_reasoning = true
-    plan.query_type = 'area_analysis'
-    plan.intent_mode = 'macro_overview'
-    plan.aggregation_strategy = { enable: true, method: 'h3', resolution: 9, max_bins: 60 }
-    plan.need_global_context = true
-    console.log('[Planner Quick] ⵽ͼؼʣͼͨ')
-  }
-  
-  // 4. 默认兜底：如果没有明确分类，设置为 area_analysis 并标记低置信度
-  if (!plan.query_type) {
-    plan.query_type = 'area_analysis'
-    plan.intent_mode = 'macro_overview'
-    plan.confidence = { score: 3, level: 'low', reasons: ['意图不明确，默认使用宏观分析'] }
-  }
-  
-  // 5. 检查意图冲突
-  const conflict = detectIntentConflict(question)
-  if (conflict.hasConflict) {
-    plan.query_type = 'clarification_needed'
-    plan.clarification_question = `ͬʱ΢"${localKeywords.find(kw => q.includes(kw))}"ͺ۷"${macroKeywords.find(kw => q.includes(kw))}"ڣ
-1️⃣ **查看区域整体分布与分析**
-2️⃣ **寻找具体的兴趣点列表**`
+    plan.confidence = {
+      score: 7,
+      level: 'high',
+      reasons: ['macro_keyword_match']
+    }
+    return applyAreaAnalysisCategoryGuard(plan, question)
   }
 
-  plan.categories = inferCategoriesFromQuestion(q, plan.categories || [])
-  
-  return plan
+  if (detectGraphReasoningNeed(question)) {
+    plan.query_type = 'area_analysis'
+    plan.intent_mode = 'macro_overview'
+    plan.need_graph_reasoning = true
+    plan.need_global_context = true
+    plan.need_landmarks = true
+    plan.aggregation_strategy = { enable: true, method: 'h3', resolution: 9, max_bins: 60 }
+    plan.sampling_strategy = { enable: true, method: 'representative', count: 50, rules: ['diversity'] }
+    plan.categories = inferCategoriesFromQuestion(q, [])
+    plan.confidence = {
+      score: 6,
+      level: 'medium',
+      reasons: ['graph_reasoning_hint']
+    }
+    return applyAreaAnalysisCategoryGuard(plan, question)
+  }
+
+  plan.query_type = 'area_analysis'
+  plan.intent_mode = 'macro_overview'
+  plan.need_global_context = true
+  plan.need_landmarks = true
+  plan.categories = inferCategoriesFromQuestion(q, [])
+  plan.confidence = {
+    score: 3,
+    level: 'low',
+    reasons: ['fallback_area_analysis']
+  }
+
+  const conflict = detectIntentConflict(question)
+  if (conflict.hasConflict) {
+    const localHit = LOCAL_HINTS.find((kw) => q.includes(kw)) || '\u5c40\u90e8\u68c0\u7d22'
+    const macroHit = MACRO_HINTS.find((kw) => q.includes(kw)) || '\u5b8f\u89c2\u5206\u6790'
+    plan.query_type = 'clarification_needed'
+    plan.clarification_question = `\u4f60\u7684\u95ee\u9898\u540c\u65f6\u5305\u542b\u201c${localHit}\u201d\u548c\u201c${macroHit}\u201d\u3002\n\u4f60\u66f4\u5e0c\u671b\uff1a\n1. \u67e5\u770b\u533a\u57df\u6574\u4f53\u5206\u5e03\u4e0e\u5206\u6790\n2. \u5bfb\u627e\u5177\u4f53\u5019\u9009\u70b9\u5217\u8868`
+  }
+
+  return applyAreaAnalysisCategoryGuard(plan, question)
+}
+
+export async function parseIntent(userQuestion, context = {}) {
+  const startTime = Date.now()
+  const normalizedQuestion = String(userQuestion || '').trim()
+
+  if (!normalizedQuestion) {
+    return buildQuickPlannerOutput(normalizedQuestion, {
+      reason: 'empty_question',
+      startTime
+    })
+  }
+
+  const fastPathDecision = shouldUseRuleFastPath(normalizedQuestion, context)
+  if (fastPathDecision.bypass) {
+    return buildQuickPlannerOutput(normalizedQuestion, {
+      reason: fastPathDecision.reason,
+      startTime
+    })
+  }
+
+  let queryPlan = quickIntentClassify(normalizedQuestion)
+
+  if (Array.isArray(context?.selectedCategories) && context.selectedCategories.length > 0) {
+    queryPlan = {
+      ...queryPlan,
+      categories: uniq(context.selectedCategories)
+    }
+  }
+
+  queryPlan = applyAreaAnalysisCategoryGuard(queryPlan, normalizedQuestion)
+
+  const duration = Date.now() - startTime
+  return {
+    success: true,
+    queryPlan,
+    tokenUsage: QUICK_TOKEN_USAGE,
+    duration,
+    confidence: queryPlan?.confidence?.level || 'medium',
+    fastPath: false,
+    routerUsed: false
+  }
 }
 
 export default {
   parseIntent,
   quickIntentClassify,
+  applyAreaAnalysisCategoryGuard,
   QUERY_PLAN_DEFAULTS
 }

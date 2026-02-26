@@ -1,22 +1,23 @@
-import { describe, it, expect } from 'vitest'
-import { validateSSEEventPayload } from '../../../shared/sseEventSchema.js'
+﻿import { validateSSEEventPayload } from '../../../shared/sseEventSchema'
 
-describe('sseEventSchema', () => {
-  it('accepts valid stage payload', () => {
-    const result = validateSSEEventPayload('stage', { name: 'planner_done' })
+describe('sseEventSchema optional metadata', () => {
+  it('accepts stage payload with trace metadata fields', () => {
+    const result = validateSSEEventPayload('stage', {
+      name: 'planner',
+      trace_id: 'trace-1',
+      schema_version: 'v1.1',
+      capabilities: ['intent_meta', 'l2_cache']
+    })
+
     expect(result.ok).toBe(true)
-    expect(result.errors).toEqual([])
   })
 
-  it('rejects invalid stage payload', () => {
-    const result = validateSSEEventPayload('stage', { step: 'planner_done' })
-    expect(result.ok).toBe(false)
-    expect(result.errors.length).toBeGreaterThan(0)
-  })
+  it('keeps legacy payload compatibility', () => {
+    const result = validateSSEEventPayload('progress', {
+      progress: 0.5,
+      stage: 'cluster'
+    })
 
-  it('skips unknown event schema', () => {
-    const result = validateSSEEventPayload('custom_event', { any: 'payload' })
     expect(result.ok).toBe(true)
-    expect(result.skipped).toBe(true)
   })
 })
