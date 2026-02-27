@@ -14,7 +14,8 @@ const PYTHON_BIN = process.env.PYTHON_BIN || 'python'
 const GRPC_HOST = process.env.SPATIAL_GRPC_HOST || '127.0.0.1'
 const GRPC_PORT = parseInt(process.env.SPATIAL_GRPC_PORT || '50051', 10)
 const GRPC_WAIT_MS = parseInt(process.env.SPATIAL_GRPC_WAIT_MS || '15000', 10)
-const PYTHON_WATCH_ENABLED = process.env.PYTHON_WATCH_ENABLED !== 'false'
+// Default to stability: enable watcher only when explicitly requested.
+const PYTHON_WATCH_ENABLED = process.env.PYTHON_WATCH_ENABLED === 'true'
 const PYTHON_WATCH_DEBOUNCE_MS = parseInt(process.env.PYTHON_WATCH_DEBOUNCE_MS || '450', 10)
 
 // Worker mode:

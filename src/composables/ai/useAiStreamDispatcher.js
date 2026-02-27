@@ -52,6 +52,7 @@ export function useAiStreamDispatcher({
       if (normalized.vernacularRegions.length > 0) currentMsg.vernacularRegions = normalized.vernacularRegions
       if (normalized.fuzzyRegions.length > 0) currentMsg.fuzzyRegions = normalized.fuzzyRegions
       if (normalized.stats) currentMsg.analysisStats = normalized.stats
+      if (normalized.stats?.model_timing_ms) currentMsg.modelTiming = normalized.stats.model_timing_ms
       applyIntentMetaToMessage(currentMsg, normalized.intent)
     }
 
@@ -131,6 +132,9 @@ export function useAiStreamDispatcher({
 
     if (type === 'stats' && data && typeof data === 'object') {
       if (currentMsg) currentMsg.analysisStats = data
+      if (currentMsg && data.model_timing_ms && typeof data.model_timing_ms === 'object') {
+        currentMsg.modelTiming = data.model_timing_ms
+      }
       if (currentMsg) applySSEMetaToMessage(currentMsg, data)
       emit('ai-analysis-stats', data)
 

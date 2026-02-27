@@ -290,7 +290,7 @@ const stageSteps = [
   { key: 'planner', label: '意图处理', hint: '正在理解问题意图与约束...' },
   { key: 'visual', label: '视觉感知', hint: '正在提取视口锚点与视觉形态特征...' },
   { key: 'spatial', label: '空间分析', hint: '正在执行空间检索、聚类与边界建模...' },
-  { key: 'fusion', label: '融合校验', hint: '正在进行自校验、知识图谱与置信度融合...' },
+  { key: 'fusion', label: '空间推理', hint: '正在进行自校验、知识图谱与置信度融合...' },
   { key: 'writer', label: '组织回答', hint: '正在整理答案并生成可读输出...' }
 ];
 
@@ -688,7 +688,7 @@ async function sendMessage() {
     const normalizedSelectedCategories = normalizeSelectedCategories(props.selectedCategories);
     const poiCount = props.poiFeatures?.length || 0;
     const deepSpatialMode = shouldRunDeepSpatialMode(text, spatialContext, props.regions, poiCount);
-    const shouldSnapshot = shouldCaptureSnapshot(text, deepSpatialMode);
+    const shouldSnapshot = deepSpatialMode || shouldCaptureSnapshot(text, deepSpatialMode);
     const screenshotBase64 = shouldSnapshot
       ? await captureMapSnapshot(`${props.drawMode || 'none'}:${props.mapZoom || 0}:${poiCount}`)
       : null;
@@ -715,8 +715,15 @@ async function sendMessage() {
       nameAuditEnabled: true,
       nameAuditRemoteEnabled: deepSpatialMode,
       nameAuditTimeoutMs: deepSpatialMode ? 900 : 420,
-      visualModel: 'qwen3-vl-4b',
-      screenshotBase64, // 新增：将前端截图传给后端
+      visualModel: 'qwen/qwen3-vl-4b',
+      visualTimeoutMs: deepSpatialMode ? 4500 : 2200,
+      vlmFailureMode: 'soft',
+      visualSnapshotDataUrl: screenshotBase64,
+      screenshotBase64, // legacy fallback key
+      reasoningEnabled: deepSpatialMode,
+      reasoningModel: 'qwen/qwen3-1.7b',
+      reasoningTimeoutMs: deepSpatialMode ? 2800 : 1200,
+      modelBudgetMs: deepSpatialMode ? 8000 : 5000,
       limit: deepSpatialMode ? 8000 : 4200,
       clusterMaxHdbscanPoints: deepSpatialMode ? 3500 : 1800,
       maxRegionOutputs: deepSpatialMode ? 60 : 24,

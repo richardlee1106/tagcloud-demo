@@ -3,13 +3,16 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
+import os
 import re
 import sys
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, wait
 from collections import Counter, defaultdict
 from dataclasses import asdict
 from numbers import Integral
@@ -44,6 +47,7 @@ from pipeline import (
     context_loader,
     poi_quality_scorer,
     result_assembler,
+    reasoning_reviewer,
     semantic_reasoner,
     self_validator,
     spatial_knowledge_graph,
@@ -64,6 +68,63 @@ def _safe_json_loads(raw: Any, fallback: Any) -> Any:
         return json.loads(raw)
     except Exception:
         return fallback
+
+
+_VISUAL_MODEL_ALIAS_MAP: Dict[str, str] = {
+    "qwen3-vl-4b": "qwen/qwen3-vl-4b",
+}
+
+_SOFT_VLM_FAILURE_CODES: set[str] = {
+    "visual_snapshot_missing",
+    "vlm_anchor_response_invalid",
+}
+
+_SOFT_VLM_FAILURE_PREFIXES: Tuple[str, ...] = (
+    "vlm_remote_error:",
+)
+
+_SOFT_LLM_FAILURE_CODES: set[str] = {
+    "reasoning_response_invalid",
+}
+
+_SOFT_LLM_FAILURE_PREFIXES: Tuple[str, ...] = (
+    "reasoning_remote_error:",
+)
+
+
+def _normalize_visual_model_name(raw_model_name: Any) -> str:
+    model_name = str(raw_model_name or "").strip()
+    if model_name:
+        return _VISUAL_MODEL_ALIAS_MAP.get(model_name.lower(), model_name)
+
+    env_model_name = str(
+        os.getenv("LOCAL_VISUAL_MODEL")
+        or os.getenv("LOCAL_VLM_MODEL")
+        or os.getenv("LOCAL_LLM_MODEL")
+        or os.getenv("LLM_MODEL")
+        or "qwen/qwen3-vl-4b"
+    ).strip()
+    if not env_model_name:
+        env_model_name = "qwen/qwen3-vl-4b"
+    return _VISUAL_MODEL_ALIAS_MAP.get(env_model_name.lower(), env_model_name)
+
+
+def _is_soft_vlm_failure(error_reason: Any) -> bool:
+    reason = str(error_reason or "").strip().lower()
+    if not reason:
+        return False
+    if reason in _SOFT_VLM_FAILURE_CODES:
+        return True
+    return any(reason.startswith(prefix) for prefix in _SOFT_VLM_FAILURE_PREFIXES)
+
+
+def _is_soft_llm_failure(error_reason: Any) -> bool:
+    reason = str(error_reason or "").strip().lower()
+    if not reason:
+        return False
+    if reason in _SOFT_LLM_FAILURE_CODES:
+        return True
+    return any(reason.startswith(prefix) for prefix in _SOFT_LLM_FAILURE_PREFIXES)
 
 
 def _category_of(poi: Dict[str, Any]) -> str:
@@ -169,6 +230,50 @@ def _parse_json_object(raw_text: str) -> Dict[str, Any] | None:
     except Exception:
         return None
     return value if isinstance(value, dict) else None
+
+
+def _sha1_text(value: Any) -> str:
+    text = str(value or "")
+    return hashlib.sha1(text.encode("utf-8", errors="ignore")).hexdigest()
+
+
+def _redacted_preview(value: Any, max_length: int = 240) -> Dict[str, Any]:
+    text = str(value or "")
+    compact = re.sub(r"\s+", " ", text).strip()
+    preview = compact[:max_length]
+    if len(compact) > max_length:
+        preview = f"{preview}..."
+    return {
+        "preview_text": preview,
+        "preview_chars": len(text),
+        "preview_sha1": _sha1_text(text),
+    }
+
+
+def _normalize_python_context_preview(raw: Any) -> Dict[str, Any]:
+    if isinstance(raw, dict):
+        preview_text = raw.get("preview_text")
+        preview_chars = raw.get("preview_chars")
+        preview_sha1 = raw.get("preview_sha1")
+        if isinstance(preview_text, str) and preview_sha1 is not None and preview_chars is not None:
+            try:
+                chars_value = int(preview_chars) if isinstance(preview_chars, Integral) else int(float(preview_chars))
+            except Exception:
+                chars_value = len(preview_text)
+            payload = {
+                "preview_text": preview_text[:260],
+                "preview_chars": chars_value,
+                "preview_sha1": str(preview_sha1),
+            }
+            parse_stage = raw.get("parse_stage")
+            if parse_stage is not None:
+                payload["parse_stage"] = str(parse_stage)[:80]
+            return payload
+        try:
+            return {**_redacted_preview(json.dumps(raw, ensure_ascii=False)), "parse_stage": "structured_debug"}
+        except Exception:
+            return {**_redacted_preview(raw), "parse_stage": "structured_debug"}
+    return _redacted_preview(raw)
 
 
 def _is_invalid_region_name(name: Any) -> bool:
@@ -2263,6 +2368,236 @@ def _review_cluster_morphology(
     )
 
 
+def _poi_text_blob(poi: Dict[str, Any]) -> str:
+    return " ".join(
+        [
+            str(poi.get("name") or ""),
+            str(poi.get("address") or ""),
+            str(poi.get("type") or ""),
+            str(poi.get("category_big") or ""),
+            str(poi.get("category_mid") or ""),
+            str(poi.get("category_small") or ""),
+            str(poi.get("aoi_name") or ""),
+        ]
+    ).strip()
+
+
+def _rerank_pois_with_priors(
+    *,
+    pois: List[Dict[str, Any]],
+    anchor_terms: List[str],
+    priority_categories: List[str],
+) -> Tuple[List[Dict[str, Any]], int]:
+    if not pois:
+        return [], 0
+    normalized_prior_categories = {
+        str(item).strip().lower()
+        for item in (priority_categories or [])
+        if str(item).strip()
+    }
+    if not anchor_terms and not normalized_prior_categories:
+        return list(pois), 0
+
+    boosted_count = 0
+    scored: List[Tuple[int, int, Dict[str, Any]]] = []
+    for idx, poi in enumerate(pois):
+        text_score = _anchor_match_score(_poi_text_blob(poi), anchor_terms)
+        poi_categories = {
+            str(poi.get("category_big") or "").strip().lower(),
+            str(poi.get("category_mid") or "").strip().lower(),
+            str(poi.get("category_small") or "").strip().lower(),
+            str(poi.get("type") or "").strip().lower(),
+        }
+        category_match = int(bool(normalized_prior_categories.intersection(poi_categories)))
+        if text_score > 0 or category_match > 0:
+            boosted_count += 1
+        # medium-strength prior: soft boost only, never hard filter
+        score = text_score * 5 + category_match * 2
+        scored.append((score, -idx, poi))
+
+    scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    reranked = [item[2] for item in scored]
+    return reranked, boosted_count
+
+
+def _run_parallel_model_inference(
+    *,
+    semantic_query: str,
+    spatial_context: Dict[str, Any],
+    categories: List[str],
+    image_data_url: str | None,
+    visual_model_name: str,
+    visual_endpoint: str,
+    visual_timeout_ms: int,
+    reasoning_enabled: bool,
+    reasoning_model_name: str,
+    reasoning_endpoint: str,
+    reasoning_timeout_ms: int,
+    model_budget_ms: int,
+    allow_vlm_remote_failure: bool = False,
+) -> Dict[str, Any]:
+    started = time.perf_counter()
+    budget_s = max(0.5, float(model_budget_ms) / 1000.0)
+    timing = {
+        "vlm_ms": 0.0,
+        "llm_ms": 0.0,
+        "parallel_wall_ms": 0.0,
+        "budget_ms": int(model_budget_ms),
+        "timed_out": False,
+    }
+    model_context = {
+        "visualModel": visual_model_name,
+        "reasoningModel": reasoning_model_name if reasoning_enabled else None,
+        "reasoningEnabled": bool(reasoning_enabled),
+        "modelBudgetMs": int(model_budget_ms),
+        "visualTimeoutMs": int(visual_timeout_ms),
+        "reasoningTimeoutMs": int(reasoning_timeout_ms),
+    }
+
+    def _build_parallel_error_context(error_code: str, python_context: Any = None) -> Dict[str, Any]:
+        return {
+            "error_code": str(error_code),
+            "model_context": dict(model_context),
+            "model_timing_ms": dict(timing),
+            "python_context": _normalize_python_context_preview(
+                python_context
+                if python_context is not None
+                else {**_redacted_preview("model_parallel_error"), "parse_stage": "parallel"}
+            ),
+        }
+
+    if not image_data_url and not allow_vlm_remote_failure:
+        error_code = "model_parallel_failed:visual_snapshot_missing"
+        err = RuntimeError(error_code)
+        err.parallel_error_context = _build_parallel_error_context(
+            error_code,
+            {**_redacted_preview("visual_snapshot_missing"), "parse_stage": "input_validation"},
+        )
+        raise err
+
+    def _timed_vlm() -> Tuple[Dict[str, Any], float]:
+        started_local = time.perf_counter()
+        value = vlm_reviewer.extract_map_anchors(
+            image_data_url=image_data_url,
+            model_name=visual_model_name,
+            endpoint=visual_endpoint,
+            timeout_ms=visual_timeout_ms,
+        )
+        elapsed = (time.perf_counter() - started_local) * 1000.0
+        return value, elapsed
+
+    def _timed_reasoning(vlm_result: Dict[str, Any] | None = None) -> Tuple[Dict[str, Any], float]:
+        started_local = time.perf_counter()
+        value = reasoning_reviewer.infer_spatial_priors(
+            semantic_query=semantic_query,
+            spatial_context=spatial_context,
+            categories=categories,
+            vlm_landmarks=list((vlm_result or {}).get("landmarks") or []),
+            vlm_aliases=list((vlm_result or {}).get("aliases") or []),
+            model_name=reasoning_model_name,
+            endpoint=reasoning_endpoint,
+            timeout_ms=reasoning_timeout_ms,
+        )
+        elapsed = (time.perf_counter() - started_local) * 1000.0
+        return value, elapsed
+
+    vlm_payload: Dict[str, Any] = {}
+    llm_payload: Dict[str, Any] = {"success": not reasoning_enabled}
+
+    with ThreadPoolExecutor(max_workers=2 if reasoning_enabled else 1) as pool:
+        future_map = {"vlm": pool.submit(_timed_vlm)}
+        if reasoning_enabled:
+            future_map["llm"] = pool.submit(_timed_reasoning)
+
+        done, not_done = wait(
+            list(future_map.values()),
+            timeout=budget_s,
+        )
+
+        if not_done:
+            timing["timed_out"] = True
+            for future in not_done:
+                future.cancel()
+            timing["parallel_wall_ms"] = round((time.perf_counter() - started) * 1000.0, 3)
+            error_code = "model_parallel_failed:budget_exceeded"
+            err = RuntimeError(error_code)
+            err.parallel_error_context = _build_parallel_error_context(
+                error_code,
+                {**_redacted_preview("model_parallel_budget_exceeded"), "parse_stage": "budget_guard"},
+            )
+            raise err
+
+        for key, future in future_map.items():
+            try:
+                payload, elapsed_ms = future.result()
+            except Exception as exc:  # pragma: no cover - runtime guard
+                timing["parallel_wall_ms"] = round((time.perf_counter() - started) * 1000.0, 3)
+                error_code = f"model_parallel_failed:{key}:runtime_exception"
+                err = RuntimeError(f"model_parallel_failed:{key}:{exc}")
+                err.parallel_error_context = _build_parallel_error_context(
+                    error_code,
+                    {**_redacted_preview(str(exc)), "parse_stage": "future_result"},
+                )
+                raise err from exc
+            if key == "vlm":
+                vlm_payload = payload if isinstance(payload, dict) else {}
+                timing["vlm_ms"] = round(float(elapsed_ms), 3)
+            else:
+                llm_payload = payload if isinstance(payload, dict) else {}
+                timing["llm_ms"] = round(float(elapsed_ms), 3)
+
+    timing["parallel_wall_ms"] = round((time.perf_counter() - started) * 1000.0, 3)
+    llm_soft_degrade_reason = ""
+    if reasoning_enabled and not bool(llm_payload.get("success")):
+        error_reason = str(llm_payload.get("error") or "llm_inference_failed").strip()
+        if _is_soft_llm_failure(error_reason):
+            llm_soft_degrade_reason = f"llm:{error_reason}"
+        else:
+            error_code = f"model_parallel_failed:llm:{error_reason}"
+            debug_payload = llm_payload.get("debug") if isinstance(llm_payload.get("debug"), dict) else None
+            err = RuntimeError(error_code)
+            err.parallel_error_context = _build_parallel_error_context(
+                error_code,
+                debug_payload or {**_redacted_preview(error_reason), "parse_stage": "llm_result"},
+            )
+            raise err
+
+    if not bool(vlm_payload.get("success")):
+        error_reason = str(vlm_payload.get("error") or "vlm_inference_failed").strip()
+        if allow_vlm_remote_failure and _is_soft_vlm_failure(error_reason):
+            return {
+                "vlm": vlm_payload,
+                "llm": llm_payload if reasoning_enabled else {},
+                "timing": timing,
+                "degraded": True,
+                "degrade_reason": llm_soft_degrade_reason or error_reason,
+            }
+
+        error_code = f"model_parallel_failed:vlm:{error_reason}"
+        debug_payload = vlm_payload.get("debug") if isinstance(vlm_payload.get("debug"), dict) else None
+        err = RuntimeError(error_code)
+        err.parallel_error_context = _build_parallel_error_context(
+            error_code,
+            debug_payload or {**_redacted_preview(error_reason), "parse_stage": "vlm_result"},
+        )
+        raise err
+
+    if llm_soft_degrade_reason:
+        return {
+            "vlm": vlm_payload,
+            "llm": llm_payload if reasoning_enabled else {},
+            "timing": timing,
+            "degraded": True,
+            "degrade_reason": llm_soft_degrade_reason,
+        }
+
+    return {
+        "vlm": vlm_payload,
+        "llm": llm_payload if reasoning_enabled else {},
+        "timing": timing,
+    }
+
+
 def _validate_cluster_entries(cluster_entries: List[Dict[str, Any]]) -> Dict[str, Any]:
     return self_validator.validate_cluster_entries(cluster_entries)
 
@@ -2507,14 +2842,46 @@ class SpatialPipeline:
             )
         except (TypeError, ValueError):
             v5_region_dedup_containment_threshold = 0.92
-        visual_model_name = str(hints_options.get("visualModel") or "qwen3-vl-4b")
+        visual_model_name = _normalize_visual_model_name(hints_options.get("visualModel"))
         visual_endpoint = str(
             hints_options.get("visualEndpoint") or "http://localhost:1234/v1/chat/completions"
         )
-        visual_image_data_url = hints_options.get("visualSnapshotDataUrl") or hints_options.get("mapSnapshotDataUrl")
+        # canonical visual snapshot key for Phase 4
+        visual_image_data_url = (
+            hints_options.get("visualSnapshotDataUrl")
+            or hints_options.get("mapSnapshotDataUrl")
+            or hints_options.get("screenshot_base64")
+            or hints_options.get("screenshotBase64")
+        )
         visual_timeout_ms = _resolve_limit(
             hints_options.get("visualTimeoutMs"),
-            default_value=1200,
+            default_value=3500,
+            max_value=15000,
+        )
+        model_budget_ms = _resolve_limit(
+            hints_options.get("modelBudgetMs"),
+            default_value=5000,
+            max_value=30000,
+        )
+        vlm_failure_mode = str(
+            hints_options.get("vlmFailureMode")
+            or os.getenv("VLM_FAILURE_MODE")
+            or "soft"
+        ).strip().lower()
+        allow_vlm_remote_failure = vlm_failure_mode not in {"strict", "hard", "fail"}
+        reasoning_enabled = _option_enabled(
+            hints_options.get("reasoningEnabled"),
+            default_value=visual_review_enabled,
+        )
+        reasoning_model_name = str(hints_options.get("reasoningModel") or "qwen/qwen3-1.7b")
+        reasoning_endpoint = str(
+            hints_options.get("reasoningEndpoint")
+            or hints_options.get("llmEndpoint")
+            or visual_endpoint
+        )
+        reasoning_timeout_ms = _resolve_limit(
+            hints_options.get("reasoningTimeoutMs"),
+            default_value=1800,
             max_value=15000,
         )
         name_audit_enabled = _option_enabled(
@@ -2729,6 +3096,27 @@ class SpatialPipeline:
         original_terms = list(terms)
         effective_terms = list(terms)
         term_filter_relaxed = False
+        model_timing_ms = {
+            "vlm_ms": 0.0,
+            "llm_ms": 0.0,
+            "parallel_wall_ms": 0.0,
+            "budget_ms": int(model_budget_ms),
+            "timed_out": False,
+        }
+        model_context = {
+            "visualModel": visual_model_name if visual_review_enabled else None,
+            "reasoningModel": reasoning_model_name if reasoning_enabled else None,
+            "reasoningEnabled": bool(reasoning_enabled),
+            "modelBudgetMs": int(model_budget_ms),
+            "visualTimeoutMs": int(visual_timeout_ms),
+            "reasoningTimeoutMs": int(reasoning_timeout_ms),
+        }
+        vlm_anchor_landmarks: List[str] = []
+        vlm_anchor_aliases: List[str] = []
+        llm_spatial_priors: Dict[str, Any] = {}
+        model_parallel_degraded = False
+        model_parallel_degrade_reason = ""
+        anchor_boosted_poi_count = 0
         anchor_bypass_requested_count = 0
         anchor_bypass_injected_count = 0
         anchor_bypass_query_count = 0
@@ -2787,6 +3175,135 @@ class SpatialPipeline:
                 )
                 term_filter_relaxed = True
                 effective_terms = []
+
+        model_parallel_enabled = bool(
+            reasoning_enabled and (visual_remote_enabled or bool(visual_image_data_url))
+        )
+        if model_parallel_enabled:
+            yield {
+                "type": "STAGE",
+                "payload": {
+                    "stage": "model_parallel_start",
+                    "model_budget_ms": int(model_budget_ms),
+                    "visual_model": visual_model_name,
+                    "reasoning_model": reasoning_model_name,
+                },
+            }
+
+            try:
+                model_parallel_bundle = run_with_timing(
+                    "phase4_model_parallel.py",
+                    _run_parallel_model_inference,
+                    semantic_query=semantic_query,
+                    spatial_context=spatial_context,
+                    categories=fetch_categories,
+                    image_data_url=visual_image_data_url,
+                    visual_model_name=visual_model_name,
+                    visual_endpoint=visual_endpoint,
+                    visual_timeout_ms=visual_timeout_ms,
+                    reasoning_enabled=reasoning_enabled,
+                    reasoning_model_name=reasoning_model_name,
+                    reasoning_endpoint=reasoning_endpoint,
+                    reasoning_timeout_ms=reasoning_timeout_ms,
+                    model_budget_ms=model_budget_ms,
+                    allow_vlm_remote_failure=allow_vlm_remote_failure,
+                )
+                model_timing_ms = dict(model_parallel_bundle.get("timing") or model_timing_ms)
+                model_parallel_degraded = bool(model_parallel_bundle.get("degraded"))
+                model_parallel_degrade_reason = str(model_parallel_bundle.get("degrade_reason") or "").strip()
+                vlm_result = model_parallel_bundle.get("vlm") if isinstance(model_parallel_bundle.get("vlm"), dict) else {}
+                llm_result = model_parallel_bundle.get("llm") if isinstance(model_parallel_bundle.get("llm"), dict) else {}
+
+                vlm_anchor_landmarks = _normalize_anchor_list(vlm_result.get("landmarks") or [])
+                vlm_anchor_aliases = _normalize_anchor_list(vlm_result.get("aliases") or [])
+                llm_spatial_priors = {
+                    "summary": str(llm_result.get("summary") or "").strip(),
+                    "focus_terms": _normalize_anchor_list(llm_result.get("focus_terms") or []),
+                    "alias_candidates": _normalize_anchor_list(llm_result.get("alias_candidates") or []),
+                    "priority_categories": [
+                        str(item).strip()
+                        for item in (llm_result.get("priority_categories") or [])
+                        if str(item).strip()
+                    ],
+                    "confidence": float(llm_result.get("confidence") or 0.0),
+                    "mode": llm_result.get("mode"),
+                    "model": llm_result.get("model"),
+                }
+
+                merged_anchor_terms = _normalize_anchor_list(
+                    list(vlm_anchor_texts)
+                    + list(vlm_anchor_landmarks)
+                    + list(vlm_anchor_aliases)
+                    + list(llm_spatial_priors.get("focus_terms") or [])
+                    + list(llm_spatial_priors.get("alias_candidates") or [])
+                )
+                vlm_anchor_texts = merged_anchor_terms
+                semantic_anchor_hints = _normalize_anchor_list(list(semantic_anchor_hints) + merged_anchor_terms)
+
+                pois, anchor_boosted_poi_count = _rerank_pois_with_priors(
+                    pois=list(pois),
+                    anchor_terms=merged_anchor_terms,
+                    priority_categories=list(llm_spatial_priors.get("priority_categories") or []),
+                )
+
+                yield {
+                    "type": "STAGE",
+                    "payload": {
+                        "stage": "model_parallel_done",
+                        "vlm_anchor_count": len(vlm_anchor_landmarks),
+                        "vlm_alias_count": len(vlm_anchor_aliases),
+                        "reasoning_focus_count": len(llm_spatial_priors.get("focus_terms") or []),
+                        "anchor_boosted_poi_count": int(anchor_boosted_poi_count),
+                        "degraded": bool(model_parallel_degraded),
+                        "degrade_reason": model_parallel_degrade_reason if model_parallel_degraded else None,
+                        "model_timing_ms": model_timing_ms,
+                    },
+                }
+            except Exception as exc:
+                parallel_ctx = getattr(exc, "parallel_error_context", None)
+                if not isinstance(parallel_ctx, dict):
+                    parallel_ctx = {}
+
+                timing_from_ctx = parallel_ctx.get("model_timing_ms")
+                if isinstance(timing_from_ctx, dict):
+                    vlm_ms = _to_float(timing_from_ctx.get("vlm_ms"))
+                    llm_ms = _to_float(timing_from_ctx.get("llm_ms"))
+                    wall_ms = _to_float(timing_from_ctx.get("parallel_wall_ms"))
+                    model_timing_ms = {
+                        "vlm_ms": vlm_ms if vlm_ms is not None else float(model_timing_ms.get("vlm_ms", 0.0)),
+                        "llm_ms": llm_ms if llm_ms is not None else float(model_timing_ms.get("llm_ms", 0.0)),
+                        "parallel_wall_ms": wall_ms if wall_ms is not None else float(model_timing_ms.get("parallel_wall_ms", 0.0)),
+                        "budget_ms": int(timing_from_ctx.get("budget_ms", model_timing_ms.get("budget_ms", model_budget_ms)) or model_budget_ms),
+                        "timed_out": bool(timing_from_ctx.get("timed_out", model_timing_ms.get("timed_out", False))),
+                    }
+
+                error_code = str(parallel_ctx.get("error_code") or str(exc) or "model_parallel_failed:unknown")
+                python_context = parallel_ctx.get("python_context")
+                normalized_python_context = _normalize_python_context_preview(
+                    python_context
+                    if python_context is not None
+                    else {**_redacted_preview(str(exc)), "parse_stage": "model_parallel_failed"}
+                )
+
+                failure_stage_payload = {
+                    "stage": "model_parallel_failed",
+                    "error_code": error_code,
+                    "model_timing_ms": model_timing_ms,
+                    "model_context": parallel_ctx.get("model_context") if isinstance(parallel_ctx.get("model_context"), dict) else model_context,
+                    "python_context": normalized_python_context,
+                }
+                yield {
+                    "type": "STAGE",
+                    "payload": failure_stage_payload,
+                }
+
+                if not isinstance(parallel_ctx.get("model_context"), dict):
+                    parallel_ctx["model_context"] = dict(model_context)
+                parallel_ctx["error_code"] = error_code
+                parallel_ctx["model_timing_ms"] = dict(model_timing_ms)
+                parallel_ctx["python_context"] = normalized_python_context
+                exc.parallel_error_context = parallel_ctx
+                raise
 
         base_layer_anchor_bypass = _option_enabled(
             hints_options.get("baseLayerAnchorBypass"),
@@ -2854,9 +3371,14 @@ class SpatialPipeline:
             "requested_categories_count": len(requested_categories),
             "effective_fetch_categories_count": len(fetch_categories),
             "fetch_categories_relaxed_macro": fetch_categories_relaxed_macro,
+            "anchor_boosted_poi_count": int(anchor_boosted_poi_count),
             "anchor_bypass_requested_count": int(anchor_bypass_requested_count),
             "anchor_bypass_query_count": int(anchor_bypass_query_count),
             "anchor_bypass_injected_count": int(anchor_bypass_injected_count),
+            "allow_vlm_remote_failure": bool(allow_vlm_remote_failure),
+            "vlm_failure_mode": vlm_failure_mode,
+            "model_parallel_degraded": bool(model_parallel_degraded),
+            "model_parallel_degrade_reason": model_parallel_degrade_reason or None,
         }
 
         road_boundary_enhancement = str(hints_options.get("roadBoundaryEnhancement", "true")).lower() not in {
@@ -3973,13 +4495,15 @@ class SpatialPipeline:
         skg_summary = (skg_result.get("summary") or {}).copy()
         skg_graph = (skg_result.get("graph") or {}).copy()
 
-        vlm_extracted_texts = list(vlm_anchor_texts)
-        screenshot_base64 = hints_options.get("screenshot_base64")
-        if screenshot_base64:
+        vlm_extracted_texts = _normalize_anchor_list(
+            list(vlm_anchor_texts) + list(vlm_anchor_landmarks) + list(vlm_anchor_aliases)
+        )
+        if not vlm_extracted_texts and visual_image_data_url:
             screenshot_texts = vlm_reviewer.extract_map_text(
-                image_data_url=screenshot_base64,
+                image_data_url=visual_image_data_url,
                 model_name=visual_model_name,
                 endpoint=visual_endpoint,
+                timeout_ms=visual_timeout_ms,
             )
             vlm_extracted_texts = _normalize_anchor_list(vlm_extracted_texts + (screenshot_texts or []))
 
@@ -4073,12 +4597,24 @@ class SpatialPipeline:
                 "name_audit_model": name_audit_model_name if name_audit_remote_enabled else "rule_guard_v2",
                 "name_audit_rule_rewritten": int(name_audit_summary.get("rule_rewritten", 0)),
                 "name_audit_llm_rewritten": int(name_audit_summary.get("llm_rewritten", 0)),
-                    "name_audit_duplicate_rewritten": int(name_audit_summary.get("duplicate_rewritten", 0)),
-                    "name_audit_llm_attempted": bool(name_audit_summary.get("llm_attempted", False)),
-                    "vlm_extracted_texts": vlm_extracted_texts,
-                    "operator_timings_ms": snapshot_operator_timings(),
-                },
-            }
+                "name_audit_duplicate_rewritten": int(name_audit_summary.get("duplicate_rewritten", 0)),
+                "name_audit_llm_attempted": bool(name_audit_summary.get("llm_attempted", False)),
+                "vlm_extracted_texts": vlm_extracted_texts,
+                "vlm_anchor_landmarks": vlm_anchor_landmarks,
+                "vlm_anchor_aliases": vlm_anchor_aliases,
+                "llm_spatial_priors": llm_spatial_priors,
+                "anchor_boosted_poi_count": int(anchor_boosted_poi_count),
+                "anchor_injected_poi_count": int(anchor_bypass_injected_count),
+                "model_parallel_degraded": bool(model_parallel_degraded),
+                "model_parallel_degrade_reason": model_parallel_degrade_reason or None,
+                "vlm_failure_mode": vlm_failure_mode,
+                "allow_vlm_remote_failure": bool(allow_vlm_remote_failure),
+                "model_timing_ms": model_timing_ms,
+                "reasoning_enabled": bool(reasoning_enabled),
+                "reasoning_model": reasoning_model_name if reasoning_enabled else None,
+                "operator_timings_ms": snapshot_operator_timings(),
+            },
+        }
 
         yield {
             "type": "FINAL",
@@ -4124,6 +4660,10 @@ class SpatialPipeline:
                     "visual_review_enabled": visual_review_enabled,
                     "visual_remote_enabled": visual_remote_enabled,
                     "visual_review_model": visual_model_name if visual_review_enabled else None,
+                    "reasoning_enabled": bool(reasoning_enabled),
+                    "reasoning_model": reasoning_model_name if reasoning_enabled else None,
+                    "model_budget_ms": int(model_budget_ms),
+                    "model_timing_ms": model_timing_ms,
                     "self_validation_enabled": self_validation_enabled,
                     "skg_enabled": skg_enabled,
                     "self_validation_model": self_validation_summary.get("model"),

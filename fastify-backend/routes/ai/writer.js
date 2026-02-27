@@ -514,6 +514,41 @@ function buildResultContext(executorResult, options = {}) {
     sections.push(ocrText)
   }
 
+  // 5.6 空间推理（Phase 4A 双模型并行上下文）
+  const anchorLandmarks = Array.isArray(results.stats?.vlm_anchor_landmarks)
+    ? results.stats.vlm_anchor_landmarks
+    : []
+  const anchorAliases = Array.isArray(results.stats?.vlm_anchor_aliases)
+    ? results.stats.vlm_anchor_aliases
+    : []
+  const spatialPriors = results.stats?.llm_spatial_priors && typeof results.stats.llm_spatial_priors === 'object'
+    ? results.stats.llm_spatial_priors
+    : {}
+  const reasoningSummary = String(spatialPriors.summary || '').trim()
+  const boostedCount = Number.isFinite(Number(results.stats?.anchor_boosted_poi_count))
+    ? Number(results.stats.anchor_boosted_poi_count)
+    : 0
+  const injectedCount = Number.isFinite(Number(results.stats?.anchor_injected_poi_count))
+    ? Number(results.stats.anchor_injected_poi_count)
+    : 0
+
+  if (anchorLandmarks.length > 0 || anchorAliases.length > 0 || reasoningSummary || boostedCount > 0 || injectedCount > 0) {
+    let reasoningText = '🧠 **空间推理**:\n'
+    if (anchorLandmarks.length > 0) {
+      reasoningText += `- 视觉识别锚点: ${anchorLandmarks.join('、')}\n`
+    }
+    if (anchorAliases.length > 0) {
+      reasoningText += `- 视觉别名补充: ${anchorAliases.join('、')}\n`
+    }
+    if (reasoningSummary) {
+      reasoningText += `- 推理判断: ${reasoningSummary}\n`
+    }
+    if (boostedCount > 0 || injectedCount > 0) {
+      reasoningText += `- 对边界/聚类的影响: 候选重排命中 ${boostedCount} 个，锚点补充 ${injectedCount} 个\n`
+    }
+    sections.push(reasoningText)
+  }
+
   // 6. 执行统计（简化）
   if (results.stats) {
     const stats = results.stats
@@ -996,3 +1031,4 @@ export function validateWriterOutput(writerOutput, executorResult, options = {})
     hallucinationReport
   }
 }
+

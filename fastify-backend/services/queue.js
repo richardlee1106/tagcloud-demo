@@ -1,6 +1,6 @@
-/**
- * Jobs 队列服务。
- * 支持 BullMQ（Redis）与内存降级模式。
+﻿/**
+ * Jobs 闃熷垪鏈嶅姟銆?
+ * 鏀寔 BullMQ锛圧edis锛変笌鍐呭瓨闄嶇骇妯″紡銆?
  */
 import { EventEmitter } from 'events'
 import { randomUUID } from 'crypto'
@@ -26,10 +26,41 @@ let initialized = false
 let memoryProcessor = null
 let memoryDraining = false
 
+export function buildQueueFailurePayload(errorLike) {
+  if (errorLike && typeof errorLike === 'object' && !Array.isArray(errorLike)) {
+    const plain = errorLike
+    const resolvedCode = plain.error_code || plain.code || plain?.diagnostics?.error_code
+    return {
+      error: String(plain.error || plain.message || 'Job failed'),
+      error_code: resolvedCode
+        ? String(resolvedCode)
+        : null,
+      diagnostics: plain.diagnostics && typeof plain.diagnostics === 'object'
+        ? plain.diagnostics
+        : null
+    }
+  }
+
+  if (errorLike instanceof Error) {
+    return {
+      error: String(errorLike.message || 'Job failed'),
+      error_code: errorLike.code ? String(errorLike.code) : null,
+      diagnostics: errorLike.diagnostics && typeof errorLike.diagnostics === 'object'
+        ? errorLike.diagnostics
+        : null
+    }
+  }
+
+  return {
+    error: String(errorLike || 'Job failed'),
+    error_code: null,
+    diagnostics: null
+  }
+}
 /**
  */
 /**
- * 构建 Redis 连接参数。
+ * 鏋勫缓 Redis 杩炴帴鍙傛暟銆?
  */
 function getRedisConfig() {
   if (process.env.REDIS_URL) {
@@ -51,7 +82,7 @@ function getRedisConfig() {
 /**
  */
 /**
- * 创建或更新任务快照。
+ * 鍒涘缓鎴栨洿鏂颁换鍔″揩鐓с€?
  */
 function touchSnapshot(jobId, patch = {}) {
   const current = jobSnapshots.get(jobId) || {
@@ -61,6 +92,8 @@ function touchSnapshot(jobId, patch = {}) {
     progress: 0,
     eta_ms: null,
     error: null,
+    error_code: null,
+    diagnostics: null,
     result: null,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
@@ -80,7 +113,7 @@ function touchSnapshot(jobId, patch = {}) {
 /**
  */
 /**
- * 追加任务事件并驱动状态机更新。
+ * 杩藉姞浠诲姟浜嬩欢骞堕┍鍔ㄧ姸鎬佹満鏇存柊銆?
  */
 function appendEvent(jobId, type, payload = {}) {
   const event = {
@@ -126,9 +159,12 @@ function appendEvent(jobId, type, payload = {}) {
     snapshot.stage = 'completed'
     snapshot.result = payload.result ?? snapshot.result
   } else if (type === 'failed') {
+    const failurePayload = buildQueueFailurePayload(payload)
     snapshot.status = 'failed'
     snapshot.stage = 'failed'
-    snapshot.error = payload.error || 'Job failed'
+    snapshot.error = failurePayload.error || 'Job failed'
+    snapshot.error_code = failurePayload.error_code || null
+    snapshot.diagnostics = failurePayload.diagnostics || null
   }
 
   eventBus.emit('job_event', event)
@@ -139,7 +175,7 @@ function appendEvent(jobId, type, payload = {}) {
 /**
  */
 /**
- * 上报进度：内存事件必写，BullMQ 进度尽力写。
+ * 涓婃姤杩涘害锛氬唴瀛樹簨浠跺繀鍐欙紝BullMQ 杩涘害灏藉姏鍐欍€?
  */
 async function emitProgress(jobId, eventType, payload, bullJob) {
   appendEvent(jobId, eventType, payload)
@@ -156,7 +192,7 @@ async function emitProgress(jobId, eventType, payload, bullJob) {
 /**
  */
 /**
- * 生成标准 reporter 接口。
+ * 鐢熸垚鏍囧噯 reporter 鎺ュ彛銆?
  */
 function createReporter(jobId, bullJob = null) {
   return {
@@ -178,7 +214,7 @@ function createReporter(jobId, bullJob = null) {
 /**
  */
 /**
- * 执行任务处理器，统一维护完成/失败状态。
+ * 鎵ц浠诲姟澶勭悊鍣紝缁熶竴缁存姢瀹屾垚/澶辫触鐘舵€併€?
  */
 async function runProcessor(processor, jobId, payload, bullJob = null) {
   touchSnapshot(jobId, {
@@ -210,13 +246,21 @@ async function runProcessor(processor, jobId, payload, bullJob = null) {
 
     return result
   } catch (err) {
-    const errorMessage = err?.message || 'Unknown worker error'
+    const failurePayload = buildQueueFailurePayload(err)
     touchSnapshot(jobId, {
       status: 'failed',
       stage: 'failed',
-      error: errorMessage
+      error: failurePayload.error,
+      error_code: failurePayload.error_code,
+      diagnostics: failurePayload.diagnostics
     })
-    appendEvent(jobId, 'failed', { error: errorMessage })
+    appendEvent(jobId, 'failed', failurePayload)
+    if (bullJob) {
+      try {
+        await bullJob.updateProgress({ event: 'failed', ...failurePayload, ts: Date.now() })
+      } catch {
+      }
+    }
     throw err
   }
 }
@@ -224,7 +268,7 @@ async function runProcessor(processor, jobId, payload, bullJob = null) {
 /**
  */
 /**
- * 内存队列消费器（Redis 不可用时启用）。
+ * 鍐呭瓨闃熷垪娑堣垂鍣紙Redis 涓嶅彲鐢ㄦ椂鍚敤锛夈€?
  */
 async function drainMemoryQueue() {
   if (memoryDraining || !memoryProcessor) {
@@ -248,7 +292,7 @@ async function drainMemoryQueue() {
 /**
  */
 /**
- * 监听 BullMQ 事件并映射到内部事件总线。
+ * 鐩戝惉 BullMQ 浜嬩欢骞舵槧灏勫埌鍐呴儴浜嬩欢鎬荤嚎銆?
  */
 function attachQueueEventListeners() {
   if (!queueEvents) {
@@ -305,23 +349,24 @@ function attachQueueEventListeners() {
   })
 
   queueEvents.on('failed', ({ jobId, failedReason }) => {
+    const failurePayload = buildQueueFailurePayload(failedReason)
     touchSnapshot(jobId, {
       status: 'failed',
       stage: 'failed',
-      error: failedReason
+      error: failurePayload.error,
+      error_code: failurePayload.error_code,
+      diagnostics: failurePayload.diagnostics
     })
 
-    appendEvent(jobId, 'failed', {
-      error: failedReason
-    })
+    appendEvent(jobId, 'failed', failurePayload)
   })
 }
 
 /**
  */
 /**
- * 初始化队列服务。
- * 优先 BullMQ，失败自动降级内存模式。
+ * 鍒濆鍖栭槦鍒楁湇鍔°€?
+ * 浼樺厛 BullMQ锛屽け璐ヨ嚜鍔ㄩ檷绾у唴瀛樻ā寮忋€?
  */
 export async function initQueueServices() {
   if (initialized) {
@@ -358,7 +403,7 @@ export async function initQueueServices() {
         try {
           await redisConnection.quit()
         } catch {
-                    // Թرս׶εĴҪ󣬱Ӱ˳
+                    // 怨乇战锥蔚拇要螅影顺
         }
       }
       redisConnection = null
@@ -373,7 +418,7 @@ export async function initQueueServices() {
 /**
  */
 /**
- * 当前是否为 BullMQ 模式。
+ * 褰撳墠鏄惁涓?BullMQ 妯″紡銆?
  */
 export function isBullQueueEnabled() {
   return !!queue
@@ -382,14 +427,14 @@ export function isBullQueueEnabled() {
 /**
  */
 /**
- * 返回当前队列模式标识。
+ * 杩斿洖褰撳墠闃熷垪妯″紡鏍囪瘑銆?
  */
 export function getQueueMode() {
   return queue ? 'bullmq' : 'memory'
 }
 
 /**
- * 统计当前内存快照中的任务状态分布，便于统一监控队列健康。
+ * 缁熻褰撳墠鍐呭瓨蹇収涓殑浠诲姟鐘舵€佸垎甯冿紝渚夸簬缁熶竴鐩戞帶闃熷垪鍋ュ悍銆?
  */
 function buildSnapshotStatusStats() {
   const stats = {
@@ -431,7 +476,7 @@ function buildSnapshotStatusStats() {
 }
 
 /**
- * ֵ֤쳣ʱаȫĬֵ
+ * 值证斐Ｊ毙叭?
  */
 function parseHealthThreshold(rawValue, fallback) {
   const parsed = Number(rawValue)
@@ -442,7 +487,7 @@ function parseHealthThreshold(rawValue, fallback) {
 }
 
 /**
- * 规范化告警对象，便于 API 与脚本统一解析。
+ * 瑙勮寖鍖栧憡璀﹀璞★紝渚夸簬 API 涓庤剼鏈粺涓€瑙ｆ瀽銆?
  */
 function createQueueAlert(code, severity, message, extra = {}) {
   return {
@@ -454,9 +499,9 @@ function createQueueAlert(code, severity, message, extra = {}) {
 }
 
 /**
- * 提供队列健康快照：模式、积压、失败数、阈值与告警。
- * - Jobs 健康接口直接消费该结构。
- * - 发布前演练脚本也可复用该结构做断言。
+ * 鎻愪緵闃熷垪鍋ュ悍蹇収锛氭ā寮忋€佺Н鍘嬨€佸け璐ユ暟銆侀槇鍊间笌鍛婅銆?
+ * - Jobs 鍋ュ悍鎺ュ彛鐩存帴娑堣垂璇ョ粨鏋勩€?
+ * - 鍙戝竷鍓嶆紨缁冭剼鏈篃鍙鐢ㄨ缁撴瀯鍋氭柇瑷€銆?
  */
 export async function getQueueHealthSnapshot(options = {}) {
   if (!initialized) {
@@ -530,7 +575,7 @@ export async function getQueueHealthSnapshot(options = {}) {
     alerts.push(createQueueAlert(
       'memory_mode_enabled',
       'warning',
-      '当前运行在 memory 队列模式，进程重启会丢失未完成任务。'
+      'Queue is running in memory mode; unfinished jobs may be lost on restart.'
     ))
   }
 
@@ -538,7 +583,7 @@ export async function getQueueHealthSnapshot(options = {}) {
     alerts.push(createQueueAlert(
       'bullmq_stats_unavailable',
       'error',
-      `BullMQ 统计读取失败: ${bullmq.error}`
+      `BullMQ 缁熻璇诲彇澶辫触: ${bullmq.error}`
     ))
   }
 
@@ -546,7 +591,7 @@ export async function getQueueHealthSnapshot(options = {}) {
     alerts.push(createQueueAlert(
       'queue_backlog_high',
       'warning',
-      'лѹѳԤֵ',
+      '谢压殉预值',
       { value: backlog, threshold: thresholds.backlog_warn }
     ))
   }
@@ -555,7 +600,7 @@ export async function getQueueHealthSnapshot(options = {}) {
     alerts.push(createQueueAlert(
       'queue_failed_high',
       'warning',
-      'ʧѳԤֵ',
+      '失殉预值',
       { value: failed, threshold: thresholds.failed_warn }
     ))
   }
@@ -579,7 +624,7 @@ export async function getQueueHealthSnapshot(options = {}) {
 }
 
 /**
- * 提交空间任务。
+ * 鎻愪氦绌洪棿浠诲姟銆?
  */
 export async function enqueueSpatialJob(payload, options = {}) {
   if (!initialized) {
@@ -622,7 +667,7 @@ export async function enqueueSpatialJob(payload, options = {}) {
 /**
  */
 /**
- * 注册任务处理器。
+ * 娉ㄥ唽浠诲姟澶勭悊鍣ㄣ€?
  */
 export async function registerSpatialJobProcessor(processor, options = {}) {
   if (!initialized) {
@@ -664,7 +709,7 @@ export async function registerSpatialJobProcessor(processor, options = {}) {
 /**
  */
 /**
- * 获取任务快照（含状态和进度）。
+ * 鑾峰彇浠诲姟蹇収锛堝惈鐘舵€佸拰杩涘害锛夈€?
  */
 export async function getJobSnapshot(jobId) {
   const snapshot = jobSnapshots.get(jobId)
@@ -692,7 +737,11 @@ export async function getJobSnapshot(jobId) {
       stage: progressRaw?.stage || state,
       progress: progressValue,
       result: job.returnvalue ?? null,
-      error: job.failedReason ?? null
+      error: job.failedReason ?? null,
+      error_code: progressRaw?.error_code || null,
+      diagnostics: progressRaw?.diagnostics && typeof progressRaw.diagnostics === 'object'
+        ? progressRaw.diagnostics
+        : null
     })
 
     return hydrated
@@ -704,7 +753,7 @@ export async function getJobSnapshot(jobId) {
 /**
  */
 /**
- * 获取任务结果。
+ * 鑾峰彇浠诲姟缁撴灉銆?
  */
 export async function getJobResult(jobId) {
   const snapshot = await getJobSnapshot(jobId)
@@ -718,7 +767,7 @@ export async function getJobResult(jobId) {
 /**
  */
 /**
- * 等待任务结束（sync 路由使用）。
+ * 绛夊緟浠诲姟缁撴潫锛坰ync 璺敱浣跨敤锛夈€?
  */
 export async function awaitJobCompletion(jobId, options = {}) {
   const timeoutMs = options.timeoutMs ?? 120_000
@@ -729,7 +778,12 @@ export async function awaitJobCompletion(jobId, options = {}) {
   }
 
   if (current?.status === 'failed') {
-    throw new Error(current.error || 'Job failed')
+    const error = new Error(current.error || 'Job failed')
+    if (current.error_code) error.code = String(current.error_code)
+    if (current.diagnostics && typeof current.diagnostics === 'object') {
+      error.diagnostics = current.diagnostics
+    }
+    throw error
   }
 
   return new Promise((resolve, reject) => {
@@ -749,7 +803,13 @@ export async function awaitJobCompletion(jobId, options = {}) {
       if (event.type === 'failed') {
         clearTimeout(timeout)
         unsubscribe()
-        reject(new Error(event.payload?.error || 'Job failed'))
+        const failurePayload = buildQueueFailurePayload(event.payload)
+        const error = new Error(failurePayload.error || 'Job failed')
+        if (failurePayload.error_code) error.code = String(failurePayload.error_code)
+        if (failurePayload.diagnostics && typeof failurePayload.diagnostics === 'object') {
+          error.diagnostics = failurePayload.diagnostics
+        }
+        reject(error)
       }
     }, { replay: false })
   })
@@ -758,7 +818,7 @@ export async function awaitJobCompletion(jobId, options = {}) {
 /**
  */
 /**
- * 订阅单任务事件流。
+ * 璁㈤槄鍗曚换鍔′簨浠舵祦銆?
  */
 export function subscribeJobEvents(jobId, handler, options = {}) {
   const replay = options.replay !== false
@@ -791,7 +851,7 @@ export function subscribeJobEvents(jobId, handler, options = {}) {
 /**
  */
 /**
- * 关闭队列服务资源。
+ * 鍏抽棴闃熷垪鏈嶅姟璧勬簮銆?
  */
 export async function closeQueueServices() {
   if (worker) {
@@ -830,3 +890,4 @@ export default {
   isBullQueueEnabled,
   getQueueHealthSnapshot
 }
+

@@ -1,15 +1,12 @@
-/**
- * Node -> Python gRPC 客户端封装。
- *
- * 目标：
- * - 对上层隐藏 proto 加载与事件解析细节。
- * - 提供“流式事件 + 最终结果”统一接口。
+﻿/**
+ * Node -> Python gRPC client wrapper.
  */
 import path from 'path'
 import { fileURLToPath } from 'url'
 import grpc from '@grpc/grpc-js'
 import protoLoader from '@grpc/proto-loader'
 import telemetry from './telemetry.js'
+import { classifySpatialError } from './errorDiagnostics.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -21,10 +18,6 @@ const GRPC_TIMEOUT_MS = parseInt(process.env.SPATIAL_GRPC_TIMEOUT_MS || '45000',
 let client
 let enumMap
 
-/**
- * 按需创建 gRPC client（懒加载）。
- * 避免模块 import 阶段因 proto/网络异常直接崩溃。
- */
 function loadGrpcClient() {
   if (client) {
     return client
@@ -51,7 +44,6 @@ function loadGrpcClient() {
     GRPC_ENDPOINT,
     grpc.credentials.createInsecure(),
     {
-      // ϢС keepaliveͳϿʡ
       'grpc.max_receive_message_length': 10 * 1024 * 1024,
       'grpc.keepalive_time_ms': 20_000,
       'grpc.keepalive_timeout_ms': 5_000
@@ -61,9 +53,6 @@ function loadGrpcClient() {
   return client
 }
 
-/**
- * 将 proto 的 enum 值统一转为字符串，方便上层 switch 判断。
- */
 function normalizeEventType(typeValue) {
   if (!typeValue) return 'EVENT_TYPE_UNSPECIFIED'
   if (typeof typeValue === 'string') return typeValue
@@ -77,6 +66,71 @@ function normalizeEventType(typeValue) {
   }
 
   return String(typeValue)
+}
+
+function normalizeGrpcMetadata(metadata) {
+  if (!metadata || typeof metadata.getMap !== 'function') {
+    return {}
+  }
+  try {
+    return metadata.getMap() || {}
+  } catch {
+    return {}
+  }
+}
+
+export function buildGrpcStreamErrorFromEvent(payload = {}, context = {}) {
+  const message = typeof payload?.message === 'string' && payload.message.trim()
+    ? payload.message.trim()
+    : 'Python compute returned ERROR'
+  const diagnostics = payload?.diagnostics && typeof payload.diagnostics === 'object'
+    ? payload.diagnostics
+    : {}
+  const inferred = classifySpatialError(message)
+  const errorCode = String(payload?.code || diagnostics?.error_code || inferred.error_code || '')
+
+  const error = new Error(message)
+  if (errorCode) {
+    error.code = errorCode
+  }
+  if (Object.keys(diagnostics).length > 0) {
+    error.diagnostics = diagnostics
+  }
+  if (diagnostics?.python_context && typeof diagnostics.python_context === 'object') {
+    error.python_context = diagnostics.python_context
+  }
+
+  error.grpc_context = {
+    endpoint: context.endpoint || GRPC_ENDPOINT,
+    timeout_ms: context.timeout_ms ?? null,
+    last_stage: context.last_stage || null,
+    event_count: Number(context.event_count || 0),
+    grpc_status: null,
+    source: 'grpc_error_event'
+  }
+
+  return error
+}
+
+export function enrichGrpcTransportError(rawError, context = {}) {
+  const error = rawError instanceof Error ? rawError : new Error(String(rawError))
+  const inferred = classifySpatialError(error.message)
+  if (!error.code && inferred.error_code) {
+    error.code = inferred.error_code
+  }
+
+  error.grpc_context = {
+    endpoint: context.endpoint || GRPC_ENDPOINT,
+    timeout_ms: context.timeout_ms ?? null,
+    last_stage: context.last_stage || null,
+    event_count: Number(context.event_count || 0),
+    grpc_status: Number.isFinite(Number(rawError?.code)) ? Number(rawError.code) : null,
+    grpc_details: String(rawError?.details || ''),
+    grpc_metadata: normalizeGrpcMetadata(rawError?.metadata),
+    source: 'grpc_transport_error'
+  }
+
+  return error
 }
 
 export function isGrpcComputeEnabled() {
@@ -141,11 +195,6 @@ export function resolveGrpcTimeoutMs(requestPayload = {}) {
   return clampTimeout(timeoutMs)
 }
 
-/**
- * 执行流式计算。
- * - onEvent：逐条消费 STAGE/PROGRESS/PARTIAL/FINAL/ERROR。
- * - 返回值：最终 FINAL payload（若存在）。
- */
 export async function computeSpatialStream(requestPayload, onEvent) {
   if (!isGrpcComputeEnabled()) {
     throw new Error('gRPC compute disabled by SPATIAL_GRPC_ENABLED=false')
@@ -167,6 +216,8 @@ export async function computeSpatialStream(requestPayload, onEvent) {
   return new Promise((resolve, reject) => {
     let finalPayload = null
     let settled = false
+    let lastStage = 'grpc_stream_opened'
+    let eventCount = 0
 
     const deadline = new Date(Date.now() + timeoutMs)
     const call = grpcClient.ComputeSpatial(requestPayload, { deadline })
@@ -177,15 +228,24 @@ export async function computeSpatialStream(requestPayload, onEvent) {
       try {
         call.cancel()
       } catch {
-        // 取消调用时的二次异常直接忽略
       }
+
+      const errorCode = String(err?.code || err?.diagnostics?.error_code || '')
+      const grpcStatus = Number.isFinite(Number(err?.grpc_context?.grpc_status))
+        ? Number(err.grpc_context.grpc_status)
+        : null
+
       telemetry.incrementCounter('grpc_compute_failures_total', { endpoint: GRPC_ENDPOINT })
       telemetry.logStructured('error', 'grpc_compute_error', {
         trace_id: traceId,
         endpoint: GRPC_ENDPOINT,
         timeout_ms: timeoutMs,
-        error: err?.message || String(err)
+        error: err?.message || String(err),
+        error_code: errorCode || undefined,
+        last_stage: String(err?.grpc_context?.last_stage || lastStage || ''),
+        grpc_status: grpcStatus
       })
+
       reject(err instanceof Error ? err : new Error(String(err)))
     }
 
@@ -210,6 +270,7 @@ export async function computeSpatialStream(requestPayload, onEvent) {
       if (settled) return
 
       try {
+        eventCount += 1
         const eventType = normalizeEventType(event.type)
         let parsedPayload = {}
 
@@ -217,18 +278,34 @@ export async function computeSpatialStream(requestPayload, onEvent) {
           try {
             parsedPayload = JSON.parse(event.payload)
           } catch {
-            // payload 不是 JSON 时，按原始字符串透传
             parsedPayload = { raw: event.payload }
           }
         }
 
+        if (eventType === 'STAGE') {
+          const stageName = parsedPayload?.stage || parsedPayload?.name
+          if (stageName) {
+            lastStage = String(stageName)
+          }
+        }
+
         if (typeof onEvent === 'function') {
-          // 允许 async 回调，串行等待 Promise 完成
           await onEvent({
             type: eventType,
             payload: parsedPayload,
             ts: Number(event.ts || Date.now())
           })
+        }
+
+        if (eventType === 'ERROR') {
+          const streamError = buildGrpcStreamErrorFromEvent(parsedPayload, {
+            endpoint: GRPC_ENDPOINT,
+            timeout_ms: timeoutMs,
+            last_stage: lastStage,
+            event_count: eventCount
+          })
+          settleWithError(streamError)
+          return
         }
 
         if (eventType === 'FINAL') {
@@ -240,7 +317,13 @@ export async function computeSpatialStream(requestPayload, onEvent) {
     })
 
     call.on('error', (err) => {
-      settleWithError(err)
+      const transportError = enrichGrpcTransportError(err, {
+        endpoint: GRPC_ENDPOINT,
+        timeout_ms: timeoutMs,
+        last_stage: lastStage,
+        event_count: eventCount
+      })
+      settleWithError(transportError)
     })
 
     call.on('end', () => {
@@ -249,9 +332,6 @@ export async function computeSpatialStream(requestPayload, onEvent) {
   })
 }
 
-/**
- * 主动关闭 gRPC client，释放底层 channel 连接
- */
 export function closeGrpcClient() {
   if (client) {
     client.close()

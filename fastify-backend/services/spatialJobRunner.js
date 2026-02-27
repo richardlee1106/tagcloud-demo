@@ -13,6 +13,7 @@ import * as queryCache from './queryCache.js'
 import telemetry from './telemetry.js'
 import { insertOperatorTimingEvents } from './database.js'
 import { callLLM } from './llm.js'
+import { buildFailureDiagnostics } from './errorDiagnostics.js'
 import {
   classifyGeoRelevance,
   IRRELEVANT_FRIENDLY_REPLY
@@ -53,6 +54,36 @@ const ADVANCED_QUERY_TYPES = new Set([
 function normalizeQueryType(queryPlan = {}) {
   const rawType = queryPlan?.query_type || queryPlan?.queryType || 'poi_search'
   return String(rawType).trim().toLowerCase() || 'poi_search'
+}
+
+const LEGACY_VISUAL_MODEL_ALIASES = new Map([
+  ['qwen3-vl-4b', 'qwen/qwen3-vl-4b']
+])
+
+function upgradeLegacyVisualModelAlias(modelName = '') {
+  const normalized = String(modelName || '').trim()
+  if (!normalized) return ''
+  return LEGACY_VISUAL_MODEL_ALIASES.get(normalized.toLowerCase()) || normalized
+}
+
+export function normalizeVisualModelName(modelName, { fallback = 'qwen/qwen3-vl-4b' } = {}) {
+  const explicitModel = upgradeLegacyVisualModelAlias(modelName)
+  if (explicitModel) {
+    return explicitModel
+  }
+
+  const envModel = upgradeLegacyVisualModelAlias(
+    process.env.LOCAL_VISUAL_MODEL
+    || process.env.LOCAL_VLM_MODEL
+    || process.env.LOCAL_LLM_MODEL
+    || process.env.LLM_MODEL
+  )
+
+  if (envModel) {
+    return envModel
+  }
+
+  return upgradeLegacyVisualModelAlias(fallback) || 'qwen/qwen3-vl-4b'
 }
 
 
@@ -697,6 +728,7 @@ function buildGrpcRequest({ requestId, queryPlan, spatialContext, options, migra
   const executionProfile = migrationDecision?.execution_profile || 'core'
   const dryRun = migrationDecision?.dry_run === true
   const candidatesJson = serializeCandidatesForGrpc(options, poiFeatures, migrationDecision)
+  const resolvedVisualModel = normalizeVisualModelName(options?.visualModel)
   
   // Debug: log what's being sent to Python
   console.log('[GRPC_DEBUG] buildGrpcRequest spatialContext keys:', Object.keys(spatialContext || {}))
@@ -707,6 +739,7 @@ function buildGrpcRequest({ requestId, queryPlan, spatialContext, options, migra
   console.log('[GRPC_DEBUG] candidates_json length:', candidatesJson.length)
   console.log('[GRPC_DEBUG] options.limit/maxFetchLimit:', options?.limit, options?.maxFetchLimit)
   console.log('[GRPC_DEBUG] options.clusterMaxHdbscanPoints/maxRegionOutputs:', options?.clusterMaxHdbscanPoints, options?.maxRegionOutputs)
+  console.log('[GRPC_DEBUG] options.visualModel/resolvedVisualModel:', options?.visualModel, resolvedVisualModel)
 
   return {
     request_id: requestId,
@@ -725,12 +758,18 @@ function buildGrpcRequest({ requestId, queryPlan, spatialContext, options, migra
         visualRemoteEnabled: options?.visualRemoteEnabled,
         selfValidationEnabled: options?.selfValidationEnabled,
         skgEnabled: options?.skgEnabled,
-        visualModel: options?.visualModel,
+        visualModel: resolvedVisualModel,
         visualEndpoint: options?.visualEndpoint,
         visualTimeoutMs: options?.visualTimeoutMs,
+        vlmFailureMode: options?.vlmFailureMode,
+        reasoningEnabled: options?.reasoningEnabled,
+        reasoningModel: options?.reasoningModel,
+        reasoningEndpoint: options?.reasoningEndpoint,
+        reasoningTimeoutMs: options?.reasoningTimeoutMs,
+        modelBudgetMs: options?.modelBudgetMs,
         syncTimeoutMs: options?.syncTimeoutMs,
         grpcTimeoutMs: options?.grpcTimeoutMs,
-        visualSnapshotDataUrl: options?.visualSnapshotDataUrl || options?.mapSnapshotDataUrl,
+        visualSnapshotDataUrl: options?.visualSnapshotDataUrl || options?.mapSnapshotDataUrl || options?.screenshotBase64,
         sourcePolicy: options?.sourcePolicy,
         selectedCategories: options?.selectedCategories,
         regions: Array.isArray(options?.regions) ? options.regions : [],
@@ -917,29 +956,60 @@ async function computeSpatialWithFallback({
       })
 
       let finalPayload = null
-      await computeSpatialStream(
-        buildGrpcRequest({
-          requestId,
-          queryPlan,
-          spatialContext,
-          options,
-          migrationDecision,
-          poiFeatures
-        }),
-        async (event) => {
-          if (event.type === 'STAGE') {
-            await reporter.reportStage(event.payload?.stage || 'python_stage', event.payload)
-          } else if (event.type === 'PROGRESS') {
-            await reporter.reportProgress(event.payload?.progress ?? 0, event.payload)
-          } else if (event.type === 'PARTIAL') {
-            await reporter.reportPartial(event.payload)
-          } else if (event.type === 'FINAL') {
-            finalPayload = event.payload
-          } else if (event.type === 'ERROR') {
-            throw new Error(event.payload?.message || 'Python compute returned ERROR')
+      let attempt = 0
+      const maxAttempts = 4
+      let lastErr = null
+
+      while (attempt < maxAttempts) {
+        attempt += 1
+        try {
+          await computeSpatialStream(
+            buildGrpcRequest({
+              requestId,
+              queryPlan,
+              spatialContext,
+              options,
+              migrationDecision,
+              poiFeatures
+            }),
+            async (event) => {
+              if (event.type === 'STAGE') {
+                await reporter.reportStage(event.payload?.stage || 'python_stage', event.payload)
+              } else if (event.type === 'PROGRESS') {
+                await reporter.reportProgress(event.payload?.progress ?? 0, event.payload)
+              } else if (event.type === 'PARTIAL') {
+                await reporter.reportPartial(event.payload)
+              } else if (event.type === 'FINAL') {
+                finalPayload = event.payload
+              } else if (event.type === 'ERROR') {
+                const streamError = new Error(event.payload?.message || 'Python compute returned ERROR')
+                if (event.payload?.code) {
+                  streamError.code = String(event.payload.code)
+                }
+                if (event.payload?.diagnostics && typeof event.payload.diagnostics === 'object') {
+                  streamError.diagnostics = event.payload.diagnostics
+                }
+                throw streamError
+              }
+            }
+          )
+          lastErr = null
+          break
+        } catch (err) {
+          lastErr = err
+          const errCode = String(err?.code || err?.diagnostics?.error_code || err?.grpc_context?.grpc_status || '')
+          if (errCode === '14' && attempt < maxAttempts) {
+            console.warn(`[SpatialJobRunner] gRPC unavailable (14). Retrying attempt ${attempt}/${maxAttempts}...`)
+            await new Promise((resolve) => setTimeout(resolve, 2000))
+            continue
           }
+          throw err
         }
-      )
+      }
+
+      if (lastErr) {
+        throw lastErr
+      }
 
       if (finalPayload) {
         const normalizedPython = normalizeExecutorEnvelope(finalPayload)
@@ -952,12 +1022,36 @@ async function computeSpatialWithFallback({
 
       throw new Error('Python compute stream ended without FINAL payload')
     } catch (err) {
-      fallbackReasons.push(`python_error:${err.message}`)
-      await reporter.reportStage('python_fallback_error', {
-        reason: err.message
+      const failureDiagnostics = buildFailureDiagnostics({
+        error: err,
+        traceId: requestId,
+        mode: options?.mode || 'sync',
+        queryType: queryPlan?.query_type || queryPlan?.queryType || '',
+        stagePath: [err?.grpc_context?.last_stage].filter(Boolean),
+        spatialContext,
+        options,
+        grpcContext: err?.grpc_context,
+        pythonContext: err?.diagnostics?.python_context || err?.python_context,
+        stackPreview: err?.stack
       })
-      console.error(`[SpatialJobRunner] Python execution failed and Node fallback is disabled: ${err.message}`)
-      throw new Error(`Spatial compute service unavailable: ${err.message}`)
+
+      fallbackReasons.push(`python_error:${failureDiagnostics.error_code || err.message}`)
+      await reporter.reportStage('python_fallback_error', {
+        reason: err.message,
+        error_code: failureDiagnostics.error_code,
+        error_signature: failureDiagnostics.error_signature,
+        failure_diagnostics: failureDiagnostics
+      })
+
+      console.error(
+        `[SpatialJobRunner] Python execution failed and Node fallback is disabled: ${failureDiagnostics.error_code || err.message}`
+      )
+
+      const wrappedError = new Error(`Spatial compute service unavailable: ${err.message}`)
+      wrappedError.code = failureDiagnostics.error_code
+      wrappedError.diagnostics = failureDiagnostics
+      wrappedError.grpc_context = failureDiagnostics.grpc_context
+      throw wrappedError
     }
   }
 
@@ -1584,6 +1678,7 @@ export function toLegacySSEPayload(jobResult) {
 
 export default {
   extractLastUserMessage,
+  normalizeVisualModelName,
   decideExecutionMode,
   executeSpatialPlanWithFallback,
   runNarrativeSpatialJob,

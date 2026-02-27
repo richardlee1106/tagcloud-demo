@@ -7,7 +7,8 @@ import { getActiveProviderInfo } from '../../services/llm.js'
 import {
   enqueueSpatialJob,
   subscribeJobEvents,
-  getJobSnapshot
+  getJobSnapshot,
+  buildQueueFailurePayload
 } from '../../services/queue.js'
 import {
   extractLastUserMessage,
@@ -17,6 +18,7 @@ import {
   toLegacySSEPayload
 } from '../../services/spatialJobRunner.js'
 import telemetry from '../../services/telemetry.js'
+import { buildFailureDiagnostics } from '../../services/errorDiagnostics.js'
 import { parseIntent } from './planner.js'
 import templateFeedbackRoutes from './templateFeedback.js'
 import { validateSSEEventPayload } from '../../../shared/sseEventSchema.js'
@@ -31,7 +33,7 @@ const SSE_CAPABILITIES = Object.freeze([
 const ragSessions = new Map()
 const RAG_SESSION_MAX = parseInt(process.env.RAG_SESSION_MAX || '200', 10)
 
-setInterval(() => {
+const ragSessionGcTimer = setInterval(() => {
   const now = Date.now()
   const maxAge = 30 * 60 * 1000
 
@@ -51,6 +53,9 @@ setInterval(() => {
     console.warn(`[AI Routes] ragSessions overflow pruned ${overflow}, current size ${ragSessions.size}`)
   }
 }, 5 * 60 * 1000)
+if (typeof ragSessionGcTimer.unref === 'function') {
+  ragSessionGcTimer.unref()
+}
 
 /**
  */
@@ -134,6 +139,50 @@ function summarizeForRagLog(value, maxLength = 800) {
     return { preview: `${serialized.slice(0, maxLength)}...` }
   } catch {
     return { preview: '[unserializable]' }
+  }
+}
+
+function normalizeStageName(stage) {
+  const normalized = String(stage || '').trim()
+  return normalized || null
+}
+
+function pushStagePath(stagePath, stageName) {
+  const normalized = normalizeStageName(stageName)
+  if (!normalized) return
+  stagePath.push(normalized)
+  if (stagePath.length > 120) {
+    stagePath.splice(0, stagePath.length - 120)
+  }
+}
+
+function toDiagnosticError(errorLike, fallbackMessage = 'Job failed') {
+  if (errorLike instanceof Error) return errorLike
+  const failurePayload = buildQueueFailurePayload(errorLike)
+  const error = new Error(failurePayload.error || fallbackMessage)
+  if (failurePayload.error_code) error.code = String(failurePayload.error_code)
+  if (failurePayload.diagnostics && typeof failurePayload.diagnostics === 'object') {
+    error.diagnostics = failurePayload.diagnostics
+  }
+  return error
+}
+
+export function recordPipelineFailure(session, mode, errorMessage, failureDiagnostics) {
+  session.log?.('Pipeline', 'Failed', {
+    mode,
+    error: errorMessage,
+    error_code: failureDiagnostics?.error_code || null,
+    error_signature: failureDiagnostics?.error_signature || null
+  })
+  session.log?.('Pipeline', 'FailureDiagnostics', failureDiagnostics || {})
+}
+
+function buildSseErrorPayload(errorMessage, failureDiagnostics) {
+  return {
+    message: String(errorMessage || 'Pipeline failed'),
+    error_code: failureDiagnostics?.error_code || null,
+    error_signature: failureDiagnostics?.error_signature || null,
+    failure_diagnostics: failureDiagnostics || null
   }
 }
 
@@ -307,6 +356,8 @@ async function aiRoutes(fastify) {
     }
     const requestStartedAt = Date.now()
     let firstTokenAt = null
+    const stagePath = []
+    let inferredQueryType = String(options?.queryPlan?.query_type || options?.query_type || '').trim() || ''
 
     if (!messages || messages.length === 0) {
       return reply.status(400).send({ error: 'messages is required' })
@@ -419,6 +470,7 @@ async function aiRoutes(fastify) {
             }
 
           if (event.type === 'queued' || event.type === 'started') {
+            pushStagePath(stagePath, event.payload?.stage || event.type)
             logSessionStage(session, event.payload?.stage || event.type, event.payload || {})
             writeSSEEvent(reply, 'stage', {
               name: event.payload?.stage || event.type
@@ -427,6 +479,7 @@ async function aiRoutes(fastify) {
           }
 
           if (event.type === 'stage') {
+            pushStagePath(stagePath, event.payload?.stage || 'processing')
             logSessionStage(session, event.payload?.stage || 'processing', event.payload || {})
             writeSSEEvent(reply, 'stage', {
               name: event.payload?.stage || 'processing',
@@ -436,6 +489,9 @@ async function aiRoutes(fastify) {
           }
 
           if (event.type === 'progress') {
+            if (event.payload?.query_type) {
+              inferredQueryType = String(event.payload.query_type)
+            }
             writeSSEEvent(reply, 'progress', event.payload, sseMeta)
             return
           }
@@ -454,6 +510,10 @@ async function aiRoutes(fastify) {
           if (event.type === 'completed') {
             const snapshot = await getJobSnapshot(enqueueResult.jobId)
             const result = snapshot?.result || event.payload?.result
+
+            if (result?.query_plan?.query_type) {
+              inferredQueryType = String(result.query_plan.query_type)
+            }
 
             if (result?.answer && !streamedText) {
               asyncTextChars += String(result.answer || '').length
@@ -491,11 +551,23 @@ async function aiRoutes(fastify) {
           }
 
           if (event.type === 'failed') {
-            session.log?.('Pipeline', 'Failed', {
+            const asyncError = toDiagnosticError(event.payload, 'Job failed')
+            const failureDiagnostics = buildFailureDiagnostics({
+              error: asyncError,
+              traceId,
+              sessionId,
               mode: 'async',
-              error: event.payload?.error || 'Job failed'
+              queryType: inferredQueryType,
+              stagePath,
+              spatialContext,
+              options,
+              grpcContext: asyncError?.grpc_context,
+              pythonContext: asyncError?.diagnostics?.python_context || asyncError?.python_context,
+              stackPreview: asyncError?.stack
             })
-            writeSSEEvent(reply, 'error', { message: event.payload?.error || 'Job failed' }, sseMeta)
+
+            recordPipelineFailure(session, 'async', asyncError.message, failureDiagnostics)
+            writeSSEEvent(reply, 'error', buildSseErrorPayload(asyncError.message, failureDiagnostics), sseMeta)
             telemetry.incrementCounter('ai_chat_failures_total', { mode: 'async', reason: 'job_failed' })
             telemetry.recordKpiEvent('sse_event_error', 1, {
               mode: 'async',
@@ -512,7 +584,11 @@ async function aiRoutes(fastify) {
             telemetry.logStructured('error', 'ai_chat_failed', {
               trace_id: traceId,
               mode: 'async',
-              error: event.payload?.error || 'Job failed'
+              error: asyncError.message,
+              error_code: failureDiagnostics.error_code,
+              error_signature: failureDiagnostics.error_signature,
+              query_type: failureDiagnostics.query_type,
+              last_stage: failureDiagnostics.last_stage
             })
             session.save?.()
             unsubscribe()
@@ -520,7 +596,23 @@ async function aiRoutes(fastify) {
           }
           } catch (eventErr) {
             console.error('[AI Chat] async stream event failed:', eventErr)
-            writeSSEEvent(reply, 'error', { message: eventErr.message }, sseMeta)
+            const wrappedEventError = toDiagnosticError(eventErr, 'Async stream event failed')
+            const failureDiagnostics = buildFailureDiagnostics({
+              error: wrappedEventError,
+              traceId,
+              sessionId,
+              mode: 'async',
+              queryType: inferredQueryType,
+              stagePath,
+              spatialContext,
+              options,
+              grpcContext: wrappedEventError?.grpc_context,
+              pythonContext: wrappedEventError?.diagnostics?.python_context || wrappedEventError?.python_context,
+              stackPreview: wrappedEventError?.stack
+            })
+
+            recordPipelineFailure(session, 'async', wrappedEventError.message, failureDiagnostics)
+            writeSSEEvent(reply, 'error', buildSseErrorPayload(wrappedEventError.message, failureDiagnostics), sseMeta)
             telemetry.incrementCounter('ai_chat_failures_total', { mode: 'async', reason: 'event_exception' })
             telemetry.recordKpiEvent('sse_event_error', 1, {
               mode: 'async',
@@ -537,7 +629,9 @@ async function aiRoutes(fastify) {
             telemetry.logStructured('error', 'ai_chat_stream_event_exception', {
               trace_id: traceId,
               mode: 'async',
-              error: eventErr.message
+              error: wrappedEventError.message,
+              error_code: failureDiagnostics.error_code,
+              error_signature: failureDiagnostics.error_signature
             })
             session.save?.()
             unsubscribe()
@@ -572,10 +666,14 @@ async function aiRoutes(fastify) {
         },
         {
           reportStage: async (stage, payload = {}) => {
+            pushStagePath(stagePath, stage)
             logSessionStage(session, stage, payload)
             writeSSEEvent(reply, 'stage', { name: stage, ...payload }, sseMeta)
           },
           reportProgress: async (progress, payload = {}) => {
+            if (payload?.query_type) {
+              inferredQueryType = String(payload.query_type)
+            }
             if (payload?.stage) {
               session.log?.('Pipeline', 'Progress', {
                 progress,
@@ -604,6 +702,10 @@ async function aiRoutes(fastify) {
         }
       )
 
+      if (result?.query_plan?.query_type) {
+        inferredQueryType = String(result.query_plan.query_type)
+      }
+
       const legacyPayload = toLegacySSEPayload(result)
       applyResultToSession(session, legacyPayload, result)
       session.log?.('Writer', 'StreamSummary', { chars: syncTextChars, mode: 'sync' })
@@ -629,11 +731,23 @@ async function aiRoutes(fastify) {
       session.save?.()
     } catch (err) {
       console.error('[AI Chat] pipeline failed:', err)
-      session.log?.('Pipeline', 'Failed', {
+      const syncError = toDiagnosticError(err, 'Pipeline failed')
+      const failureDiagnostics = buildFailureDiagnostics({
+        error: syncError,
+        traceId,
+        sessionId,
         mode: decision.mode,
-        error: err.message
+        queryType: inferredQueryType,
+        stagePath,
+        spatialContext,
+        options,
+        grpcContext: syncError?.grpc_context,
+        pythonContext: syncError?.diagnostics?.python_context || syncError?.python_context,
+        stackPreview: syncError?.stack
       })
-      writeSSEEvent(reply, 'error', { message: err.message }, sseMeta)
+
+      recordPipelineFailure(session, decision.mode, syncError.message, failureDiagnostics)
+      writeSSEEvent(reply, 'error', buildSseErrorPayload(syncError.message, failureDiagnostics), sseMeta)
       telemetry.incrementCounter('ai_chat_failures_total', { mode: decision.mode, reason: 'pipeline_error' })
       telemetry.recordKpiEvent('sse_event_error', 1, {
         mode: decision.mode,
@@ -650,7 +764,11 @@ async function aiRoutes(fastify) {
       telemetry.logStructured('error', 'ai_chat_failed', {
         trace_id: traceId,
         mode: decision.mode,
-        error: err.message
+        error: syncError.message,
+        error_code: failureDiagnostics.error_code,
+        error_signature: failureDiagnostics.error_signature,
+        query_type: failureDiagnostics.query_type,
+        last_stage: failureDiagnostics.last_stage
       })
       session.save?.()
     } finally {

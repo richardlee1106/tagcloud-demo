@@ -332,6 +332,25 @@ class RAGSession {
       parts.push(`Stage Path: ${stageTrace.join(' -> ')}`);
     }
 
+    const failureDiagnosticsEntry = [...this.logs]
+      .reverse()
+      .find((item) => item.component === 'Pipeline' && item.action === 'FailureDiagnostics');
+    const failureDiagnostics = failureDiagnosticsEntry?.details || null;
+    if (failureDiagnostics && typeof failureDiagnostics === 'object') {
+      if (failureDiagnostics.error_code) {
+        parts.push(`FailureCode: ${failureDiagnostics.error_code}`);
+      }
+      if (failureDiagnostics.last_stage) {
+        parts.push(`LastStage: ${failureDiagnostics.last_stage}`);
+      }
+      if (failureDiagnostics.error_signature) {
+        parts.push(`FailureSignature: ${failureDiagnostics.error_signature}`);
+      }
+      if (failureDiagnostics.root_cause_hint) {
+        parts.push(`FailureHint: ${failureDiagnostics.root_cause_hint}`);
+      }
+    }
+
     parts.push(`Result: ${this.summary.success ? 'success' : 'failed'}`);
     return parts.join('\n');
   }
@@ -386,6 +405,14 @@ class RAGSession {
       md += `- no stage events\n`;
     }
     md += '\n';
+
+    const failureDiagnosticsEntry = [...this.logs]
+      .reverse()
+      .find((item) => item.component === 'Pipeline' && item.action === 'FailureDiagnostics');
+    if (failureDiagnosticsEntry?.details && typeof failureDiagnosticsEntry.details === 'object') {
+      md += `### Failure Diagnostics\n`;
+      md += `\`\`\`json\n${JSON.stringify(failureDiagnosticsEntry.details, null, 2)}\n\`\`\`\n\n`;
+    }
 
     md += `### Event Timeline\n`;
     md += `| Offset(ms) | Component | Action | Details |\n`;

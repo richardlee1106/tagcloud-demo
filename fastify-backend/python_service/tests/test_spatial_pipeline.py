@@ -1954,6 +1954,324 @@ class SpatialPipelineTest(unittest.TestCase):
         self.assertEqual(explicit, 120)
         self.assertEqual(capped, 200)
 
+    def test_parallel_model_inference_collects_timing_and_payload(self):
+        original_vlm = spatial_module.vlm_reviewer.extract_map_anchors
+        original_llm = spatial_module.reasoning_reviewer.infer_spatial_priors
+
+        spatial_module.vlm_reviewer.extract_map_anchors = lambda **_kwargs: {
+            "success": True,
+            "landmarks": ["武汉大学"],
+            "aliases": ["武大"],
+            "layout_summary": "campus-centered",
+            "confidence": 0.91,
+        }
+        spatial_module.reasoning_reviewer.infer_spatial_priors = lambda **_kwargs: {
+            "success": True,
+            "summary": "优先关注高校相关POI",
+            "focus_terms": ["武汉大学"],
+            "alias_candidates": ["武大"],
+            "priority_categories": ["科教文化服务"],
+            "confidence": 0.88,
+        }
+
+        try:
+            bundle = spatial_module._run_parallel_model_inference(
+                semantic_query="武汉大学附近咖啡店",
+                spatial_context={"mode": "Viewport", "viewport": [114.30, 30.55, 114.36, 30.61]},
+                categories=["餐饮服务"],
+                image_data_url="data:image/png;base64,stub",
+                visual_model_name="qwen3-vl-4b",
+                visual_endpoint="http://localhost:1234/v1/chat/completions",
+                visual_timeout_ms=1200,
+                reasoning_enabled=True,
+                reasoning_model_name="qwen/qwen3-1.7b",
+                reasoning_endpoint="http://localhost:1234/v1/chat/completions",
+                reasoning_timeout_ms=1500,
+                model_budget_ms=5000,
+            )
+        finally:
+            spatial_module.vlm_reviewer.extract_map_anchors = original_vlm
+            spatial_module.reasoning_reviewer.infer_spatial_priors = original_llm
+
+        timing = bundle.get("timing") or {}
+        self.assertTrue(bundle.get("vlm", {}).get("success"))
+        self.assertTrue(bundle.get("llm", {}).get("success"))
+        self.assertIn("武汉大学", bundle.get("vlm", {}).get("landmarks", []))
+        self.assertEqual(int(timing.get("budget_ms", 0)), 5000)
+        self.assertGreaterEqual(float(timing.get("parallel_wall_ms", -1.0)), 0.0)
+        self.assertFalse(bool(timing.get("timed_out")))
+
+    def test_parallel_model_inference_soft_degrades_when_vlm_remote_fails(self):
+        original_vlm = spatial_module.vlm_reviewer.extract_map_anchors
+        original_llm = spatial_module.reasoning_reviewer.infer_spatial_priors
+
+        spatial_module.vlm_reviewer.extract_map_anchors = lambda **_kwargs: {
+            "success": False,
+            "error": "vlm_remote_error:request_failed",
+            "debug": {
+                "preview_text": "timed out",
+                "preview_chars": 9,
+                "preview_sha1": "d6f1732cfb943ae6cc1b669eafde3292646023e3",
+                "parse_stage": "network",
+            },
+        }
+        spatial_module.reasoning_reviewer.infer_spatial_priors = lambda **_kwargs: {
+            "success": True,
+            "summary": "reasoning fallback available",
+            "focus_terms": ["anchor-a"],
+            "alias_candidates": ["alias-a"],
+            "priority_categories": ["life_service"],
+            "confidence": 0.73,
+        }
+
+        try:
+            bundle = spatial_module._run_parallel_model_inference(
+                semantic_query="demo query",
+                spatial_context={"mode": "Viewport", "viewport": [114.30, 30.55, 114.36, 30.61]},
+                categories=["life_service"],
+                image_data_url="data:image/png;base64,stub",
+                visual_model_name="qwen/qwen3-vl-4b",
+                visual_endpoint="http://localhost:1234/v1/chat/completions",
+                visual_timeout_ms=1200,
+                reasoning_enabled=True,
+                reasoning_model_name="qwen/qwen3-1.7b",
+                reasoning_endpoint="http://localhost:1234/v1/chat/completions",
+                reasoning_timeout_ms=1500,
+                model_budget_ms=5000,
+                allow_vlm_remote_failure=True,
+            )
+        finally:
+            spatial_module.vlm_reviewer.extract_map_anchors = original_vlm
+            spatial_module.reasoning_reviewer.infer_spatial_priors = original_llm
+
+        self.assertTrue(bool(bundle.get("degraded")))
+        self.assertEqual(bundle.get("degrade_reason"), "vlm_remote_error:request_failed")
+        self.assertFalse(bool(bundle.get("vlm", {}).get("success")))
+        self.assertTrue(bool(bundle.get("llm", {}).get("success")))
+
+    def test_parallel_model_inference_soft_degrades_when_reasoning_remote_fails(self):
+        original_vlm = spatial_module.vlm_reviewer.extract_map_anchors
+        original_llm = spatial_module.reasoning_reviewer.infer_spatial_priors
+
+        spatial_module.vlm_reviewer.extract_map_anchors = lambda **_kwargs: {
+            "success": True,
+            "landmarks": ["武汉大学"],
+            "aliases": ["武大"],
+            "layout_summary": "campus-centered",
+            "confidence": 0.92,
+        }
+        spatial_module.reasoning_reviewer.infer_spatial_priors = lambda **_kwargs: {
+            "success": False,
+            "error": "reasoning_remote_error:request_failed",
+            "debug": {
+                "preview_text": "timed out",
+                "preview_chars": 9,
+                "preview_sha1": "d6f1732cfb943ae6cc1b669eafde3292646023e3",
+                "parse_stage": "network",
+            },
+        }
+
+        try:
+            bundle = spatial_module._run_parallel_model_inference(
+                semantic_query="demo query",
+                spatial_context={"mode": "Viewport", "viewport": [114.30, 30.55, 114.36, 30.61]},
+                categories=["life_service"],
+                image_data_url="data:image/png;base64,stub",
+                visual_model_name="qwen/qwen3-vl-4b",
+                visual_endpoint="http://localhost:1234/v1/chat/completions",
+                visual_timeout_ms=1200,
+                reasoning_enabled=True,
+                reasoning_model_name="qwen/qwen3-1.7b",
+                reasoning_endpoint="http://localhost:1234/v1/chat/completions",
+                reasoning_timeout_ms=1500,
+                model_budget_ms=5000,
+                allow_vlm_remote_failure=False,
+            )
+        finally:
+            spatial_module.vlm_reviewer.extract_map_anchors = original_vlm
+            spatial_module.reasoning_reviewer.infer_spatial_priors = original_llm
+
+        self.assertTrue(bool(bundle.get("degraded")))
+        self.assertEqual(bundle.get("degrade_reason"), "llm:reasoning_remote_error:request_failed")
+        self.assertTrue(bool(bundle.get("vlm", {}).get("success")))
+        self.assertFalse(bool(bundle.get("llm", {}).get("success")))
+
+    def test_parallel_model_inference_soft_degrades_when_both_models_soft_fail(self):
+        original_vlm = spatial_module.vlm_reviewer.extract_map_anchors
+        original_llm = spatial_module.reasoning_reviewer.infer_spatial_priors
+
+        spatial_module.vlm_reviewer.extract_map_anchors = lambda **_kwargs: {
+            "success": False,
+            "error": "vlm_remote_error:request_failed",
+            "debug": {
+                "preview_text": "timed out",
+                "preview_chars": 9,
+                "preview_sha1": "d6f1732cfb943ae6cc1b669eafde3292646023e3",
+                "parse_stage": "network",
+            },
+        }
+        spatial_module.reasoning_reviewer.infer_spatial_priors = lambda **_kwargs: {
+            "success": False,
+            "error": "reasoning_remote_error:request_failed",
+            "debug": {
+                "preview_text": "timed out",
+                "preview_chars": 9,
+                "preview_sha1": "d6f1732cfb943ae6cc1b669eafde3292646023e3",
+                "parse_stage": "network",
+            },
+        }
+
+        try:
+            bundle = spatial_module._run_parallel_model_inference(
+                semantic_query="demo query",
+                spatial_context={"mode": "Viewport", "viewport": [114.30, 30.55, 114.36, 30.61]},
+                categories=["life_service"],
+                image_data_url="data:image/png;base64,stub",
+                visual_model_name="qwen/qwen3-vl-4b",
+                visual_endpoint="http://localhost:1234/v1/chat/completions",
+                visual_timeout_ms=1200,
+                reasoning_enabled=True,
+                reasoning_model_name="qwen/qwen3-1.7b",
+                reasoning_endpoint="http://localhost:1234/v1/chat/completions",
+                reasoning_timeout_ms=1500,
+                model_budget_ms=5000,
+                allow_vlm_remote_failure=True,
+            )
+        finally:
+            spatial_module.vlm_reviewer.extract_map_anchors = original_vlm
+            spatial_module.reasoning_reviewer.infer_spatial_priors = original_llm
+
+        self.assertTrue(bool(bundle.get("degraded")))
+        self.assertEqual(bundle.get("degrade_reason"), "llm:reasoning_remote_error:request_failed")
+        self.assertFalse(bool(bundle.get("vlm", {}).get("success")))
+        self.assertFalse(bool(bundle.get("llm", {}).get("success")))
+
+    def test_pipeline_parallel_model_success_writes_stats(self):
+        pipeline = SpatialPipeline(repository=_StubRepository(_build_clustered_pois()))
+        request = _build_area_request(
+            options={
+                "visualReviewEnabled": True,
+                "reasoningEnabled": True,
+                "visualSnapshotDataUrl": "data:image/png;base64,stub",
+                "modelBudgetMs": 5000,
+            }
+        )
+
+        original_vlm = spatial_module.vlm_reviewer.extract_map_anchors
+        original_llm = spatial_module.reasoning_reviewer.infer_spatial_priors
+        spatial_module.vlm_reviewer.extract_map_anchors = lambda **_kwargs: {
+            "success": True,
+            "landmarks": ["武汉大学"],
+            "aliases": ["武大"],
+            "layout_summary": "campus-centered",
+            "confidence": 0.9,
+        }
+        spatial_module.reasoning_reviewer.infer_spatial_priors = lambda **_kwargs: {
+            "success": True,
+            "summary": "空间重心偏高校与生活服务混合带",
+            "focus_terms": ["武汉大学", "武大"],
+            "alias_candidates": ["武大"],
+            "priority_categories": ["科教文化服务"],
+            "confidence": 0.85,
+        }
+
+        try:
+            events = list(pipeline.run(request))
+        finally:
+            spatial_module.vlm_reviewer.extract_map_anchors = original_vlm
+            spatial_module.reasoning_reviewer.infer_spatial_priors = original_llm
+
+        stage_names = [
+            (event.get("payload") or {}).get("stage")
+            for event in events
+            if event.get("type") == "STAGE"
+        ]
+        self.assertIn("model_parallel_start", stage_names)
+        self.assertIn("model_parallel_done", stage_names)
+
+        final_payload = next(event["payload"] for event in events if event.get("type") == "FINAL")
+        stats = (final_payload.get("results") or {}).get("stats") or {}
+        timing = stats.get("model_timing_ms") or {}
+
+        self.assertIn("vlm_anchor_landmarks", stats)
+        self.assertIn("vlm_anchor_aliases", stats)
+        self.assertIn("llm_spatial_priors", stats)
+        self.assertIn("anchor_boosted_poi_count", stats)
+        self.assertIn("anchor_injected_poi_count", stats)
+        self.assertEqual(int(timing.get("budget_ms", 0)), 5000)
+        self.assertGreaterEqual(float(timing.get("parallel_wall_ms", -1.0)), 0.0)
+
+    def test_pipeline_parallel_model_failure_raises_model_parallel_failed(self):
+        pipeline = SpatialPipeline(repository=_StubRepository(_build_clustered_pois()))
+        request = _build_area_request(
+            options={
+                "visualReviewEnabled": True,
+                "reasoningEnabled": True,
+                "visualSnapshotDataUrl": "data:image/png;base64,stub",
+                "modelBudgetMs": 5000,
+            }
+        )
+
+        original_vlm = spatial_module.vlm_reviewer.extract_map_anchors
+        original_llm = spatial_module.reasoning_reviewer.infer_spatial_priors
+        spatial_module.vlm_reviewer.extract_map_anchors = lambda **_kwargs: {
+            "success": True,
+            "landmarks": ["武汉大学"],
+            "aliases": ["武大"],
+            "layout_summary": "campus-centered",
+            "confidence": 0.9,
+        }
+        spatial_module.reasoning_reviewer.infer_spatial_priors = lambda **_kwargs: {
+            "success": False,
+            "error": "timeout",
+            "debug": {
+                "preview_text": "timeout",
+                "preview_chars": 7,
+                "preview_sha1": "deadbeef",
+                "parse_stage": "network",
+            },
+        }
+
+        events = []
+        captured_error = None
+        try:
+            stream = pipeline.run(request)
+            while True:
+                events.append(next(stream))
+        except StopIteration:
+            pass
+        except RuntimeError as exc:
+            captured_error = exc
+        finally:
+            spatial_module.vlm_reviewer.extract_map_anchors = original_vlm
+            spatial_module.reasoning_reviewer.infer_spatial_priors = original_llm
+
+        self.assertIsNotNone(captured_error)
+        self.assertIn("model_parallel_failed:llm:timeout", str(captured_error))
+
+        stage_names = [
+            (event.get("payload") or {}).get("stage")
+            for event in events
+            if event.get("type") == "STAGE"
+        ]
+        self.assertIn("model_parallel_start", stage_names)
+        self.assertIn("model_parallel_failed", stage_names)
+
+        failed_stage_payload = next(
+            (event.get("payload") or {})
+            for event in events
+            if event.get("type") == "STAGE" and (event.get("payload") or {}).get("stage") == "model_parallel_failed"
+        )
+        self.assertEqual(failed_stage_payload.get("error_code"), "model_parallel_failed:llm:timeout")
+        self.assertIn("model_timing_ms", failed_stage_payload)
+        self.assertIn("model_context", failed_stage_payload)
+        self.assertIn("python_context", failed_stage_payload)
+
+        error_context = getattr(captured_error, "parallel_error_context", None)
+        self.assertIsInstance(error_context, dict)
+        self.assertEqual(error_context.get("error_code"), "model_parallel_failed:llm:timeout")
+        self.assertIsInstance(error_context.get("python_context"), dict)
+
 
 if __name__ == "__main__":
     unittest.main()

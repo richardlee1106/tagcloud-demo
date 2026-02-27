@@ -21,6 +21,26 @@ function createClientRequestId() {
   return `web_${Date.now()}_${random}`
 }
 
+function formatTimingValueMs(value) {
+  const num = Number(value)
+  if (!Number.isFinite(num) || num < 0) return 0
+  return Math.round(num)
+}
+
+function extractModelTiming(payload) {
+  if (!payload || typeof payload !== 'object') return null
+  if (payload.model_timing_ms && typeof payload.model_timing_ms === 'object') {
+    return payload.model_timing_ms
+  }
+  if (payload.results?.stats?.model_timing_ms && typeof payload.results.stats.model_timing_ms === 'object') {
+    return payload.results.stats.model_timing_ms
+  }
+  if (payload.stats?.model_timing_ms && typeof payload.stats.model_timing_ms === 'object') {
+    return payload.stats.model_timing_ms
+  }
+  return null
+}
+
 // 当前服务商信息（从后端获取）
 let currentProvider = {
   online: false,
@@ -185,6 +205,7 @@ export async function sendChatMessageStream(messages, onChunk, options = {}, poi
   let fullContent = ''
   let buffer = ''
   let currentEvent = null // 跟踪当前 SSE 事件类型
+  let lastModelTimingSignature = null
 
   while (true) {
     const { done, value } = await reader.read()
@@ -243,6 +264,27 @@ export async function sendChatMessageStream(messages, onChunk, options = {}, poi
               console.log('[AI Frontend] 收到阶段更新:', payload.name)
             } else if (eventType === 'error') {
               console.error('[AI Frontend] 收到后端错误:', payload?.message || payload)
+              if (payload?.error_code || payload?.error_signature) {
+                console.error('[AI Frontend] Error diagnostics:', {
+                  error_code: payload?.error_code || null,
+                  error_signature: payload?.error_signature || null,
+                  trace_id: payload?.trace_id || responseTraceId
+                })
+              }
+            }
+            if (eventType === 'stats' || eventType === 'refined_result') {
+              const timing = extractModelTiming(payload)
+              if (timing) {
+                const vlmMs = formatTimingValueMs(timing.vlm_ms)
+                const llmMs = formatTimingValueMs(timing.llm_ms)
+                const wallMs = formatTimingValueMs(timing.parallel_wall_ms)
+                const budgetMs = formatTimingValueMs(timing.budget_ms || 5000)
+                const signature = `${vlmMs}|${llmMs}|${wallMs}|${budgetMs}`
+                if (signature !== lastModelTimingSignature) {
+                  console.log(`[ModelTiming] VLM=${vlmMs}ms LLM=${llmMs}ms WALL=${wallMs}ms BUDGET=${budgetMs}ms`)
+                  lastModelTimingSignature = signature
+                }
+              }
             }
             if (onMeta) {
               try {
@@ -555,7 +597,7 @@ export function getCurrentProviderInfo() {
     id: currentProvider.provider,
     name: currentProvider.providerName,
     apiBase: API_BASE,
-    modelId: currentProvider.provider === 'local' ? 'qwen3-vl-4b' : 'mimo-v2-flash'
+    modelId: currentProvider.provider === 'local' ? 'qwen/qwen3-vl-4b' : 'mimo-v2-flash'
   }
 }
 

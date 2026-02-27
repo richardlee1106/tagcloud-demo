@@ -685,8 +685,7 @@ class POIRepository:
                 params.extend([wildcard, wildcard, wildcard, wildcard])
             where_parts.append("(" + " OR ".join(term_parts) + ")")
 
-        # 注意：三层面使用 LEFT JOIN LATERAL + LIMIT 1 确保每个 POI 只
-        # ƥһ棨Сİ = ȷ棩
+        # 注意：三层面使用 LEFT JOIN LATERAL + LIMIT 1 确保每个 POI 只匹配一条面要素
         sql = """
             SELECT
                 p.id,

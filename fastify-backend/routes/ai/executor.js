@@ -244,7 +244,16 @@ export async function tryExecuteQueryViaPython(queryPlan, frontendPOIs, options 
             regions,
             limit: safeLimit,
             maxFetchLimit,
-            screenshot_base64: options?.screenshotBase64 || null
+            visualSnapshotDataUrl: options?.visualSnapshotDataUrl || options?.mapSnapshotDataUrl || options?.screenshotBase64 || null,
+            screenshot_base64: options?.screenshotBase64 || null,
+            visualModel: options?.visualModel,
+            visualEndpoint: options?.visualEndpoint,
+            visualTimeoutMs: options?.visualTimeoutMs,
+            reasoningEnabled: options?.reasoningEnabled,
+            reasoningModel: options?.reasoningModel,
+            reasoningEndpoint: options?.reasoningEndpoint,
+            reasoningTimeoutMs: options?.reasoningTimeoutMs,
+            modelBudgetMs: options?.modelBudgetMs
           },
           migration: {
             py_data_source: pyDataSource,
@@ -258,7 +267,14 @@ export async function tryExecuteQueryViaPython(queryPlan, frontendPOIs, options 
       },
       async (event) => {
         if (event.type === 'ERROR') {
-          throw new Error(event.payload?.message || 'Python executor returned ERROR event')
+          const streamError = new Error(event.payload?.message || 'Python executor returned ERROR event')
+          if (event.payload?.code) {
+            streamError.code = String(event.payload.code)
+          }
+          if (event.payload?.diagnostics && typeof event.payload.diagnostics === 'object') {
+            streamError.diagnostics = event.payload.diagnostics
+          }
+          throw streamError
         }
 
         if (event.type === 'FINAL') {
@@ -340,7 +356,12 @@ export async function executeQuery(queryPlan, frontendPOIs = [], options = {}) {
   } catch (error) {
     console.error(`[Executor] 执行失败: ${error.message}`)
     // 直接抛出错误，不再回退到Node.js
-    throw new Error(`空间计算服务暂时不可用: ${error.message}`)
+    const wrappedError = new Error(`空间计算服务暂时不可用: ${error.message}`)
+    if (error?.code) wrappedError.code = String(error.code)
+    if (error?.diagnostics && typeof error.diagnostics === 'object') {
+      wrappedError.diagnostics = error.diagnostics
+    }
+    throw wrappedError
   }
 }
 

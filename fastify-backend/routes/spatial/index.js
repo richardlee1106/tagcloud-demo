@@ -46,7 +46,7 @@ const INTENT_PARSE_PROMPT = `你是一个地理查询解析器，将用户的自
  */
 async function callLocalLLM(prompt, session = null) {
   const baseUrl = process.env.LLM_BASE_URL || 'http://localhost:1234/v1';
-  const model = process.env.LLM_MODEL || 'qwen3-vl-4b';
+  const model = process.env.LLM_MODEL || 'qwen/qwen3-vl-4b';
   
   const startTime = Date.now();
   
