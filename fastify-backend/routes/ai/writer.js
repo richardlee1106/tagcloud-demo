@@ -514,6 +514,24 @@ function buildResultContext(executorResult, options = {}) {
     sections.push(ocrText)
   }
 
+  const overviewFusedSummary = String(results.stats?.overview_fused_summary || '').trim()
+  const overviewLightSummary = String(results.stats?.overview_light_summary || '').trim()
+  const overviewMediumSummary = String(results.stats?.overview_medium_summary || '').trim()
+  if (overviewFusedSummary || overviewLightSummary || overviewMediumSummary) {
+    let overviewText = '🗺️ **地图全局语义观察 (VLM总览)**:\n'
+    if (overviewFusedSummary) {
+      overviewText += `- 融合总览: ${overviewFusedSummary}\n`
+    } else {
+      if (overviewMediumSummary) {
+        overviewText += `- 中级VLM总览: ${overviewMediumSummary}\n`
+      }
+      if (overviewLightSummary) {
+        overviewText += `- 轻量VLM总览: ${overviewLightSummary}\n`
+      }
+    }
+    sections.push(overviewText)
+  }
+
   // 5.6 空间推理（Phase 4A 双模型并行上下文）
   const anchorLandmarks = Array.isArray(results.stats?.vlm_anchor_landmarks)
     ? results.stats.vlm_anchor_landmarks

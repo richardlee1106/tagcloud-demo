@@ -11,7 +11,7 @@ import 'dotenv/config'
 // 本地 LM Studio 配置
 const LOCAL_CONFIG = {
   baseUrl: 'http://localhost:1234/v1',
-  model: process.env.LOCAL_LLM_MODEL || process.env.LLM_MODEL || 'qwen/qwen3-vl-4b',
+  model: process.env.LOCAL_LLM_MODEL || process.env.LLM_MODEL || 'qwen3.5-4b',
   timeout: 5000, // 5 秒超时检测
 }
 

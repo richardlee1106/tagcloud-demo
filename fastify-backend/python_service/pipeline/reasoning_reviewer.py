@@ -206,13 +206,13 @@ def infer_spatial_priors(
     categories: List[str] | None,
     vlm_landmarks: List[str] | None,
     vlm_aliases: List[str] | None,
-    model_name: str = "qwen/qwen3-1.7b",
+    model_name: str = "qwen3.5-4b",
     endpoint: str = "http://localhost:1234/v1/chat/completions",
     timeout_ms: int = 1200,
 ) -> Dict[str, Any]:
     result = {
         "success": False,
-        "mode": "qwen3_reasoning_v1",
+        "mode": "remote_reasoning_v1",
         "model": model_name,
         "summary": "",
         "focus_terms": [],

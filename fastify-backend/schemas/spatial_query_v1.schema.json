@@ -1,0 +1,660 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://geoloom.local/schemas/spatial_query_v1.schema.json",
+  "title": "Spatial Query DSL v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "dsl_version",
+    "trace_id",
+    "task",
+    "scope",
+    "entities",
+    "constraints",
+    "operators",
+    "output_contract",
+    "uncertainty",
+    "policy"
+  ],
+  "properties": {
+    "dsl_version": {
+      "type": "string",
+      "const": "spatial_query_v1"
+    },
+    "trace_id": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 128,
+      "pattern": "^[a-zA-Z0-9._:-]+$"
+    },
+    "session_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128
+    },
+    "created_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "query_type",
+        "goal",
+        "need_text_answer"
+      ],
+      "properties": {
+        "query_type": {
+          "type": "string",
+          "enum": [
+            "poi_search",
+            "area_analysis",
+            "region_comparison",
+            "graph_reasoning",
+            "site_selection",
+            "counterfactual",
+            "general_qa",
+            "irrelevant_input",
+            "clarification_needed"
+          ]
+        },
+        "goal": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "need_text_answer": {
+          "type": "boolean"
+        },
+        "answer_style": {
+          "type": "string",
+          "enum": [
+            "none",
+            "brief",
+            "standard",
+            "detailed"
+          ],
+          "default": "none"
+        },
+        "priority": {
+          "type": "string",
+          "enum": [
+            "low",
+            "normal",
+            "high",
+            "urgent"
+          ],
+          "default": "normal"
+        }
+      }
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "geometry_source"
+      ],
+      "properties": {
+        "geometry_source": {
+          "type": "string",
+          "enum": [
+            "viewport",
+            "polygon",
+            "circle",
+            "regions",
+            "global"
+          ]
+        },
+        "viewport": {
+          "type": "array",
+          "description": "[minLon, minLat, maxLon, maxLat]",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 4,
+          "maxItems": 4
+        },
+        "polygon": {
+          "type": "array",
+          "description": "Polygon ring: [[lon,lat], ... closed optional]",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2
+          },
+          "minItems": 3
+        },
+        "circle": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "center",
+            "radius_m"
+          ],
+          "properties": {
+            "center": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "lon",
+                "lat"
+              ],
+              "properties": {
+                "lon": {
+                  "type": "number",
+                  "minimum": -180,
+                  "maximum": 180
+                },
+                "lat": {
+                  "type": "number",
+                  "minimum": -90,
+                  "maximum": 90
+                }
+              }
+            },
+            "radius_m": {
+              "type": "integer",
+              "minimum": 10,
+              "maximum": 100000
+            }
+          }
+        },
+        "region_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "minItems": 1,
+          "maxItems": 50,
+          "uniqueItems": true
+        },
+        "analysis_scale": {
+          "type": "string",
+          "enum": [
+            "street",
+            "block",
+            "district",
+            "city",
+            "custom"
+          ],
+          "default": "district"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "geometry_source": {
+                "const": "viewport"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "viewport"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "geometry_source": {
+                "const": "polygon"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "polygon"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "geometry_source": {
+                "const": "circle"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "circle"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "geometry_source": {
+                "const": "regions"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "region_ids"
+            ]
+          }
+        }
+      ]
+    },
+    "entities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "categories"
+      ],
+      "properties": {
+        "anchor": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "resolve_required"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "gate": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 100
+            },
+            "direction_hint": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "enum": [
+                "north",
+                "south",
+                "east",
+                "west",
+                "nearby",
+                null
+              ]
+            },
+            "resolve_required": {
+              "type": "boolean"
+            }
+          }
+        },
+        "categories": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "maxItems": 100,
+          "uniqueItems": true
+        },
+        "category_mode": {
+          "type": "string",
+          "enum": [
+            "ui_selected",
+            "planner_inferred",
+            "all"
+          ],
+          "default": "planner_inferred"
+        },
+        "semantic_query": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 500
+        },
+        "keywords": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "maxItems": 50,
+          "uniqueItems": true
+        }
+      }
+    },
+    "constraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "result_limit",
+        "latency_budget_ms"
+      ],
+      "properties": {
+        "rating_min": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 5
+        },
+        "rating_max": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 5
+        },
+        "distance_max_m": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 10,
+          "maximum": 100000
+        },
+        "direction": {
+          "type": "string",
+          "enum": [
+            "none",
+            "north",
+            "south",
+            "east",
+            "west"
+          ]
+        },
+        "open_now": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "result_limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5000
+        },
+        "latency_budget_ms": {
+          "type": "integer",
+          "minimum": 300,
+          "maximum": 120000
+        },
+        "token_budget": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 100,
+          "maximum": 32000
+        },
+        "max_region_outputs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200,
+          "default": 30
+        }
+      }
+    },
+    "operators": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 30,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "type",
+          "enabled"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "resolve_anchor",
+              "fetch_candidates",
+              "filter_constraints",
+              "aggregate_h3",
+              "cluster_hdbscan",
+              "region_compare",
+              "graph_reasoning",
+              "counterfactual_eval",
+              "visual_review",
+              "self_validate",
+              "name_audit",
+              "rank_candidates",
+              "compose_summary"
+            ]
+          },
+          "depends_on": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$"
+            },
+            "maxItems": 20,
+            "uniqueItems": true
+          },
+          "params": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "critical": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      }
+    },
+    "output_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "required_fields",
+        "max_items",
+        "include_evidence_refs"
+      ],
+      "properties": {
+        "required_fields": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "pois",
+              "boundary",
+              "spatial_clusters",
+              "region_analyses",
+              "comparison",
+              "graph_analysis",
+              "stats",
+              "evidence_refs",
+              "diagnostics"
+            ]
+          },
+          "minItems": 1,
+          "maxItems": 20,
+          "uniqueItems": true
+        },
+        "max_items": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "include_evidence_refs": {
+          "type": "boolean"
+        },
+        "include_writer_text": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "uncertainty": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "planner_confidence",
+        "risk_level",
+        "clarification"
+      ],
+      "properties": {
+        "planner_confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "risk_level": {
+          "type": "string",
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ]
+        },
+        "ambiguities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "maxItems": 20
+        },
+        "clarification": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "required",
+            "question"
+          ],
+          "properties": {
+            "required": {
+              "type": "boolean"
+            },
+            "question": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 300
+            },
+            "options": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 100
+              },
+              "maxItems": 8
+            }
+          }
+        }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cacheable",
+        "cache_key_profile",
+        "execution_profile",
+        "budget_tier",
+        "allow_visual_review",
+        "allow_reasoning"
+      ],
+      "properties": {
+        "cacheable": {
+          "type": "boolean"
+        },
+        "cache_key_profile": {
+          "type": "string",
+          "enum": [
+            "strict",
+            "semantic",
+            "execute_semantic_v2",
+            "no_cache"
+          ]
+        },
+        "execution_profile": {
+          "type": "string",
+          "enum": [
+            "core",
+            "advanced",
+            "shadow"
+          ]
+        },
+        "budget_tier": {
+          "type": "string",
+          "enum": [
+            "realtime",
+            "interactive",
+            "deep"
+          ]
+        },
+        "allow_visual_review": {
+          "type": "boolean"
+        },
+        "allow_reasoning": {
+          "type": "boolean"
+        },
+        "allow_self_validation": {
+          "type": "boolean",
+          "default": true
+        },
+        "allow_name_audit": {
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "routing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "complexity_score"
+      ],
+      "properties": {
+        "complexity_score": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10
+        },
+        "planner_model_tier": {
+          "type": "string",
+          "enum": [
+            "rule",
+            "small",
+            "medium",
+            "frontier"
+          ]
+        },
+        "critic_enabled": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    }
+  }
+}

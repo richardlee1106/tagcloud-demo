@@ -597,7 +597,7 @@ export function getCurrentProviderInfo() {
     id: currentProvider.provider,
     name: currentProvider.providerName,
     apiBase: API_BASE,
-    modelId: currentProvider.provider === 'local' ? 'qwen/qwen3-vl-4b' : 'mimo-v2-flash'
+    modelId: currentProvider.provider === 'local' ? 'qwen3.5-4b' : 'mimo-v2-flash'
   }
 }
 

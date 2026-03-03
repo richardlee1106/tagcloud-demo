@@ -354,7 +354,7 @@ def _call_remote_json(
 def extract_map_anchors(
     *,
     image_data_url: str | None,
-    model_name: str = "qwen/qwen3-vl-4b",
+    model_name: str = "glm-ocr",
     endpoint: str = "http://localhost:1234/v1/chat/completions",
     timeout_ms: int = 1200,
     max_landmarks: int = 8,
@@ -362,7 +362,7 @@ def extract_map_anchors(
 ) -> Dict[str, Any]:
     result = {
         "success": False,
-        "mode": "qwen3_vl_anchor_v1",
+        "mode": "glm_ocr_anchor_v1",
         "model": model_name,
         "landmarks": [],
         "aliases": [],
@@ -450,7 +450,7 @@ def extract_map_anchors(
 def extract_map_text(
     *,
     image_data_url: str | None,
-    model_name: str = "qwen/qwen3-vl-4b",
+    model_name: str = "glm-ocr",
     endpoint: str = "http://localhost:1234/v1/chat/completions",
     timeout_ms: int = 1200,
 ) -> List[str]:
@@ -468,13 +468,120 @@ def extract_map_text(
     )
 
 
+def summarize_map_overview(
+    *,
+    image_data_url: str | None,
+    model_name: str = "qwen3.5-0.8b",
+    endpoint: str = "http://localhost:1234/v1/chat/completions",
+    timeout_ms: int = 1400,
+) -> Dict[str, Any]:
+    result = {
+        "success": False,
+        "mode": "map_overview_v1",
+        "model": model_name,
+        "summary": "",
+        "road_pattern": "",
+        "functional_distribution": "",
+        "key_observations": [],
+        "confidence": 0.0,
+        "error": None,
+        "debug": {},
+    }
+    if not image_data_url:
+        result["error"] = "visual_snapshot_missing"
+        result["debug"] = {
+            **_redacted_preview("visual_snapshot_missing"),
+            "parse_stage": "input_validation",
+        }
+        return result
+
+    system_prompt = (
+        "You are a map scene analyst for spatial planning. "
+        "Observe global map semantics and return strict JSON only."
+    )
+    user_prompt = (
+        "From this map screenshot, provide global semantic observation with three focuses: "
+        "1) area morphology and texture, 2) main road relation and accessibility pattern, "
+        "3) functional distribution hints. "
+        "Return JSON: "
+        '{"summary":"...",'
+        '"road_pattern":"...",'
+        '"functional_distribution":"...",'
+        '"key_observations":["..."],'
+        '"confidence":0.0}'
+    )
+    payload = _call_remote_json(
+        endpoint=endpoint,
+        model_name=model_name,
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        image_data_url=image_data_url,
+        timeout_ms=timeout_ms,
+        max_tokens=420,
+    )
+    if not isinstance(payload, dict):
+        result["error"] = "vlm_overview_response_invalid"
+        result["debug"] = {
+            **_redacted_preview("payload_not_dict"),
+            "parse_stage": "response_parse",
+        }
+        return result
+
+    debug_payload = payload.get("_debug") if isinstance(payload.get("_debug"), dict) else {}
+    call_error = str(payload.get("_call_error") or "").strip()
+    if call_error:
+        if call_error == "response_parse_invalid":
+            result["error"] = "vlm_overview_response_invalid"
+        else:
+            result["error"] = f"vlm_remote_error:{call_error}"
+        result["debug"] = {
+            **debug_payload,
+            "parse_stage": str(debug_payload.get("parse_stage") or "response_parse"),
+        }
+        return result
+
+    remote_error = str(payload.get("_remote_error") or "").strip()
+    if remote_error:
+        result["error"] = f"vlm_remote_error:{remote_error[:160]}"
+        result["debug"] = {
+            **debug_payload,
+            **_redacted_preview(remote_error),
+            "parse_stage": str(debug_payload.get("parse_stage") or "remote_error"),
+        }
+        return result
+
+    summary = str(payload.get("summary") or "").strip()
+    road_pattern = str(payload.get("road_pattern") or "").strip()
+    functional_distribution = str(payload.get("functional_distribution") or "").strip()
+    key_observations = _dedupe_strings(
+        payload.get("key_observations") if isinstance(payload.get("key_observations"), list) else [],
+        max_items=8,
+    )
+    if not summary:
+        summary = " ".join(
+            part for part in [road_pattern, functional_distribution] if part
+        ).strip()[:360]
+
+    result["summary"] = summary[:360]
+    result["road_pattern"] = road_pattern[:220]
+    result["functional_distribution"] = functional_distribution[:220]
+    result["key_observations"] = key_observations
+    result["confidence"] = _clamp01(_to_float(payload.get("confidence")) or 0.0)
+    result["debug"] = {
+        **debug_payload,
+        "parse_stage": str(debug_payload.get("parse_stage") or "parsed"),
+    }
+    result["success"] = True
+    return result
+
+
 def review_cluster_morphology(
     *,
     spatial_context: Dict[str, Any],
     boundary_geojson: Dict[str, Any] | None,
     boundary_quality: Dict[str, Any] | None,
     poi_count: int,
-    model_name: str = "qwen/qwen3-vl-4b",
+    model_name: str = "qwen3.5-4b",
     endpoint: str = "http://localhost:1234/v1/chat/completions",
     image_data_url: str | None = None,
     enable_remote: bool = False,
@@ -527,7 +634,7 @@ def review_cluster_morphology(
     fused = _clamp01(0.7 * _clamp01(remote_score) + 0.3 * heuristic_score)
     return {
         "score": fused,
-        "mode": "qwen3_vl_review_v1",
+        "mode": "remote_visual_review_v1",
         "model": model_name,
         "bbox": bbox,
         "compactness": compactness,

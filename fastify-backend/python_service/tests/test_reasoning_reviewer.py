@@ -26,7 +26,7 @@ class ReasoningReviewerTest(unittest.TestCase):
                 categories=["购物服务"],
                 vlm_landmarks=["武汉大学"],
                 vlm_aliases=["武大"],
-                model_name="qwen/qwen3-1.7b",
+                model_name="qwen3.5-4b",
                 endpoint="http://localhost:1234/v1/chat/completions",
                 timeout_ms=1500,
             )

@@ -13,7 +13,7 @@
 Ϊ Web ǰʵֵӳ١˽ AI ǹһķܹ
 
 - **本地化模型部署**:
-  - **Backend**:  LM Studio Ϊˣ `Qwen3-4B-Instruct-2507-Q5_K_M` ģ͡ģڱ 4B ģͬʱָѭ߼ϱ죬Դռý 4GB ңʺѼԿ
+  - **Backend**:  LM Studio Ϊˣ `qwen3.5-4b` ģ͡ģڱ 4B ģͬʱָѭ߼ϱ죬Դռý 4GB ңʺѼԿ
   - **API Protocol**: 基于 OpenAI 兼容接口 (`/v1/chat/completions`)，确保了前端代码的可移植性，未来可无缝切换至 DeepSeek 等高激活参数的开源大语言模型。
 - **流式响应管线 (Streaming Pipeline)**:
   - **Fetch & ReadableStream**: 前端摒弃了传统的 `axios` 等待模式，直接使用原生的 `fetch` API 配合 `ReadableStream` 读取响应体。
@@ -92,7 +92,7 @@ AI 模型（尤其是 Qwen/DeepSeek）在处理结构化数据时，极度倾向
 
 1.  **服务商配置管理** (`AI_CONFIG`):
 
-    - **Local**: LM Studio (`qwen3-4b-instruct-2507`)
+    - **Local**: LM Studio (`qwen3.5-4b`)
       - 认证：`Authorization: Bearer xxx`
       - 参数：`max_tokens`
     - **MiMo**: Xiaomi MiMo (`mimo-v2-flash`)

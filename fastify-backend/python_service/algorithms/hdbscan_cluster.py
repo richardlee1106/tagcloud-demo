@@ -1,4 +1,4 @@
-"""HDBSCAN clustering wrapper with adaptive strategy and DBSCAN fallback."""
+﻿"""HDBSCAN clustering wrapper with adaptive strategy and DBSCAN fallback."""
 
 from __future__ import annotations
 
@@ -56,11 +56,8 @@ def _resolve_cluster_params(
     area = max(lon_span * lat_span, 1e-8)
     density = point_count / area
 
-    # ģӦŴ min_cluster_sizeҪǳƣ˵͵ܶʵ
-    # 改为使用 math.log1p 而非 sqrt，这样 1000 点也就加 7 个，10000 点加 9 个。
     adaptive_cluster = int(max(min_cluster_size, min(80, min_cluster_size + math.log1p(point_count) * 1.5)))
 
-    # 基于点密度自适应 min_samples，并保证不低于传入下限
     if density > 800_000:
         adaptive_samples = max(min_samples, 8)
     elif density > 250_000:
@@ -74,14 +71,26 @@ def _resolve_cluster_params(
 def cluster_points(
     coordinates: Iterable[tuple[float, float]],
     *,
+    sample_weights: Iterable[float] | None = None,
     min_cluster_size: int = 12,
     min_samples: int = 6,
     adaptive: bool = True,
     max_hdbscan_points: int = 14000,
+    core_dist_n_jobs: int = -1,
 ) -> ClusterResult:
     """Cluster point coordinates with adaptive HDBSCAN and DBSCAN fallback."""
     points = np.asarray(list(coordinates), dtype=np.float64)
     point_count = len(points)
+
+    weights_array: np.ndarray | None = None
+    if sample_weights is not None:
+        try:
+            candidate_weights = np.asarray(list(sample_weights), dtype=np.float64)
+            if len(candidate_weights) == point_count:
+                weights_array = candidate_weights
+        except Exception:
+            weights_array = None
+
     if points.size == 0:
         return ClusterResult(
             labels=[],
@@ -111,25 +120,39 @@ def cluster_points(
             input_point_count=point_count,
         )
 
-    # 点数过大或缺少依赖时，使用 DBSCAN 作为 HDBSCAN 的回退方案
     use_hdbscan = hdbscan is not None and point_count <= max_hdbscan_points
 
     if use_hdbscan:
-        engine = "hdbscan"
+        engine = "hdbscan_weighted" if weights_array is not None else "hdbscan"
         model = hdbscan.HDBSCAN(
             min_cluster_size=effective_cluster_size,
             min_samples=effective_samples,
             cluster_selection_method="eom",
             approx_min_span_tree=True,
-            core_dist_n_jobs=1,
+            core_dist_n_jobs=int(core_dist_n_jobs),
         )
-        labels = model.fit_predict(points)
+        if weights_array is not None:
+            try:
+                model.fit(points, sample_weight=weights_array)
+                labels = model.labels_
+            except TypeError:
+                labels = model.fit_predict(points)
+        else:
+            labels = model.fit_predict(points)
     else:
-        # 大样本场景适度放宽 eps，降低过度噪声标记
         eps = 0.0018 if point_count <= 20000 else 0.0022
-        engine = "dbscan_large" if point_count > max_hdbscan_points else "dbscan_fallback"
+        if point_count > max_hdbscan_points:
+            engine = "dbscan_large_weighted" if weights_array is not None else "dbscan_large"
+        else:
+            engine = "dbscan_fallback_weighted" if weights_array is not None else "dbscan_fallback"
         model = DBSCAN(eps=eps, min_samples=max(2, effective_samples))
-        labels = model.fit_predict(points)
+        if weights_array is not None:
+            try:
+                labels = model.fit_predict(points, sample_weight=weights_array)
+            except TypeError:
+                labels = model.fit_predict(points)
+        else:
+            labels = model.fit_predict(points)
 
     labels_list = labels.tolist()
     unique_clusters = {label for label in labels_list if label >= 0}

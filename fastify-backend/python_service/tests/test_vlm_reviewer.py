@@ -24,7 +24,7 @@ class VlmReviewerTest(unittest.TestCase):
         try:
             result = vlm_reviewer.extract_map_anchors(
                 image_data_url="data:image/png;base64,stub",
-                model_name="qwen3-vl-4b",
+                model_name="qwen3.5-4b",
                 endpoint="http://localhost:1234/v1/chat/completions",
                 timeout_ms=1200,
             )
@@ -158,7 +158,7 @@ class VlmReviewerTest(unittest.TestCase):
         try:
             payload = vlm_reviewer._call_remote_json(
                 endpoint="http://localhost:1234/v1/chat/completions",
-                model_name="qwen3-vl-4b",
+                model_name="qwen3.5-4b",
                 system_prompt="system",
                 user_prompt="user",
                 image_data_url=None,
@@ -220,7 +220,7 @@ class VlmReviewerTest(unittest.TestCase):
         try:
             payload = vlm_reviewer._call_remote_json(
                 endpoint="http://localhost:1234/v1/chat/completions",
-                model_name="qwen3-vl-4b",
+                model_name="qwen3.5-4b",
                 system_prompt="system",
                 user_prompt="user",
                 image_data_url="data:image/png;base64,stub",

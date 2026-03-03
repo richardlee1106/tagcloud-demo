@@ -244,7 +244,7 @@ composite_v5_score = weighted_sum(
 Mode A: 启发式评分（默认，0延迟）
   score = 0.30×quality + 0.24×coverage + 0.18×road_fit + 0.16×landuse_fit + 0.12×compactness + poi_bonus
 
-Mode B: VLM 远程评分（可选，需要 LM Studio + qwen3-vl-4b）
+Mode B: VLM 远程评分（可选，需要 LM Studio + qwen3.5-4b）
   输入：地图截图 data URL + 边界信息 + BBOX
   输出：{ morphology_confidence, road_fit, landuse_fit, summary }
   融合：0.7 × VLM分数 + 0.3 × 启发式分数

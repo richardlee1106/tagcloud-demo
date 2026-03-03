@@ -29,8 +29,8 @@ test('pipeline failure writes FailureDiagnostics entry and readable summary fiel
       mapZoom: 16.44
     },
     options: {
-      visualModel: 'qwen3-vl-4b',
-      reasoningModel: 'qwen/qwen3-1.7b',
+      visualModel: 'qwen3.5-4b',
+      reasoningModel: 'qwen3.5-4b',
       reasoningEnabled: true,
       modelBudgetMs: 5000
     }

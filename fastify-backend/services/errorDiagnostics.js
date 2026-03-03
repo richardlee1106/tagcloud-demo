@@ -100,6 +100,10 @@ export function digestSpatialContext(spatialContext = {}) {
 export function digestModelOptions(options = {}) {
   return {
     visualModel: options?.visualModel || null,
+    ocrModel: options?.ocrModel || null,
+    overviewModel: options?.overviewModel || null,
+    overviewEnabled: options?.overviewEnabled ?? null,
+    overviewMediumEnabled: options?.overviewMediumEnabled ?? null,
     reasoningModel: options?.reasoningModel || null,
     reasoningEnabled: options?.reasoningEnabled ?? null,
     modelBudgetMs: Number.isFinite(Number(options?.modelBudgetMs)) ? Number(options.modelBudgetMs) : null,

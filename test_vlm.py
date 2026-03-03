@@ -33,9 +33,9 @@ endpoints = [
 ]
 
 models = [
-    "qwen/qwen3-vl-4b",
-    "qwen3-vl-4b",
-    "qwen3-vl-4b-instruct",
+    "qwen3.5-4b",
+    "qwen3.5-4b",
+    "qwen3.5-4b",
 ]
 
 def test_vlm(model, endpoint, image_url):
@@ -93,9 +93,9 @@ except Exception as e:
 
 # 测试不同格式
 test_cases = [
-    ("qwen/qwen3-vl-4b", data_url_jpeg),
-    ("qwen/qwen3-vl-4b", data_url_png),
-    ("qwen3-vl-4b", data_url_jpeg),
+    ("qwen3.5-4b", data_url_jpeg),
+    ("qwen3.5-4b", data_url_png),
+    ("qwen3.5-4b", data_url_jpeg),
 ]
 
 for model, img_url in test_cases:

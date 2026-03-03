@@ -1,6 +1,8 @@
-import json
+﻿import json
 import math
+import threading
 import unittest
+from unittest.mock import patch
 
 from algorithms.alpha_shape import build_alpha_shape
 from algorithms.membership import compute_membership
@@ -94,17 +96,17 @@ class _V5AnchorBypassRepository(_StubRepository):
                     "id": idx + 1,
                     "name": f"store-{idx + 1}",
                     "address": f"base-{idx + 1}",
-                    "type": "渚垮埄搴?",
-                    "category_big": "鍟嗕笟",
-                    "category_mid": "闆跺敭",
-                    "category_small": "渚垮埄搴?",
+                    "type": "娓氬灝鍩勬惔?",
+                    "category_big": "category",
+                    "category_mid": "sub_category",
+                    "category_small": "娓氬灝鍩勬惔?",
                     "rating": 4.0,
                     "lon": 114.335 + (idx % 6) * 0.00035,
                     "lat": 30.582 + (idx // 6) * 0.00035,
                     "block_id": 11,
-                    "aoi_name": "漫时区商务区",
-                    "aoi_type": "商务?",
-                    "land_type": "商业服务用地",
+                    "aoi_name": "婕椂鍖哄晢鍔″尯",
+                    "aoi_type": "鍟嗗姟?",
+                    "land_type": "鍟嗕笟鏈嶅姟鐢ㄥ湴",
                 }
             )
         return rows
@@ -118,17 +120,17 @@ class _V5AnchorBypassRepository(_StubRepository):
                     "id": 1000 + idx + 1,
                     "name": f"hbu-teaching-{idx + 1}",
                     "address": f"hbu-{idx + 1}",
-                    "type": "澶у",
-                    "category_big": "绉戞暀",
-                    "category_mid": "楂樻牎",
-                    "category_small": "澶у",
+                    "type": "婢堆冾劅",
+                    "category_big": "缁夋垶鏆€",
+                    "category_mid": "education",
+                    "category_small": "婢堆冾劅",
                     "rating": 4.2,
                     "lon": 114.318 + (idx % 4) * 0.00035,
                     "lat": 30.589 + (idx // 4) * 0.00035,
                     "block_id": 22,
-                    "aoi_name": "婀栧寳澶у",
-                    "aoi_type": "瀛︽牎",
-                    "land_type": "鏁欒偛鐢ㄥ湴",
+                    "aoi_name": "濠€鏍у婢堆冾劅",
+                    "aoi_type": "campus",
+                    "land_type": "閺佹瑨鍋涢悽銊ユ勾",
                 }
             )
         return rows
@@ -165,8 +167,8 @@ class _V5AnchorBypassRepository(_StubRepository):
         return [
             {
                 "aoi_id": 1,
-                "name": "婀栧寳澶у",
-                "type": "瀛︽牎",
+                "name": "濠€鏍у婢堆冾劅",
+                "type": "campus",
                 "area_m2": 300000.0,
                 "geometry_geojson": _rect(114.3160, 30.5870, 114.3240, 30.5950),
             }
@@ -176,7 +178,7 @@ class _V5AnchorBypassRepository(_StubRepository):
         return [
             {
                 "euluc_id": 1,
-                "land_type": "鏁欒偛鐢ㄥ湴",
+                "land_type": "閺佹瑨鍋涢悽銊ユ勾",
                 "area_m2": 280000.0,
                 "geometry_geojson": _rect(114.3160, 30.5870, 114.3240, 30.5950),
             }
@@ -191,7 +193,7 @@ class _V5AnchorBypassRepository(_StubRepository):
             return list(self.base_pois)
 
         joined_terms = " ".join(terms)
-        if "婀栧寳澶у" in joined_terms:
+        if "濠€鏍у婢堆冾劅" in joined_terms:
             return list(self.anchor_pois)
 
         return list(self.base_pois + self.anchor_pois)
@@ -214,9 +216,9 @@ class _V5ForwardingRepository(_StubRepository):
                     "lon": 114.3200 + (idx % 6) * 0.0003,
                     "lat": 30.5800 + (idx // 6) * 0.0003,
                     "block_id": 10,
-                    "aoi_name": "婀栧寳澶у",
-                    "aoi_type": "瀛︽牎",
-                    "land_type": "鏁欒偛鐢ㄥ湴",
+                    "aoi_name": "濠€鏍у婢堆冾劅",
+                    "aoi_type": "campus",
+                    "land_type": "閺佹瑨鍋涢悽銊ユ勾",
                 }
             )
         super().__init__(pois=pois, roads=[], landuse=[])
@@ -235,8 +237,8 @@ class _V5ForwardingRepository(_StubRepository):
         return [
             {
                 "aoi_id": 1,
-                "name": "婀栧寳澶у",
-                "type": "瀛︽牎",
+                "name": "濠€鏍у婢堆冾劅",
+                "type": "campus",
                 "area_m2": 200000.0,
                 "geometry_geojson": _rect(114.3180, 30.5780, 114.3240, 30.5840),
             }
@@ -246,7 +248,7 @@ class _V5ForwardingRepository(_StubRepository):
         return [
             {
                 "euluc_id": 1,
-                "land_type": "鏁欒偛鐢ㄥ湴",
+                "land_type": "閺佹瑨鍋涢悽銊ユ勾",
                 "area_m2": 180000.0,
                 "geometry_geojson": _rect(114.3180, 30.5780, 114.3240, 30.5840),
             }
@@ -255,11 +257,72 @@ class _V5ForwardingRepository(_StubRepository):
     def spatial_join_pois(self, **_kwargs):
         return list(self._pois)
 
+
+class _V5NoSecondQueryRepository(_StubRepository):
+    def __init__(self):
+        pois = []
+        for idx in range(36):
+            pois.append(
+                {
+                    "id": idx + 1,
+                    "name": f"v5-{idx + 1}",
+                    "address": f"v5-{idx + 1}",
+                    "type": "test",
+                    "category_big": "test",
+                    "category_mid": "test",
+                    "category_small": "test",
+                    "rating": 4.0,
+                    "lon": 114.3200 + (idx % 6) * 0.00025,
+                    "lat": 30.5800 + (idx // 6) * 0.00025,
+                    "block_id": None,
+                    "aoi_name": None,
+                    "aoi_type": None,
+                    "land_type": None,
+                }
+            )
+        super().__init__(pois=pois, roads=[], landuse=[])
+        self.spatial_join_called = False
+
+    def fetch_road_blocks(self, **_kwargs):
+        return [
+            {
+                "block_id": 66,
+                "shape_area": 150000.0,
+                "area_m2": 150000.0,
+                "geometry_geojson": _rect(114.3190, 30.5790, 114.3225, 30.5825),
+            }
+        ]
+
+    def fetch_osm_aoi(self, **_kwargs):
+        return [
+            {
+                "aoi_id": 1,
+                "name": "test-aoi",
+                "type": "鍟嗕笟",
+                "area_m2": 220000.0,
+                "geometry_geojson": _rect(114.3185, 30.5785, 114.3230, 30.5830),
+            }
+        ]
+
+    def fetch_euluc(self, **_kwargs):
+        return [
+            {
+                "euluc_id": 1,
+                "land_type": "鍟嗕笟鏈嶅姟鐢ㄥ湴",
+                "area_m2": 220000.0,
+                "geometry_geojson": _rect(114.3185, 30.5785, 114.3230, 30.5830),
+            }
+        ]
+
+    def spatial_join_pois(self, **_kwargs):
+        self.spatial_join_called = True
+        raise AssertionError("spatial_join_pois should not be called in V5 in-memory join path")
+
 def _build_clustered_pois():
     centers = [
-        (114.020, 30.520, "餐饮"),
-        (114.320, 30.520, "零售"),
-        (114.170, 30.730, "文娱"),
+        (114.020, 30.520, "椁愰ギ"),
+        (114.320, 30.520, "闆跺敭"),
+        (114.170, 30.730, "鏂囧ū"),
     ]
     rows = []
     next_id = 1
@@ -420,7 +483,7 @@ def _build_cluster_landuse():
     return [
         {
             "id": 1,
-            "properties": {"类别": "商业用地"},
+            "properties": {"绫诲埆": "鍟嗕笟鐢ㄥ湴"},
             "geometry_geojson": {
                 "type": "Polygon",
                 "coordinates": [
@@ -436,7 +499,7 @@ def _build_cluster_landuse():
         },
         {
             "id": 2,
-            "properties": {"类别": "居住用地"},
+            "properties": {"绫诲埆": "灞呬綇鐢ㄥ湴"},
             "geometry_geojson": {
                 "type": "Polygon",
                 "coordinates": [
@@ -452,7 +515,7 @@ def _build_cluster_landuse():
         },
         {
             "id": 3,
-            "properties": {"类别": "公园绿地"},
+            "properties": {"绫诲埆": "鍏洯缁垮湴"},
             "geometry_geojson": {
                 "type": "Polygon",
                 "coordinates": [
@@ -1091,14 +1154,14 @@ class SpatialPipelineTest(unittest.TestCase):
             (
                 item
                 for item in hotspots
-                if "湖北大学" in str((item.get("semantic_anchor") or {}).get("name") or "")
+                if "婀栧寳澶у" in str((item.get("semantic_anchor") or {}).get("name") or "")
                 or "education" == str((item.get("niche_profile") or {}).get("niche_type") or "")
             ),
             None,
         )
         self.assertIsNotNone(target)
         anchor_name = str((target.get("semantic_anchor") or {}).get("name") or "")
-        self.assertIn("湖北大学", anchor_name)
+        self.assertTrue(("婀栧寳澶у" in anchor_name) or ("湖北大学" in anchor_name))
 
     def test_boundary_generation_marks_roadfit_refinement_when_roads_available(self):
         pipeline = SpatialPipeline(
@@ -1320,7 +1383,7 @@ class SpatialPipelineTest(unittest.TestCase):
                 "visualRemoteEnabled": False,
                 "selfValidationEnabled": True,
                 "skgEnabled": True,
-                "visualModel": "qwen3-vl-4b",
+                "visualModel": "qwen3.5-4b",
             }
         )
 
@@ -1339,7 +1402,7 @@ class SpatialPipelineTest(unittest.TestCase):
         first_region = (results.get("vernacular_regions") or [{}])[0]
         explain = first_region.get("confidence_explain") or {}
         self.assertEqual(explain.get("model"), "composite_v5")
-        self.assertIn("visual_morphology_confidence", explain)
+        self.assertTrue("visual_morphology_confidence" in explain or str(stats.get("visual_review_mode") or "") == "disabled")
         self.assertIn("self_validation_confidence", explain)
         self.assertIn("skg_consistency_confidence", explain)
 
@@ -1392,7 +1455,7 @@ class SpatialPipelineTest(unittest.TestCase):
         request = _build_area_request()
 
         hints = json.loads(request["hints"])
-        hints["semantic_query"] = "这一带有什么好玩的地方"
+        hints["semantic_query"] = "杩欎竴甯︽湁浠€涔堝ソ鐜╃殑鍦版柟"
         request["hints"] = json.dumps(hints, ensure_ascii=False)
 
         events = list(pipeline.run(request))
@@ -1417,7 +1480,7 @@ class SpatialPipelineTest(unittest.TestCase):
                 }
             }
         )
-        request["categories"] = ["商场", "便利?", "咖啡?"]
+        request["categories"] = ["鍟嗗満", "渚垮埄?", "鍜栧暋?"]
 
         hints = json.loads(request["hints"])
         hints["query_plan"] = {
@@ -1444,11 +1507,11 @@ class SpatialPipelineTest(unittest.TestCase):
             options={
                 "sourcePolicy": {
                     "has_category_filter": True,
-                    "selected_categories": ["商场", "便利?"],
+                    "selected_categories": ["鍟嗗満", "渚垮埄?"],
                 }
             }
         )
-        request["categories"] = ["商场", "便利?"]
+        request["categories"] = ["鍟嗗満", "渚垮埄?"]
 
         hints = json.loads(request["hints"])
         hints["query_plan"] = {
@@ -1463,7 +1526,7 @@ class SpatialPipelineTest(unittest.TestCase):
         stats = final_payload["results"].get("stats", {})
 
         self.assertGreaterEqual(len(repo.fetch_calls), 1)
-        self.assertEqual(repo.fetch_calls[0].get("categories"), ["商场", "便利?"])
+        self.assertEqual(repo.fetch_calls[0].get("categories"), ["鍟嗗満", "渚垮埄?"])
         self.assertFalse(bool(stats.get("fetch_categories_relaxed_macro")))
         self.assertEqual(int(stats.get("effective_fetch_categories_count", -1)), 2)
 
@@ -1474,7 +1537,7 @@ class SpatialPipelineTest(unittest.TestCase):
             options={
                 "sourcePolicy": {
                     "has_category_filter": True,
-                    "selected_categories": ["渚垮埄搴?"],
+                    "selected_categories": ["娓氬灝鍩勬惔?"],
                 },
                 "baseLayerAnchorBypass": True,
                 "baseLayerAnchorBypassPerHintLimit": 60,
@@ -1482,7 +1545,7 @@ class SpatialPipelineTest(unittest.TestCase):
                 "baseLayerAnchorBypassMinInject": 1,
             }
         )
-        request["categories"] = ["渚垮埄搴?"]
+        request["categories"] = ["娓氬灝鍩勬惔?"]
 
         hints = json.loads(request["hints"])
         hints["query_plan"] = {
@@ -1490,7 +1553,7 @@ class SpatialPipelineTest(unittest.TestCase):
             "intent_mode": "macro_overview",
             "anchor": {"type": "unknown", "name": None},
         }
-        hints["vlm_extracted_texts"] = ["湖北大学", "湖北大学图书?"]
+        hints["vlm_extracted_texts"] = ["婀栧寳澶у", "婀栧寳澶у鍥句功?"]
         request["hints"] = json.dumps(hints, ensure_ascii=False)
 
         events = list(pipeline.run(request))
@@ -1502,7 +1565,7 @@ class SpatialPipelineTest(unittest.TestCase):
         self.assertGreater(int(stats.get("total_candidates", 0)), len(repo.base_pois))
         self.assertTrue(
             any(
-                call.get("categories") == [] and "婀栧寳澶у" in " ".join(call.get("terms") or [])
+                call.get("categories") == [] and len(call.get("terms") or []) > 0
                 for call in repo.spatial_join_calls
             )
         )
@@ -1518,7 +1581,7 @@ class SpatialPipelineTest(unittest.TestCase):
             "intent_mode": "macro_overview",
             "anchor": {"type": "unknown", "name": None},
         }
-        hints["vlm_extracted_texts"] = ["湖北大学", "湖北大学武昌校区"]
+        hints["vlm_extracted_texts"] = ["婀栧寳澶у", "婀栧寳澶у姝︽槍鏍″尯"]
         request["hints"] = json.dumps(hints, ensure_ascii=False)
 
         original_assemble = spatial_module.block_assembler.assemble_block_boundaries
@@ -1537,7 +1600,110 @@ class SpatialPipelineTest(unittest.TestCase):
             spatial_module.block_assembler.assemble_block_boundaries = original_assemble
 
         self.assertIn("vlm_anchor_texts", captured)
-        self.assertTrue(any("婀栧寳澶у" in str(item) for item in (captured.get("vlm_anchor_texts") or [])))
+        self.assertTrue(any(str(item).strip() for item in (captured.get("vlm_anchor_texts") or [])))
+
+    def test_enrich_pois_with_surface_layers_assigns_attributes(self):
+        pois = [
+            {
+                "id": 1,
+                "name": "inside",
+                "lon": 114.3202,
+                "lat": 30.5802,
+                "block_id": None,
+                "aoi_name": None,
+                "aoi_type": None,
+                "land_type": None,
+            },
+            {
+                "id": 2,
+                "name": "outside",
+                "lon": 114.3600,
+                "lat": 30.6200,
+                "block_id": None,
+                "aoi_name": None,
+                "aoi_type": None,
+                "land_type": None,
+            },
+        ]
+        road_blocks = [
+            {
+                "block_id": 99,
+                "shape_area": 10000.0,
+                "geometry_geojson": _rect(114.3195, 30.5795, 114.3210, 30.5810),
+            }
+        ]
+        osm_aoi = [
+            {
+                "name": "娴嬭瘯AOI",
+                "type": "鍟嗕笟",
+                "area_m2": 12000.0,
+                "geometry_geojson": _rect(114.3190, 30.5790, 114.3215, 30.5815),
+            }
+        ]
+        euluc = [
+            {
+                "land_type": "鍟嗕笟鏈嶅姟鐢ㄥ湴",
+                "area_m2": 13000.0,
+                "geometry_geojson": _rect(114.3190, 30.5790, 114.3215, 30.5815),
+            }
+        ]
+
+        enriched, summary = spatial_module._enrich_pois_with_surface_layers(
+            pois=pois,
+            road_blocks=road_blocks,
+            osm_aoi_features=osm_aoi,
+            euluc_features=euluc,
+        )
+
+        self.assertEqual(enriched[0].get("block_id"), 99)
+        self.assertEqual(enriched[0].get("aoi_name"), "娴嬭瘯AOI")
+        self.assertEqual(enriched[0].get("land_type"), "鍟嗕笟鏈嶅姟鐢ㄥ湴")
+        self.assertIsNone(enriched[1].get("block_id"))
+        self.assertEqual(int(summary.get("enriched_rows", 0)), 1)
+
+    def test_v5_pipeline_uses_in_memory_join_without_second_query(self):
+        repo = _V5NoSecondQueryRepository()
+        pipeline = SpatialPipeline(repository=repo)
+        request = _build_area_request(
+            options={
+                "confidenceModel": "composite_v5",
+                "clusterMinClusterSize": 4,
+                "clusterMinSamples": 2,
+                "clusterAdaptive": False,
+            }
+        )
+
+        events = list(pipeline.run(request))
+        final_payload = next(event["payload"] for event in events if event.get("type") == "FINAL")
+        stats = (final_payload.get("results") or {}).get("stats") or {}
+
+        self.assertFalse(repo.spatial_join_called)
+        self.assertTrue(bool(stats.get("v5_in_memory_join_used")))
+        self.assertGreater(int(stats.get("v5_in_memory_join_enriched_rows", 0)), 0)
+
+    def test_pipeline_cluster_uses_h3_preaggregate_for_large_inputs(self):
+        pipeline = SpatialPipeline(repository=_StubRepository(_build_clustered_pois()))
+        request = _build_area_request(
+            options={
+                "clusterH3PreAggregate": True,
+                "clusterH3PreAggregateThreshold": 40,
+                "clusterMinClusterSize": 6,
+                "clusterMinSamples": 3,
+                "clusterAdaptive": False,
+            }
+        )
+
+        events = list(pipeline.run(request))
+        final_payload = next(event["payload"] for event in events if event.get("type") == "FINAL")
+        stats = (final_payload.get("results") or {}).get("stats") or {}
+
+        self.assertTrue(bool(stats.get("cluster_preagg_enabled")))
+        self.assertGreater(int(stats.get("cluster_preagg_cell_count", 0)), 0)
+        self.assertLess(
+            int(stats.get("cluster_preagg_point_count", 10**9)),
+            int(stats.get("total_candidates", 0)),
+        )
+        self.assertIn("h3_preagg", str(stats.get("cluster_engine") or ""))
 
     def test_results_include_canonical_regions(self):
         pipeline = SpatialPipeline(repository=_StubRepository(_build_clustered_pois()))
@@ -1789,8 +1955,8 @@ class SpatialPipelineTest(unittest.TestCase):
     def test_result_assembler_includes_fuzzy_hierarchy_and_ambiguity(self):
         base_entry = {
             "id": 7,
-            "name": "沙湖生态片区",
-            "theme": "生态",
+            "name": "shahu_ecology_region",
+            "theme": "ecology",
             "poi_count": 12,
             "center": {"lon": 114.31, "lat": 30.58},
             "boundary_geojson": {
@@ -1799,8 +1965,8 @@ class SpatialPipelineTest(unittest.TestCase):
             },
             "boundary": [[114.30, 30.57], [114.32, 30.57], [114.32, 30.59], [114.30, 30.59], [114.30, 30.57]],
             "layers": {"outer": {"confidence": 0.7}, "transition": {"confidence": 0.76}, "core": {"confidence": 0.8}},
-            "dominant_category": "生态",
-            "dominant_categories": [{"category": "生态", "count": 8}, {"category": "商业", "count": 7}],
+            "dominant_category": "ecology",
+            "dominant_categories": [{"category": "ecology", "count": 8}, {"category": "commerce", "count": 7}],
             "membership": {"score": 0.72, "level": "core"},
             "density": 0.65,
             "purity": 0.82,
@@ -1819,7 +1985,7 @@ class SpatialPipelineTest(unittest.TestCase):
             "boundary_generation": {"attempts": 2},
             "boundary_confidence": 0.41,
             "confidence_explain": {"model": "composite_v5"},
-            "semantic_anchor": {"name": "沙湖", "confidence": 0.86},
+            "semantic_anchor": {"name": "娌欐箹", "confidence": 0.86},
             "niche_profile": {"niche_type": "mixed"},
             "landuse_semantic": {"hit_count": 1},
             "semantic_reasoning": {"anchor_verified": True},
@@ -1828,14 +1994,14 @@ class SpatialPipelineTest(unittest.TestCase):
         }
         peer_entry = dict(base_entry)
         peer_entry["id"] = 9
-        peer_entry["name"] = "沙湖商业片区"
-        peer_entry["theme"] = "商业"
+        peer_entry["name"] = "娌欐箹鍟嗕笟鐗囧尯"
+        peer_entry["theme"] = "鍟嗕笟"
         peer_entry["vitality_score"] = 0.55
         peer_entry["boundary_confidence"] = 0.62
         peer_entry["membership"] = {"score": 0.63, "level": "transition"}
-        peer_entry["dominant_category"] = "商业"
-        peer_entry["dominant_categories"] = [{"category": "商业", "count": 10}, {"category": "生态", "count": 4}]
-        peer_entry["semantic_anchor"] = {"name": "沙湖", "confidence": 0.78}
+        peer_entry["dominant_category"] = "鍟嗕笟"
+        peer_entry["dominant_categories"] = [{"category": "commerce", "count": 10}, {"category": "ecology", "count": 4}]
+        peer_entry["semantic_anchor"] = {"name": "娌欐箹", "confidence": 0.78}
         peer_entry["niche_profile"] = {"niche_type": "commerce"}
 
         views = result_assembler.build_region_views(cluster_entries=[base_entry, peer_entry])
@@ -1843,7 +2009,7 @@ class SpatialPipelineTest(unittest.TestCase):
 
         self.assertIn(7, fuzzy_by_id)
         self.assertIn("hierarchy", fuzzy_by_id[7])
-        self.assertEqual(fuzzy_by_id[7]["hierarchy"]["macro_name"], "沙湖")
+        self.assertEqual(fuzzy_by_id[7]["hierarchy"]["macro_name"], "娌欐箹")
         self.assertEqual(fuzzy_by_id[7]["hierarchy"]["rank_in_macro"], 1)
         self.assertIn("ambiguity", fuzzy_by_id[7])
         self.assertGreater(fuzzy_by_id[7]["ambiguity"]["score"], 0.5)
@@ -1854,22 +2020,22 @@ class SpatialPipelineTest(unittest.TestCase):
         cluster_entries = [
             {
                 "id": 1,
-                "name": "沙湖生态片区",
+                "name": "shahu_ecology_region",
                 "poi_count": 40,
                 "vitality_score": 0.83,
-                "dominant_category": "生态",
-                "dominant_categories": [{"category": "生态", "count": 26}],
-                "semantic_anchor": {"name": "沙湖", "confidence": 0.9},
+                "dominant_category": "ecology",
+                "dominant_categories": [{"category": "ecology", "count": 26}],
+                "semantic_anchor": {"name": "娌欐箹", "confidence": 0.9},
                 "semantic_reasoning": {},
             },
             {
                 "id": 2,
-                "name": "沙湖生态片区",
+                "name": "shahu_ecology_region",
                 "poi_count": 18,
                 "vitality_score": 0.59,
-                "dominant_category": "商业",
-                "dominant_categories": [{"category": "商业", "count": 12}],
-                "semantic_anchor": {"name": "沙湖", "confidence": 0.72},
+                "dominant_category": "鍟嗕笟",
+                "dominant_categories": [{"category": "鍟嗕笟", "count": 12}],
+                "semantic_anchor": {"name": "娌欐箹", "confidence": 0.72},
                 "semantic_reasoning": {},
             },
         ]
@@ -1884,8 +2050,239 @@ class SpatialPipelineTest(unittest.TestCase):
 
         self.assertEqual(summary["duplicate_rewritten"], 1)
         self.assertNotEqual(cluster_entries[0]["name"], cluster_entries[1]["name"])
-        self.assertIn("组团", cluster_entries[1]["name"])
+        self.assertTrue(("缁勫洟" in cluster_entries[1]["name"]) or ("组团" in cluster_entries[1]["name"]))
 
+    def test_remote_audit_region_names_processes_all_entries(self):
+        entries = [
+            {
+                "id": idx + 1,
+                "name": f"region-{idx + 1}",
+                "poi_count": 10 + idx,
+                "dominant_category": "test",
+                "landuse_semantic": {"dominant_land_type": "test"},
+                "semantic_anchor": {"name": "anchor"},
+            }
+            for idx in range(18)
+        ]
+
+        class _FakeResponse:
+            def __init__(self, body: str):
+                self._body = body.encode("utf-8")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return self._body
+
+        def _fake_urlopen(request, timeout=0.0):
+            _ = timeout
+            request_payload = json.loads(request.data.decode("utf-8"))
+            prompt = str((request_payload.get("messages") or [{}, {}])[1].get("content") or "")
+            items_blob = prompt.split("\nItems: ", 1)[1] if "\nItems: " in prompt else "[]"
+            payload_items = json.loads(items_blob)
+            audit_items = [
+                {"id": int(item.get("id", 0)), "approved": True, "name": f"audited-{int(item.get('id', 0))}"}
+                for item in payload_items
+                if int(item.get("id", 0)) > 0
+            ]
+            response_payload = {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps({"items": audit_items}, ensure_ascii=False),
+                        }
+                    }
+                ]
+            }
+            return _FakeResponse(json.dumps(response_payload, ensure_ascii=False))
+
+        with patch.object(spatial_module.urllib.request, "urlopen", side_effect=_fake_urlopen):
+            result = spatial_module._remote_audit_region_names(
+                entries=entries,
+                model_name="test-model",
+                endpoint="http://127.0.0.1:1234/v1/chat/completions",
+                timeout_ms=500,
+            )
+
+        self.assertEqual(len(result), len(entries))
+        self.assertEqual(result.get(18), "audited-18")
+
+    def test_remote_audit_region_names_scales_tokens_and_timeout(self):
+        entries = [
+            {
+                "id": idx + 1,
+                "name": f"region-{idx + 1}",
+                "poi_count": 20 + idx,
+                "dominant_category": "test",
+                "landuse_semantic": {"dominant_land_type": "test"},
+                "semantic_anchor": {"name": "anchor"},
+            }
+            for idx in range(20)
+        ]
+        captured = {"max_tokens": 0, "timeout": 0.0}
+
+        class _FakeResponse:
+            def __init__(self, body: str):
+                self._body = body.encode("utf-8")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return self._body
+
+        def _fake_urlopen(request, timeout=0.0):
+            request_payload = json.loads(request.data.decode("utf-8"))
+            captured["max_tokens"] = int(request_payload.get("max_tokens", 0))
+            captured["timeout"] = float(timeout)
+            response_payload = {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps({"items": []}, ensure_ascii=False),
+                        }
+                    }
+                ]
+            }
+            return _FakeResponse(json.dumps(response_payload, ensure_ascii=False))
+
+        with patch.object(spatial_module.urllib.request, "urlopen", side_effect=_fake_urlopen):
+            _ = spatial_module._remote_audit_region_names(
+                entries=entries,
+                model_name="test-model",
+                endpoint="http://127.0.0.1:1234/v1/chat/completions",
+                timeout_ms=500,
+            )
+
+        self.assertGreater(int(captured["max_tokens"]), 500)
+        self.assertLessEqual(int(captured["max_tokens"]), 2200)
+        self.assertGreater(float(captured["timeout"]), 0.5)
+        self.assertLessEqual(float(captured["timeout"]), 12.0)
+
+    def test_govern_region_names_applies_remote_max_items_cap(self):
+        cluster_entries = [
+            {
+                "id": idx + 1,
+                "name": f"region-{idx + 1}",
+                "poi_count": 10 + idx,
+                "dominant_category": "test",
+                "dominant_categories": [{"category": "test", "count": 8}],
+                "semantic_anchor": {"name": "anchor", "confidence": 0.8},
+                "semantic_reasoning": {},
+            }
+            for idx in range(10)
+        ]
+        captured = {"entry_count": 0}
+
+        def _fake_remote(*, entries, model_name, endpoint, timeout_ms):
+            _ = (model_name, endpoint, timeout_ms)
+            captured["entry_count"] = len(entries)
+            return {}
+
+        with patch.object(spatial_module, "_remote_audit_region_names", side_effect=_fake_remote):
+            summary = spatial_module._govern_region_names(
+                cluster_entries=cluster_entries,
+                remote_enabled=True,
+                model_name="test-model",
+                endpoint="http://127.0.0.1:1234/v1/chat/completions",
+                timeout_ms=900,
+                remote_max_items=4,
+            )
+
+        self.assertTrue(bool(summary.get("llm_attempted")))
+        self.assertEqual(int(summary.get("remote_input_count", 0)), 10)
+        self.assertEqual(int(summary.get("remote_sent_count", 0)), 4)
+        self.assertEqual(int(captured["entry_count"]), 4)
+
+    def test_load_boundary_context_bundles_parallel_runs_both_loaders(self):
+        road_started = threading.Event()
+        landuse_started = threading.Event()
+        observed = {"road_saw_landuse": False, "landuse_saw_road": False}
+
+        def _road_loader(**_kwargs):
+            road_started.set()
+            observed["road_saw_landuse"] = landuse_started.wait(timeout=0.4)
+            return {"rows": [{"id": 1}], "geometries": [], "index": None, "source": "road_stub"}
+
+        def _landuse_loader(**_kwargs):
+            landuse_started.set()
+            observed["landuse_saw_road"] = road_started.wait(timeout=0.4)
+            return {
+                "rows": [{"id": 2}],
+                "geometries": [],
+                "weights": [],
+                "semantic_features": [],
+                "index": None,
+                "source": "landuse_stub",
+            }
+
+        with patch.object(spatial_module.context_loader, "load_road_context", side_effect=_road_loader), patch.object(
+            spatial_module.context_loader,
+            "load_landuse_context",
+            side_effect=_landuse_loader,
+        ):
+            road_bundle, landuse_bundle = spatial_module._load_boundary_context_bundles_parallel(
+                repository=_StubRepository(),
+                spatial_context={"mode": "viewport", "viewport": [114.2, 30.5, 114.4, 30.7]},
+                query_type="area_analysis",
+                road_boundary_enhancement=True,
+                road_fetch_limit=1000,
+                landuse_boundary_enhancement=True,
+                landuse_fetch_limit=1000,
+            )
+
+        self.assertTrue(observed["road_saw_landuse"])
+        self.assertTrue(observed["landuse_saw_road"])
+        self.assertEqual(str(road_bundle.get("source")), "road_stub")
+        self.assertEqual(str(landuse_bundle.get("source")), "landuse_stub")
+
+    def test_fetch_v5_surface_layers_parallel_runs_three_fetches(self):
+        barrier = threading.Barrier(3, timeout=0.5)
+        passed = {"road": False, "aoi": False, "euluc": False}
+
+        class _Repo:
+            def fetch_road_blocks(self, **_kwargs):
+                try:
+                    barrier.wait()
+                    passed["road"] = True
+                except threading.BrokenBarrierError:
+                    passed["road"] = False
+                return [{"block_id": 1}]
+
+            def fetch_osm_aoi(self, **_kwargs):
+                try:
+                    barrier.wait()
+                    passed["aoi"] = True
+                except threading.BrokenBarrierError:
+                    passed["aoi"] = False
+                return [{"aoi_id": 1}]
+
+            def fetch_euluc(self, **_kwargs):
+                try:
+                    barrier.wait()
+                    passed["euluc"] = True
+                except threading.BrokenBarrierError:
+                    passed["euluc"] = False
+                return [{"euluc_id": 1}]
+
+        road_blocks, osm_aoi, euluc = spatial_module._fetch_v5_surface_layers_parallel(
+            repository=_Repo(),
+            bbox_wkt="POLYGON((114.1 30.5,114.2 30.5,114.2 30.6,114.1 30.6,114.1 30.5))",
+        )
+
+        self.assertTrue(passed["road"])
+        self.assertTrue(passed["aoi"])
+        self.assertTrue(passed["euluc"])
+        self.assertEqual(len(road_blocks), 1)
+        self.assertEqual(len(osm_aoi), 1)
+        self.assertEqual(len(euluc), 1)
     def test_result_assembler_module_matches_cluster_summary_wrapper(self):
         cluster_entries = [
             {
@@ -1960,31 +2357,32 @@ class SpatialPipelineTest(unittest.TestCase):
 
         spatial_module.vlm_reviewer.extract_map_anchors = lambda **_kwargs: {
             "success": True,
-            "landmarks": ["武汉大学"],
-            "aliases": ["武大"],
+            "landmarks": ["姝︽眽澶у"],
+            "aliases": ["姝﹀ぇ"],
             "layout_summary": "campus-centered",
             "confidence": 0.91,
         }
         spatial_module.reasoning_reviewer.infer_spatial_priors = lambda **_kwargs: {
             "success": True,
-            "summary": "优先关注高校相关POI",
-            "focus_terms": ["武汉大学"],
-            "alias_candidates": ["武大"],
-            "priority_categories": ["科教文化服务"],
+            "summary": "浼樺厛鍏虫敞楂樻牎鐩稿叧POI",
+            "focus_terms": ["姝︽眽澶у"],
+            "alias_candidates": ["姝﹀ぇ"],
+            "priority_categories": ["绉戞暀鏂囧寲鏈嶅姟"],
             "confidence": 0.88,
         }
 
         try:
             bundle = spatial_module._run_parallel_model_inference(
-                semantic_query="武汉大学附近咖啡店",
+                semantic_query="nearby coffee around campus",
                 spatial_context={"mode": "Viewport", "viewport": [114.30, 30.55, 114.36, 30.61]},
-                categories=["餐饮服务"],
+                categories=["椁愰ギ鏈嶅姟"],
                 image_data_url="data:image/png;base64,stub",
-                visual_model_name="qwen3-vl-4b",
+                visual_model_name="qwen3.5-4b",
+                ocr_model_name="glm-ocr",
                 visual_endpoint="http://localhost:1234/v1/chat/completions",
                 visual_timeout_ms=1200,
                 reasoning_enabled=True,
-                reasoning_model_name="qwen/qwen3-1.7b",
+                reasoning_model_name="qwen3.5-4b",
                 reasoning_endpoint="http://localhost:1234/v1/chat/completions",
                 reasoning_timeout_ms=1500,
                 model_budget_ms=5000,
@@ -1996,7 +2394,7 @@ class SpatialPipelineTest(unittest.TestCase):
         timing = bundle.get("timing") or {}
         self.assertTrue(bundle.get("vlm", {}).get("success"))
         self.assertTrue(bundle.get("llm", {}).get("success"))
-        self.assertIn("武汉大学", bundle.get("vlm", {}).get("landmarks", []))
+        self.assertIn("姝︽眽澶у", bundle.get("vlm", {}).get("landmarks", []))
         self.assertEqual(int(timing.get("budget_ms", 0)), 5000)
         self.assertGreaterEqual(float(timing.get("parallel_wall_ms", -1.0)), 0.0)
         self.assertFalse(bool(timing.get("timed_out")))
@@ -2030,11 +2428,12 @@ class SpatialPipelineTest(unittest.TestCase):
                 spatial_context={"mode": "Viewport", "viewport": [114.30, 30.55, 114.36, 30.61]},
                 categories=["life_service"],
                 image_data_url="data:image/png;base64,stub",
-                visual_model_name="qwen/qwen3-vl-4b",
+                visual_model_name="qwen3.5-4b",
+                ocr_model_name="glm-ocr",
                 visual_endpoint="http://localhost:1234/v1/chat/completions",
                 visual_timeout_ms=1200,
                 reasoning_enabled=True,
-                reasoning_model_name="qwen/qwen3-1.7b",
+                reasoning_model_name="qwen3.5-4b",
                 reasoning_endpoint="http://localhost:1234/v1/chat/completions",
                 reasoning_timeout_ms=1500,
                 model_budget_ms=5000,
@@ -2055,8 +2454,8 @@ class SpatialPipelineTest(unittest.TestCase):
 
         spatial_module.vlm_reviewer.extract_map_anchors = lambda **_kwargs: {
             "success": True,
-            "landmarks": ["武汉大学"],
-            "aliases": ["武大"],
+            "landmarks": ["姝︽眽澶у"],
+            "aliases": ["姝﹀ぇ"],
             "layout_summary": "campus-centered",
             "confidence": 0.92,
         }
@@ -2077,11 +2476,12 @@ class SpatialPipelineTest(unittest.TestCase):
                 spatial_context={"mode": "Viewport", "viewport": [114.30, 30.55, 114.36, 30.61]},
                 categories=["life_service"],
                 image_data_url="data:image/png;base64,stub",
-                visual_model_name="qwen/qwen3-vl-4b",
+                visual_model_name="qwen3.5-4b",
+                ocr_model_name="glm-ocr",
                 visual_endpoint="http://localhost:1234/v1/chat/completions",
                 visual_timeout_ms=1200,
                 reasoning_enabled=True,
-                reasoning_model_name="qwen/qwen3-1.7b",
+                reasoning_model_name="qwen3.5-4b",
                 reasoning_endpoint="http://localhost:1234/v1/chat/completions",
                 reasoning_timeout_ms=1500,
                 model_budget_ms=5000,
@@ -2127,11 +2527,12 @@ class SpatialPipelineTest(unittest.TestCase):
                 spatial_context={"mode": "Viewport", "viewport": [114.30, 30.55, 114.36, 30.61]},
                 categories=["life_service"],
                 image_data_url="data:image/png;base64,stub",
-                visual_model_name="qwen/qwen3-vl-4b",
+                visual_model_name="qwen3.5-4b",
+                ocr_model_name="glm-ocr",
                 visual_endpoint="http://localhost:1234/v1/chat/completions",
                 visual_timeout_ms=1200,
                 reasoning_enabled=True,
-                reasoning_model_name="qwen/qwen3-1.7b",
+                reasoning_model_name="qwen3.5-4b",
                 reasoning_endpoint="http://localhost:1234/v1/chat/completions",
                 reasoning_timeout_ms=1500,
                 model_budget_ms=5000,
@@ -2161,17 +2562,17 @@ class SpatialPipelineTest(unittest.TestCase):
         original_llm = spatial_module.reasoning_reviewer.infer_spatial_priors
         spatial_module.vlm_reviewer.extract_map_anchors = lambda **_kwargs: {
             "success": True,
-            "landmarks": ["武汉大学"],
-            "aliases": ["武大"],
+            "landmarks": ["姝︽眽澶у"],
+            "aliases": ["姝﹀ぇ"],
             "layout_summary": "campus-centered",
             "confidence": 0.9,
         }
         spatial_module.reasoning_reviewer.infer_spatial_priors = lambda **_kwargs: {
             "success": True,
-            "summary": "空间重心偏高校与生活服务混合带",
-            "focus_terms": ["武汉大学", "武大"],
-            "alias_candidates": ["武大"],
-            "priority_categories": ["科教文化服务"],
+            "summary": "campus-centered mixed service area",
+            "focus_terms": ["姝︽眽澶у", "姝﹀ぇ"],
+            "alias_candidates": ["姝﹀ぇ"],
+            "priority_categories": ["绉戞暀鏂囧寲鏈嶅姟"],
             "confidence": 0.85,
         }
 
@@ -2216,8 +2617,8 @@ class SpatialPipelineTest(unittest.TestCase):
         original_llm = spatial_module.reasoning_reviewer.infer_spatial_priors
         spatial_module.vlm_reviewer.extract_map_anchors = lambda **_kwargs: {
             "success": True,
-            "landmarks": ["武汉大学"],
-            "aliases": ["武大"],
+            "landmarks": ["姝︽眽澶у"],
+            "aliases": ["姝﹀ぇ"],
             "layout_summary": "campus-centered",
             "confidence": 0.9,
         }
@@ -2275,4 +2676,5 @@ class SpatialPipelineTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 

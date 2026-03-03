@@ -57,7 +57,7 @@ function normalizeQueryType(queryPlan = {}) {
 }
 
 const LEGACY_VISUAL_MODEL_ALIASES = new Map([
-  ['qwen3-vl-4b', 'qwen/qwen3-vl-4b']
+  ['qwen3.5-4b', 'qwen3.5-4b']
 ])
 
 function upgradeLegacyVisualModelAlias(modelName = '') {
@@ -66,7 +66,7 @@ function upgradeLegacyVisualModelAlias(modelName = '') {
   return LEGACY_VISUAL_MODEL_ALIASES.get(normalized.toLowerCase()) || normalized
 }
 
-export function normalizeVisualModelName(modelName, { fallback = 'qwen/qwen3-vl-4b' } = {}) {
+export function normalizeVisualModelName(modelName, { fallback = 'qwen3.5-4b' } = {}) {
   const explicitModel = upgradeLegacyVisualModelAlias(modelName)
   if (explicitModel) {
     return explicitModel
@@ -83,7 +83,7 @@ export function normalizeVisualModelName(modelName, { fallback = 'qwen/qwen3-vl-
     return envModel
   }
 
-  return upgradeLegacyVisualModelAlias(fallback) || 'qwen/qwen3-vl-4b'
+  return upgradeLegacyVisualModelAlias(fallback) || 'qwen3.5-4b'
 }
 
 
@@ -118,6 +118,15 @@ function shouldUseSpatialResultCache(queryPlan = {}, options = {}) {
 function buildSpatialCacheFingerprint(queryPlan = {}, spatialContext = {}, options = {}, userQuestion = '') {
   return queryCache.generateQueryFingerprint(queryPlan, spatialContext, {
     sourcePolicy: options?.sourcePolicy || null,
+    modelProfile: {
+      visualModel: normalizeVisualModelName(options?.visualModel),
+      ocrModel: options?.ocrModel || null,
+      overviewModel: options?.overviewModel || null,
+      overviewEnabled: options?.overviewEnabled ?? null,
+      overviewMediumEnabled: options?.overviewMediumEnabled ?? null,
+      reasoningModel: options?.reasoningModel || null,
+      reasoningEnabled: options?.reasoningEnabled ?? null
+    },
     queryType: normalizeQueryType(queryPlan),
     route: 'spatial_job_runner',
     userQuestion
@@ -759,6 +768,11 @@ function buildGrpcRequest({ requestId, queryPlan, spatialContext, options, migra
         selfValidationEnabled: options?.selfValidationEnabled,
         skgEnabled: options?.skgEnabled,
         visualModel: resolvedVisualModel,
+        ocrModel: options?.ocrModel,
+        overviewEnabled: options?.overviewEnabled,
+        overviewModel: options?.overviewModel,
+        overviewMediumEnabled: options?.overviewMediumEnabled,
+        overviewTimeoutMs: options?.overviewTimeoutMs,
         visualEndpoint: options?.visualEndpoint,
         visualTimeoutMs: options?.visualTimeoutMs,
         vlmFailureMode: options?.vlmFailureMode,

@@ -46,7 +46,7 @@ const INTENT_PARSE_PROMPT = `你是一个地理查询解析器，将用户的自
  */
 async function callLocalLLM(prompt, session = null) {
   const baseUrl = process.env.LLM_BASE_URL || 'http://localhost:1234/v1';
-  const model = process.env.LLM_MODEL || 'qwen/qwen3-vl-4b';
+  const model = process.env.LLM_MODEL || 'qwen3.5-4b';
   
   const startTime = Date.now();
   
@@ -127,7 +127,7 @@ function parseIntentResponse(llmResponse) {
   try {
     let json = llmResponse;
     
-    // 移除 <think> 标签（Qwen3 特有）
+    // 移除 <think> 标签（部分模型可能输出）
     json = json.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
     
     // 尝试提取 JSON（处理可能的 markdown 代码块）

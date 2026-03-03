@@ -434,6 +434,15 @@ def _merge_block_geometries(
         return None
     if merged.geom_type not in {"Polygon", "MultiPolygon"}:
         return None
+
+    # 温和的拓扑保持简化（约 5m 精度），减少顶点数并消除锯齿
+    try:
+        simplified = merged.simplify(0.00005, preserve_topology=True)
+        if simplified.is_valid and not simplified.is_empty and simplified.geom_type in {"Polygon", "MultiPolygon"}:
+            merged = simplified
+    except Exception:
+        pass
+
     return merged
 
 

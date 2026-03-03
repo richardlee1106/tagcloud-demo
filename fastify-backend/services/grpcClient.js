@@ -13,7 +13,7 @@ const __dirname = path.dirname(__filename)
 const PROTO_PATH = path.resolve(__dirname, '../proto/spatial_compute.proto')
 
 const GRPC_ENDPOINT = process.env.SPATIAL_GRPC_ENDPOINT || '127.0.0.1:50051'
-const GRPC_TIMEOUT_MS = parseInt(process.env.SPATIAL_GRPC_TIMEOUT_MS || '45000', 10)
+const GRPC_TIMEOUT_MS = parseInt(process.env.SPATIAL_GRPC_TIMEOUT_MS || '90000', 10)
 
 let client
 let enumMap
@@ -44,9 +44,14 @@ function loadGrpcClient() {
     GRPC_ENDPOINT,
     grpc.credentials.createInsecure(),
     {
-      'grpc.max_receive_message_length': 10 * 1024 * 1024,
-      'grpc.keepalive_time_ms': 20_000,
-      'grpc.keepalive_timeout_ms': 5_000
+      // 消息大小限制（50MB），匹配 Python 服务端
+      'grpc.max_receive_message_length': 50 * 1024 * 1024,
+      'grpc.max_send_message_length': 50 * 1024 * 1024,
+      // keepalive：每 30 秒 ping 一次（Python 端允许最小 10 秒间隔）
+      'grpc.keepalive_time_ms': 30_000,
+      'grpc.keepalive_timeout_ms': 10_000,
+      // 允许无活跃 RPC 时依然发送 keepalive ping
+      'grpc.keepalive_permit_without_calls': 1
     }
   )
 
@@ -143,6 +148,12 @@ function clampTimeout(timeoutMs) {
   return Math.max(5_000, Math.min(Math.floor(numeric), 300_000))
 }
 
+function clampIdleTimeout(timeoutMs) {
+  const numeric = Number(timeoutMs)
+  if (!Number.isFinite(numeric) || numeric <= 0) return 120_000
+  return Math.max(15_000, Math.min(Math.floor(numeric), 900_000))
+}
+
 function parseHintsOptions(requestPayload = {}) {
   try {
     const rawHints = requestPayload?.hints
@@ -189,10 +200,36 @@ export function resolveGrpcTimeoutMs(requestPayload = {}) {
     options.skgEnabled
   ]
   if (heavyFlags.some((flag) => flag === true)) {
-    timeoutMs = Math.max(timeoutMs, 90_000)
+    timeoutMs = Math.max(timeoutMs, 120_000)
   }
 
   return clampTimeout(timeoutMs)
+}
+
+export function resolveGrpcIdleTimeoutMs(requestPayload = {}) {
+  const options = parseHintsOptions(requestPayload)
+  const overrideCandidates = [
+    options.grpcIdleTimeoutMs,
+    options.idleTimeoutMs,
+    requestPayload?.grpc_idle_timeout_ms,
+    requestPayload?.grpcIdleTimeoutMs
+  ]
+
+  let idleTimeoutMs = 0
+  for (const value of overrideCandidates) {
+    const numeric = Number(value)
+    if (Number.isFinite(numeric) && numeric > 0) {
+      idleTimeoutMs = clampIdleTimeout(numeric)
+      break
+    }
+  }
+
+  const requestTimeoutMs = resolveGrpcTimeoutMs(requestPayload)
+  if (idleTimeoutMs <= 0) {
+    idleTimeoutMs = Math.max(120_000, requestTimeoutMs)
+  }
+
+  return Math.max(clampIdleTimeout(idleTimeoutMs), requestTimeoutMs)
 }
 
 export async function computeSpatialStream(requestPayload, onEvent) {
@@ -204,12 +241,14 @@ export async function computeSpatialStream(requestPayload, onEvent) {
   const traceId = requestPayload?.request_id || requestPayload?.requestId || 'unknown'
   const startedAt = Date.now()
   const timeoutMs = resolveGrpcTimeoutMs(requestPayload)
+  const idleTimeoutMs = resolveGrpcIdleTimeoutMs(requestPayload)
 
   telemetry.incrementCounter('grpc_compute_requests_total', { endpoint: GRPC_ENDPOINT })
   telemetry.logStructured('info', 'grpc_compute_start', {
     trace_id: traceId,
     endpoint: GRPC_ENDPOINT,
     timeout_ms: timeoutMs,
+    idle_timeout_ms: idleTimeoutMs,
     query_type: requestPayload?.query_type || 'unknown'
   })
 
@@ -219,12 +258,39 @@ export async function computeSpatialStream(requestPayload, onEvent) {
     let lastStage = 'grpc_stream_opened'
     let eventCount = 0
 
-    const deadline = new Date(Date.now() + timeoutMs)
-    const call = grpcClient.ComputeSpatial(requestPayload, { deadline })
+    const call = grpcClient.ComputeSpatial(requestPayload)
+    let idleTimer = null
+
+    const clearIdleTimer = () => {
+      if (idleTimer) {
+        clearTimeout(idleTimer)
+        idleTimer = null
+      }
+    }
+
+    const armIdleTimer = () => {
+      clearIdleTimer()
+      idleTimer = setTimeout(() => {
+        const idleError = new Error(`gRPC stream idle timeout after ${idleTimeoutMs}ms`)
+        idleError.code = 'grpc_idle_timeout'
+        idleError.grpc_context = {
+          endpoint: GRPC_ENDPOINT,
+          timeout_ms: timeoutMs,
+          idle_timeout_ms: idleTimeoutMs,
+          last_stage: lastStage,
+          event_count: eventCount,
+          grpc_status: null,
+          source: 'grpc_idle_timeout'
+        }
+        settleWithError(idleError)
+      }, idleTimeoutMs)
+    }
+    armIdleTimer()
 
     const settleWithError = (err) => {
       if (settled) return
       settled = true
+      clearIdleTimer()
       try {
         call.cancel()
       } catch {
@@ -240,6 +306,7 @@ export async function computeSpatialStream(requestPayload, onEvent) {
         trace_id: traceId,
         endpoint: GRPC_ENDPOINT,
         timeout_ms: timeoutMs,
+        idle_timeout_ms: idleTimeoutMs,
         error: err?.message || String(err),
         error_code: errorCode || undefined,
         last_stage: String(err?.grpc_context?.last_stage || lastStage || ''),
@@ -252,6 +319,7 @@ export async function computeSpatialStream(requestPayload, onEvent) {
     const settleWithSuccess = () => {
       if (settled) return
       settled = true
+      clearIdleTimer()
       const durationMs = Date.now() - startedAt
       telemetry.observeHistogram('stage_duration_ms', durationMs, {
         stage: 'grpc_compute',
@@ -261,6 +329,7 @@ export async function computeSpatialStream(requestPayload, onEvent) {
         trace_id: traceId,
         endpoint: GRPC_ENDPOINT,
         timeout_ms: timeoutMs,
+        idle_timeout_ms: idleTimeoutMs,
         duration_ms: durationMs
       })
       resolve(finalPayload)
@@ -270,6 +339,7 @@ export async function computeSpatialStream(requestPayload, onEvent) {
       if (settled) return
 
       try {
+        armIdleTimer()
         eventCount += 1
         const eventType = normalizeEventType(event.type)
         let parsedPayload = {}

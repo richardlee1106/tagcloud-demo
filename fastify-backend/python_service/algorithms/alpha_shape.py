@@ -58,8 +58,8 @@ def _simplify_tolerance(polygon: Polygon) -> float:
     min_x, min_y, max_x, max_y = polygon.bounds
     span = max(max_x - min_x, max_y - min_y)
 
-    # 简化容差做上下限约束，约等于 2m~35m 的尺度区间
-    return max(0.00002, min(0.00035, span * 0.015))
+    # 简化容差更保守（约 8-18m 尺度），保留更多凹凸形态细节
+    return max(0.00001, min(0.00018, span * 0.008))
 
 
 def build_alpha_shape(
@@ -67,7 +67,7 @@ def build_alpha_shape(
     *,
     alpha: float,
     min_polygon_area_m2: float = 800.0,
-    max_input_points: int = 1200,
+    max_input_points: int = 3000,
 ):
     """Build boundary geometry and return GeoJSON + boundary metadata."""
     points = list(coordinates)
@@ -77,14 +77,27 @@ def build_alpha_shape(
     sampled_points, sample_step = _downsample_points(points, max_input_points)
 
     polygon = None
-    method = "alpha_shape"
+    method = "concave_hull"
 
-    if alphashape is not None:
+    # Primary: Shapely 2.x concave_hull (GEOS C++, faster than Python alphashape)
+    # alpha -> ratio: alpha=0 -> ratio=1.0 (convex), alpha=0.1 -> ratio=0.2 (concave)
+    concave_ratio = max(0.1, min(1.0, 1.0 - alpha * 8.0))
+    try:
+        mp = MultiPoint(sampled_points)
+        raw = mp.concave_hull(ratio=concave_ratio)
+        polygon = _as_polygon(raw)
+    except Exception:
+        polygon = None
+
+    # Fallback 1: alphashape library
+    if polygon is None and alphashape is not None:
+        method = "alpha_shape"
         try:
             polygon = _as_polygon(alphashape.alphashape(sampled_points, alpha))
         except Exception:
             polygon = None
 
+    # Fallback 2: convex hull
     if polygon is None:
         method = "convex_hull_fallback"
         polygon = MultiPoint(sampled_points).convex_hull
@@ -94,7 +107,6 @@ def build_alpha_shape(
     if polygon is None:
         return None
 
-    # 对边界做一次拓扑保持简化，减少毛刺与噪声折线
     tolerance = _simplify_tolerance(polygon)
     simplified = polygon.simplify(tolerance, preserve_topology=True)
     simplified_polygon = _as_polygon(simplified)

@@ -102,6 +102,26 @@ export function useAiStreamDispatcher({
       return {}
     }
 
+    if (type === 'partial' && data) {
+      // 流式骨架渲染：后端在聚类前先 yield 一个 convex_hull_preview 边界，
+      // 前端立即渲染到地图上作为预览，让用户更早看到结果。
+      if (currentMsg) {
+        applySSEMetaToMessage(currentMsg, data)
+        if (data.boundary) {
+          currentMsg.previewBoundary = data.boundary
+          currentMsg.previewSource = data.source || 'partial'
+        }
+      }
+      if (data.boundary) {
+        emit('ai-boundary', {
+          ...data.boundary,
+          _preview: true,
+          _source: data.source || 'partial'
+        })
+      }
+      return {}
+    }
+
     if (type === 'boundary' && data) {
       if (currentMsg) {
         currentMsg.boundary = data

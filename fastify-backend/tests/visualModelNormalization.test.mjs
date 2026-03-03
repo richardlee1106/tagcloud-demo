@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { normalizeVisualModelName } from '../services/spatialJobRunner.js'
 
 test('normalizeVisualModelName upgrades legacy visual model alias', () => {
-  assert.equal(normalizeVisualModelName('qwen3-vl-4b'), 'qwen/qwen3-vl-4b')
+  assert.equal(normalizeVisualModelName('qwen3.5-4b'), 'qwen3.5-4b')
 })
 
 test('normalizeVisualModelName falls back to env model and upgrades legacy alias', () => {
@@ -16,12 +16,12 @@ test('normalizeVisualModelName falls back to env model and upgrades legacy alias
   }
 
   process.env.LOCAL_VISUAL_MODEL = ''
-  process.env.LOCAL_VLM_MODEL = 'qwen3-vl-4b'
+  process.env.LOCAL_VLM_MODEL = 'qwen3.5-4b'
   process.env.LOCAL_LLM_MODEL = ''
   process.env.LLM_MODEL = ''
 
   try {
-    assert.equal(normalizeVisualModelName(''), 'qwen/qwen3-vl-4b')
+    assert.equal(normalizeVisualModelName(''), 'qwen3.5-4b')
   } finally {
     if (envBackup.LOCAL_VISUAL_MODEL === undefined) delete process.env.LOCAL_VISUAL_MODEL
     else process.env.LOCAL_VISUAL_MODEL = envBackup.LOCAL_VISUAL_MODEL

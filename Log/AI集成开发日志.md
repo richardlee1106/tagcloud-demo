@@ -2,7 +2,7 @@
 
 ## 📋 功能概述
 
-本系统已成功集成本地大模型（Qwen3-4B-Instruct），支持基于 POI 数据的智能分析对话。
+本系统已成功集成本地大模型（qwen3.5-4b），支持基于 POI 数据的智能分析对话。
 
 ## 🏗️ 新增文件
 
@@ -61,10 +61,10 @@ server: {
 
 ### 1. 启动 LM Studio
 
-确保 LM Studio 运行并加载了 Qwen3-4B-Instruct 模型：
+确保 LM Studio 运行并加载了 qwen3.5-4b 模型：
 
 - 打开 LM Studio
-- 加载模型：`qwen3-4b-instruct-2507`
+- 加载模型：`qwen3.5-4b`
 - 启动本地服务器（默认端口 1234）
 
 ### 2. 启动 Web 应用

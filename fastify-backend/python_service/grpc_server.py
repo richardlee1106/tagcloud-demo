@@ -219,7 +219,24 @@ def serve() -> None:
     port = int(os.getenv("SPATIAL_GRPC_PORT", "50051"))
     workers = int(os.getenv("SPATIAL_GRPC_WORKERS", "4"))
 
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=workers))
+    # gRPC 服务端 keepalive 配置
+    # 解决 Node 客户端因 excess pings 被拒导致的 RESOURCE_EXHAUSTED 错误
+    server_options = [
+        # 允许客户端在无活跃 RPC 时发送 keepalive ping
+        ("grpc.keepalive_permit_without_calls", 1),
+        # 客户端 ping 最小间隔（10秒），低于此间隔的 ping 会被拒绝。必须使用 _ms 后缀。
+        ("grpc.http2.min_ping_interval_without_data_ms", 10000),
+        # 允许服务端在无数据时接受 ping（0表示无限制）
+        ("grpc.http2.max_pings_without_data", 0),
+        # 最大接收/发送消息大小（50MB）
+        ("grpc.max_receive_message_length", 50 * 1024 * 1024),
+        ("grpc.max_send_message_length", 50 * 1024 * 1024),
+    ]
+
+    server = grpc.server(
+        futures.ThreadPoolExecutor(max_workers=workers),
+        options=server_options,
+    )
     spatial_compute_pb2_grpc.add_SpatialComputeServiceServicer_to_server(SpatialComputeService(), server)
     health_pb2_grpc.add_HealthServicer_to_server(HealthServicer(), server)
     server.add_insecure_port(f"{host}:{port}")

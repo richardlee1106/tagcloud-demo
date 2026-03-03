@@ -12,11 +12,13 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor, wait
+from concurrent.futures import ThreadPoolExecutor, wait, Future
 from collections import Counter, defaultdict
 from dataclasses import asdict
 from numbers import Integral
 from typing import Any, Dict, Iterable, Iterator, List, Tuple
+
+import numpy as np
 
 from shapely.geometry import MultiPoint, Point, Polygon, mapping, shape
 from shapely.ops import unary_union
@@ -34,7 +36,7 @@ from algorithms.geo_metrics import (
     polygon_perimeter_km,
 )
 from algorithms.direction_filter import filter_pois_by_direction, resolve_direction_from_query_plan
-from algorithms.h3_aggregate import aggregate_pois_h3
+from algorithms.h3_aggregate import aggregate_pois_h3, preaggregate_coordinates_h3
 from algorithms.graph_reasoning import analyze_spatial_graph
 from algorithms.hdbscan_cluster import ClusterResult, cluster_points
 from algorithms.membership import compute_membership
@@ -71,7 +73,7 @@ def _safe_json_loads(raw: Any, fallback: Any) -> Any:
 
 
 _VISUAL_MODEL_ALIAS_MAP: Dict[str, str] = {
-    "qwen3-vl-4b": "qwen/qwen3-vl-4b",
+    "qwen3.5-4b": "qwen3.5-4b",
 }
 
 _SOFT_VLM_FAILURE_CODES: set[str] = {
@@ -102,10 +104,10 @@ def _normalize_visual_model_name(raw_model_name: Any) -> str:
         or os.getenv("LOCAL_VLM_MODEL")
         or os.getenv("LOCAL_LLM_MODEL")
         or os.getenv("LLM_MODEL")
-        or "qwen/qwen3-vl-4b"
+        or "qwen3.5-4b"
     ).strip()
     if not env_model_name:
-        env_model_name = "qwen/qwen3-vl-4b"
+        env_model_name = "qwen3.5-4b"
     return _VISUAL_MODEL_ALIAS_MAP.get(env_model_name.lower(), env_model_name)
 
 
@@ -416,7 +418,7 @@ def _remote_audit_region_names(
     timeout_ms: int,
 ) -> Dict[int, str]:
     payload_entries = []
-    for entry in entries[:12]:
+    for entry in entries:
         entry_id = int(entry.get("id", 0))
         if entry_id <= 0:
             continue
@@ -436,20 +438,25 @@ def _remote_audit_region_names(
     if not payload_entries:
         return {}
 
+    # 动态预算：条目越多，允许的输出 token 与请求超时越大，但保持上限防止失控。
+    payload_count = len(payload_entries)
+    dynamic_max_tokens = min(2200, max(500, 120 + payload_count * 70))
+    base_timeout_ms = max(400, int(timeout_ms))
+    dynamic_timeout_ms = min(12000, max(base_timeout_ms, base_timeout_ms + payload_count * 120))
+
     prompt = (
-        "你是城市空间命名审核器。请审核片区名称是否适合作为“片区ID”。"
-        "拒绝宏观地名、重复地名、楼栋号、停车场出入口、小区住宅导向命名。"
-        "允许大学/医院/公园/商圈等代表性名称。"
-        "输出严格 JSON：{\"items\":[{\"id\":1,\"approved\":true,\"name\":\"...\"}]}。"
-        "若不通过请给出替代名称 name，长度不超过16字。"
-        f"\n待审核: {json.dumps(payload_entries, ensure_ascii=False)}"
+        "You are a city region naming auditor. Review names for suitability as region labels. "
+        "Reject macro-level place names, duplicates, building numbers, and parking entrances. "
+        "Return strict JSON: {\"items\":[{\"id\":1,\"approved\":true,\"name\":\"...\"}]}. "
+        "If rejected, provide replacement name no longer than 16 chars. "
+        f"\nItems: {json.dumps(payload_entries, ensure_ascii=False)}"
     )
     request_payload = {
         "model": model_name,
         "temperature": 0.1,
-        "max_tokens": 500,
+        "max_tokens": int(dynamic_max_tokens),
         "messages": [
-            {"role": "system", "content": "只输出 JSON，不要解释。"},
+            {"role": "system", "content": "Return JSON only."},
             {"role": "user", "content": prompt},
         ],
     }
@@ -461,7 +468,7 @@ def _remote_audit_region_names(
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    timeout_s = max(0.4, float(timeout_ms) / 1000.0)
+    timeout_s = max(0.4, float(dynamic_timeout_ms) / 1000.0)
     try:
         with urllib.request.urlopen(request, timeout=timeout_s) as response:
             raw = response.read().decode("utf-8", errors="ignore")
@@ -498,6 +505,64 @@ def _remote_audit_region_names(
     return name_map
 
 
+def _load_boundary_context_bundles_parallel(
+    *,
+    repository: Any,
+    spatial_context: Dict[str, Any],
+    query_type: str,
+    road_boundary_enhancement: bool,
+    road_fetch_limit: int,
+    landuse_boundary_enhancement: bool,
+    landuse_fetch_limit: int,
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    def _load_road_bundle() -> Dict[str, Any]:
+        return context_loader.load_road_context(
+            repository=repository,
+            spatial_context=spatial_context,
+            query_type=query_type,
+            enabled=road_boundary_enhancement,
+            fetch_limit=road_fetch_limit,
+            normalize_road_geometries_func=_normalize_road_geometries,
+        )
+
+    def _load_landuse_bundle() -> Dict[str, Any]:
+        return context_loader.load_landuse_context(
+            repository=repository,
+            spatial_context=spatial_context,
+            query_type=query_type,
+            enabled=landuse_boundary_enhancement,
+            fetch_limit=landuse_fetch_limit,
+            normalize_landuse_geometries_func=_normalize_landuse_geometries,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        road_future = pool.submit(_load_road_bundle)
+        landuse_future = pool.submit(_load_landuse_bundle)
+        road_bundle = road_future.result() or {}
+        landuse_bundle = landuse_future.result() or {}
+
+    return dict(road_bundle), dict(landuse_bundle)
+
+
+def _fetch_v5_surface_layers_parallel(
+    *,
+    repository: Any,
+    bbox_wkt: str,
+    road_limit: int = 5000,
+    aoi_limit: int = 3000,
+    euluc_limit: int = 3000,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        road_future = pool.submit(repository.fetch_road_blocks, bbox_wkt=bbox_wkt, limit=road_limit)
+        aoi_future = pool.submit(repository.fetch_osm_aoi, bbox_wkt=bbox_wkt, limit=aoi_limit)
+        euluc_future = pool.submit(repository.fetch_euluc, bbox_wkt=bbox_wkt, limit=euluc_limit)
+        road_blocks = road_future.result() or []
+        osm_aoi = aoi_future.result() or []
+        euluc = euluc_future.result() or []
+
+    return list(road_blocks), list(osm_aoi), list(euluc)
+
+
 def _govern_region_names(
     *,
     cluster_entries: List[Dict[str, Any]],
@@ -505,12 +570,15 @@ def _govern_region_names(
     model_name: str,
     endpoint: str,
     timeout_ms: int,
+    remote_max_items: int = 24,
 ) -> Dict[str, Any]:
     summary = {
         "rule_rewritten": 0,
         "llm_rewritten": 0,
         "duplicate_rewritten": 0,
         "llm_attempted": False,
+        "remote_input_count": 0,
+        "remote_sent_count": 0,
     }
     if not cluster_entries:
         return summary
@@ -532,9 +600,19 @@ def _govern_region_names(
         summary["duplicate_rewritten"] = _ensure_unique_region_names(cluster_entries)
         return summary
 
+    remote_candidates = [entry for entry in cluster_entries if int(entry.get("id", 0)) > 0]
+    summary["remote_input_count"] = int(len(remote_candidates))
+    capped_max_items = max(1, int(remote_max_items))
+    remote_entries = remote_candidates[:capped_max_items]
+    summary["remote_sent_count"] = int(len(remote_entries))
+
+    if not remote_entries:
+        summary["duplicate_rewritten"] = _ensure_unique_region_names(cluster_entries)
+        return summary
+
     summary["llm_attempted"] = True
     llm_name_map = _remote_audit_region_names(
-        entries=cluster_entries,
+        entries=remote_entries,
         model_name=model_name,
         endpoint=endpoint,
         timeout_ms=timeout_ms,
@@ -1805,7 +1883,7 @@ def _build_water_semantic_mask_geometry(
 
 _ECOLOGY_CONTEXT_KEYWORDS: Tuple[str, ...] = (
     "生态",
-    "公园",
+    "??",
     "绿地",
     "湖泊",
     "水域",
@@ -1974,6 +2052,327 @@ def _poi_identity_key(poi: Dict[str, Any]) -> Tuple[Any, Any, Any]:
     lat = _to_float(poi.get("lat"))
     name = str(poi.get("name") or "")
     return (round(lon or 0.0, 7), round(lat or 0.0, 7), name)
+
+
+def _is_missing_surface_value(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str) and not value.strip():
+        return True
+    return False
+
+
+def _candidate_indexes_from_query(
+    *,
+    query_result: Any,
+    geometries: List[Any],
+    geometry_id_to_index: Dict[int, int],
+) -> List[int]:
+    if query_result is None:
+        return []
+    try:
+        raw_items = list(query_result)
+    except Exception:
+        raw_items = [query_result]
+
+    indexes: List[int] = []
+    seen: set[int] = set()
+    for item in raw_items:
+        index: int | None = None
+        if isinstance(item, Integral):
+            index = int(item)
+        else:
+            index = geometry_id_to_index.get(id(item))
+        if index is None or index < 0 or index >= len(geometries):
+            continue
+        if index in seen:
+            continue
+        seen.add(index)
+        indexes.append(index)
+    return indexes
+
+
+def _build_surface_match_index(
+    *,
+    rows: List[Dict[str, Any]],
+    field_mapping: Dict[str, str],
+    area_fields: Tuple[str, ...],
+) -> Dict[str, Any]:
+    geometries: List[Any] = []
+    payloads: List[Dict[str, Any]] = []
+    areas: List[float] = []
+
+    for row in rows or []:
+        geom = _safe_shape_geojson(row.get("geometry_geojson"))
+        if geom is None:
+            continue
+
+        payload: Dict[str, Any] = {}
+        for output_field, source_field in field_mapping.items():
+            payload[output_field] = row.get(source_field)
+        if not payload:
+            continue
+
+        area_value = 0.0
+        for area_field in area_fields:
+            try:
+                area_value = float(row.get(area_field) or 0.0)
+            except (TypeError, ValueError):
+                area_value = 0.0
+            if area_value > 0.0:
+                break
+        if area_value <= 0.0:
+            try:
+                area_value = float(getattr(geom, "area", 0.0) or 0.0)
+            except Exception:
+                area_value = 0.0
+
+        geometries.append(geom)
+        payloads.append(payload)
+        areas.append(max(0.0, area_value))
+
+    if not geometries:
+        return {
+            "index": None,
+            "geometries": [],
+            "geometry_id_to_index": {},
+            "payloads": [],
+            "areas": [],
+        }
+
+    index = STRtree(geometries)
+    geometry_id_to_index = {id(geom): idx for idx, geom in enumerate(geometries)}
+    return {
+        "index": index,
+        "geometries": geometries,
+        "geometry_id_to_index": geometry_id_to_index,
+        "payloads": payloads,
+        "areas": areas,
+    }
+
+
+def _vectorized_surface_match(
+    coords: np.ndarray,
+    surface_index: Dict[str, Any],
+) -> Dict[int, Dict[str, Any]]:
+    """Vectorized batch surface matching via Shapely 2.x STRtree.query.
+
+    Returns dict mapping point-index -> best (smallest area) payload.
+    20000 POI x 1 layer: ~0.1-0.3s (vs ~3-8s per-point loop).
+    """
+    tree = surface_index.get("index")
+    geometries = surface_index.get("geometries") or []
+    payloads = surface_index.get("payloads") or []
+    areas = surface_index.get("areas") or []
+
+    if tree is None or not geometries or coords.shape[0] == 0:
+        return {}
+
+    def _fallback_per_point_match() -> Dict[int, Dict[str, Any]]:
+        fallback_map: Dict[int, Dict[str, Any]] = {}
+        for idx, coord in enumerate(coords):
+            try:
+                point = Point(float(coord[0]), float(coord[1]))
+            except Exception:
+                continue
+            payload = _match_surface_payload(point=point, surface_index=surface_index)
+            if payload:
+                fallback_map[int(idx)] = payload
+        return fallback_map
+
+    # Shapely 2.x: create Point array from numpy coords
+    try:
+        import shapely
+        point_geoms = shapely.points(coords)
+    except Exception:
+        return _fallback_per_point_match()
+
+    # Single vectorized call: returns (point_idx[], geom_idx[])
+    try:
+        left_idx, right_idx = tree.query(point_geoms, predicate="covers")
+    except Exception:
+        return _fallback_per_point_match()
+
+    if len(left_idx) == 0:
+        return _fallback_per_point_match()
+
+    # Group by point index, pick smallest area match
+    result: Dict[int, Dict[str, Any]] = {}
+    for pt_i, geom_i in zip(left_idx, right_idx):
+        pt_i_int = int(pt_i)
+        geom_i_int = int(geom_i)
+        if geom_i_int >= len(payloads):
+            continue
+        area = float(areas[geom_i_int]) if geom_i_int < len(areas) else 0.0
+        existing = result.get(pt_i_int)
+        if existing is None or area < existing.get("_area", float("inf")):
+            payload = dict(payloads[geom_i_int])
+            payload["_area"] = area
+            result[pt_i_int] = payload
+
+    # Remove internal area field
+    for payload in result.values():
+        payload.pop("_area", None)
+
+    return result
+
+
+def _match_surface_payload(
+    *,
+    point: Point,
+    surface_index: Dict[str, Any],
+) -> Dict[str, Any] | None:
+    index = surface_index.get("index")
+    geometries = list(surface_index.get("geometries") or [])
+    if index is None or not geometries:
+        return None
+
+    try:
+        query_result = index.query(point)
+    except Exception:
+        return None
+
+    candidate_indexes = _candidate_indexes_from_query(
+        query_result=query_result,
+        geometries=geometries,
+        geometry_id_to_index=surface_index.get("geometry_id_to_index") or {},
+    )
+    if not candidate_indexes:
+        return None
+
+    payloads = list(surface_index.get("payloads") or [])
+    areas = list(surface_index.get("areas") or [])
+    best_index: int | None = None
+    best_area: float | None = None
+
+    for candidate_index in candidate_indexes:
+        if candidate_index >= len(payloads):
+            continue
+        geom = geometries[candidate_index]
+        try:
+            covered = bool(geom.covers(point))
+        except Exception:
+            covered = False
+        if not covered:
+            continue
+
+        area_value = float(areas[candidate_index]) if candidate_index < len(areas) else 0.0
+        if best_index is None or area_value < (best_area if best_area is not None else float("inf")):
+            best_index = candidate_index
+            best_area = area_value
+
+    if best_index is None or best_index >= len(payloads):
+        return None
+    return dict(payloads[best_index])
+
+
+def _enrich_pois_with_surface_layers(
+    *,
+    pois: List[Dict[str, Any]],
+    road_blocks: List[Dict[str, Any]],
+    osm_aoi_features: List[Dict[str, Any]],
+    euluc_features: List[Dict[str, Any]],
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    if not pois:
+        return [], {
+            "enriched_rows": 0,
+            "block_matches": 0,
+            "aoi_matches": 0,
+            "landuse_matches": 0,
+            "road_surface_count": 0,
+            "aoi_surface_count": 0,
+            "landuse_surface_count": 0,
+        }
+
+    road_surface_index = _build_surface_match_index(
+        rows=road_blocks,
+        field_mapping={"block_id": "block_id"},
+        area_fields=("shape_area", "area_m2"),
+    )
+    aoi_surface_index = _build_surface_match_index(
+        rows=osm_aoi_features,
+        field_mapping={"aoi_name": "name", "aoi_type": "type"},
+        area_fields=("area_m2",),
+    )
+    euluc_surface_index = _build_surface_match_index(
+        rows=euluc_features,
+        field_mapping={"land_type": "land_type"},
+        area_fields=("area_m2",),
+    )
+
+    enriched_rows = 0
+    block_matches = 0
+    aoi_matches = 0
+    landuse_matches = 0
+    enriched_pois: List[Dict[str, Any]] = [dict(poi) for poi in pois]
+
+    # Identify POIs that need enrichment
+    enrich_indices: List[int] = []
+    enrich_coords: List[Tuple[float, float]] = []
+    enrich_flags: List[Tuple[bool, bool, bool]] = []  # (block, aoi, landuse)
+
+    for i, poi in enumerate(enriched_pois):
+        lon = _to_float(poi.get("lon"))
+        lat = _to_float(poi.get("lat"))
+        if lon is None or lat is None:
+            continue
+        nb = _is_missing_surface_value(poi.get("block_id"))
+        na = _is_missing_surface_value(poi.get("aoi_name")) or _is_missing_surface_value(poi.get("aoi_type"))
+        nl = _is_missing_surface_value(poi.get("land_type"))
+        if nb or na or nl:
+            enrich_indices.append(i)
+            enrich_coords.append((float(lon), float(lat)))
+            enrich_flags.append((nb, na, nl))
+
+    if enrich_indices:
+        coords_array = np.array(enrich_coords, dtype=np.float64)
+        # Vectorized batch query for each layer (single C++ call per layer)
+        block_map = _vectorized_surface_match(coords_array, road_surface_index)
+        aoi_map = _vectorized_surface_match(coords_array, aoi_surface_index)
+        landuse_map = _vectorized_surface_match(coords_array, euluc_surface_index)
+
+        for local_idx, (global_idx, (nb, na, nl)) in enumerate(zip(enrich_indices, enrich_flags)):
+            row = enriched_pois[global_idx]
+            touched = False
+
+            if nb and local_idx in block_map:
+                payload = block_map[local_idx]
+                if not _is_missing_surface_value(payload.get("block_id")):
+                    row["block_id"] = payload["block_id"]
+                    block_matches += 1
+                    touched = True
+
+            if na and local_idx in aoi_map:
+                payload = aoi_map[local_idx]
+                if not _is_missing_surface_value(payload.get("aoi_name")):
+                    row["aoi_name"] = payload["aoi_name"]
+                    touched = True
+                if not _is_missing_surface_value(payload.get("aoi_type")):
+                    row["aoi_type"] = payload["aoi_type"]
+                    touched = True
+                if not _is_missing_surface_value(payload.get("aoi_name")):
+                    aoi_matches += 1
+
+            if nl and local_idx in landuse_map:
+                payload = landuse_map[local_idx]
+                if not _is_missing_surface_value(payload.get("land_type")):
+                    row["land_type"] = payload["land_type"]
+                    landuse_matches += 1
+                    touched = True
+
+            if touched:
+                enriched_rows += 1
+
+    summary = {
+        "enriched_rows": int(enriched_rows),
+        "block_matches": int(block_matches),
+        "aoi_matches": int(aoi_matches),
+        "landuse_matches": int(landuse_matches),
+        "road_surface_count": len(road_surface_index.get("geometries") or []),
+        "aoi_surface_count": len(aoi_surface_index.get("geometries") or []),
+        "landuse_surface_count": len(euluc_surface_index.get("geometries") or []),
+    }
+    return enriched_pois, summary
 
 
 def _as_polygon(geometry: Any) -> Polygon | None:
@@ -2427,6 +2826,7 @@ def _run_parallel_model_inference(
     categories: List[str],
     image_data_url: str | None,
     visual_model_name: str,
+    ocr_model_name: str,
     visual_endpoint: str,
     visual_timeout_ms: int,
     reasoning_enabled: bool,
@@ -2435,10 +2835,17 @@ def _run_parallel_model_inference(
     reasoning_timeout_ms: int,
     model_budget_ms: int,
     allow_vlm_remote_failure: bool = False,
+    overview_enabled: bool = False,
+    overview_model_name: str = "qwen3.5-0.8b",
+    overview_medium_enabled: bool = False,
+    overview_timeout_ms: int = 1400,
 ) -> Dict[str, Any]:
     started = time.perf_counter()
     budget_s = max(0.5, float(model_budget_ms) / 1000.0)
     timing = {
+        "ocr_ms": 0.0,
+        "overview_light_ms": 0.0,
+        "overview_medium_ms": 0.0,
         "vlm_ms": 0.0,
         "llm_ms": 0.0,
         "parallel_wall_ms": 0.0,
@@ -2447,10 +2854,15 @@ def _run_parallel_model_inference(
     }
     model_context = {
         "visualModel": visual_model_name,
+        "ocrModel": ocr_model_name,
+        "overviewEnabled": bool(overview_enabled),
+        "overviewModel": overview_model_name if overview_enabled else None,
+        "overviewMediumEnabled": bool(overview_enabled and overview_medium_enabled),
         "reasoningModel": reasoning_model_name if reasoning_enabled else None,
         "reasoningEnabled": bool(reasoning_enabled),
         "modelBudgetMs": int(model_budget_ms),
         "visualTimeoutMs": int(visual_timeout_ms),
+        "overviewTimeoutMs": int(overview_timeout_ms),
         "reasoningTimeoutMs": int(reasoning_timeout_ms),
     }
 
@@ -2475,13 +2887,35 @@ def _run_parallel_model_inference(
         )
         raise err
 
-    def _timed_vlm() -> Tuple[Dict[str, Any], float]:
+    def _timed_ocr() -> Tuple[Dict[str, Any], float]:
         started_local = time.perf_counter()
         value = vlm_reviewer.extract_map_anchors(
             image_data_url=image_data_url,
-            model_name=visual_model_name,
+            model_name=ocr_model_name,
             endpoint=visual_endpoint,
             timeout_ms=visual_timeout_ms,
+        )
+        elapsed = (time.perf_counter() - started_local) * 1000.0
+        return value, elapsed
+
+    def _timed_overview_light() -> Tuple[Dict[str, Any], float]:
+        started_local = time.perf_counter()
+        value = vlm_reviewer.summarize_map_overview(
+            image_data_url=image_data_url,
+            model_name=overview_model_name,
+            endpoint=visual_endpoint,
+            timeout_ms=overview_timeout_ms,
+        )
+        elapsed = (time.perf_counter() - started_local) * 1000.0
+        return value, elapsed
+
+    def _timed_overview_medium() -> Tuple[Dict[str, Any], float]:
+        started_local = time.perf_counter()
+        value = vlm_reviewer.summarize_map_overview(
+            image_data_url=image_data_url,
+            model_name=visual_model_name,
+            endpoint=visual_endpoint,
+            timeout_ms=overview_timeout_ms,
         )
         elapsed = (time.perf_counter() - started_local) * 1000.0
         return value, elapsed
@@ -2501,11 +2935,25 @@ def _run_parallel_model_inference(
         elapsed = (time.perf_counter() - started_local) * 1000.0
         return value, elapsed
 
-    vlm_payload: Dict[str, Any] = {}
+    ocr_payload: Dict[str, Any] = {}
+    overview_light_payload: Dict[str, Any] = {}
+    overview_medium_payload: Dict[str, Any] = {}
     llm_payload: Dict[str, Any] = {"success": not reasoning_enabled}
 
-    with ThreadPoolExecutor(max_workers=2 if reasoning_enabled else 1) as pool:
-        future_map = {"vlm": pool.submit(_timed_vlm)}
+    worker_count = 1
+    if overview_enabled:
+        worker_count += 1
+        if overview_medium_enabled:
+            worker_count += 1
+    if reasoning_enabled:
+        worker_count += 1
+
+    with ThreadPoolExecutor(max_workers=max(1, worker_count)) as pool:
+        future_map = {"ocr": pool.submit(_timed_ocr)}
+        if overview_enabled:
+            future_map["overview_light"] = pool.submit(_timed_overview_light)
+            if overview_medium_enabled:
+                future_map["overview_medium"] = pool.submit(_timed_overview_medium)
         if reasoning_enabled:
             future_map["llm"] = pool.submit(_timed_reasoning)
 
@@ -2531,6 +2979,24 @@ def _run_parallel_model_inference(
             try:
                 payload, elapsed_ms = future.result()
             except Exception as exc:  # pragma: no cover - runtime guard
+                if key in {"overview_light", "overview_medium"}:
+                    model_name = overview_model_name if key == "overview_light" else visual_model_name
+                    payload = {
+                        "success": False,
+                        "mode": "map_overview_v1",
+                        "model": model_name,
+                        "summary": "",
+                        "error": "overview_runtime_exception",
+                        "debug": {**_redacted_preview(str(exc)), "parse_stage": "future_result"},
+                    }
+                    elapsed_ms = 0.0
+                    if key == "overview_light":
+                        overview_light_payload = payload
+                        timing["overview_light_ms"] = round(float(elapsed_ms), 3)
+                    else:
+                        overview_medium_payload = payload
+                        timing["overview_medium_ms"] = round(float(elapsed_ms), 3)
+                    continue
                 timing["parallel_wall_ms"] = round((time.perf_counter() - started) * 1000.0, 3)
                 error_code = f"model_parallel_failed:{key}:runtime_exception"
                 err = RuntimeError(f"model_parallel_failed:{key}:{exc}")
@@ -2539,13 +3005,20 @@ def _run_parallel_model_inference(
                     {**_redacted_preview(str(exc)), "parse_stage": "future_result"},
                 )
                 raise err from exc
-            if key == "vlm":
-                vlm_payload = payload if isinstance(payload, dict) else {}
-                timing["vlm_ms"] = round(float(elapsed_ms), 3)
+            if key == "ocr":
+                ocr_payload = payload if isinstance(payload, dict) else {}
+                timing["ocr_ms"] = round(float(elapsed_ms), 3)
+            elif key == "overview_light":
+                overview_light_payload = payload if isinstance(payload, dict) else {}
+                timing["overview_light_ms"] = round(float(elapsed_ms), 3)
+            elif key == "overview_medium":
+                overview_medium_payload = payload if isinstance(payload, dict) else {}
+                timing["overview_medium_ms"] = round(float(elapsed_ms), 3)
             else:
                 llm_payload = payload if isinstance(payload, dict) else {}
                 timing["llm_ms"] = round(float(elapsed_ms), 3)
 
+    timing["vlm_ms"] = round(float(timing.get("ocr_ms", 0.0)), 3)
     timing["parallel_wall_ms"] = round((time.perf_counter() - started) * 1000.0, 3)
     llm_soft_degrade_reason = ""
     if reasoning_enabled and not bool(llm_payload.get("success")):
@@ -2562,29 +3035,35 @@ def _run_parallel_model_inference(
             )
             raise err
 
-    if not bool(vlm_payload.get("success")):
-        error_reason = str(vlm_payload.get("error") or "vlm_inference_failed").strip()
+    if not bool(ocr_payload.get("success")):
+        error_reason = str(ocr_payload.get("error") or "ocr_inference_failed").strip()
         if allow_vlm_remote_failure and _is_soft_vlm_failure(error_reason):
             return {
-                "vlm": vlm_payload,
+                "ocr": ocr_payload,
+                "vlm": ocr_payload,
+                "overview_light": overview_light_payload,
+                "overview_medium": overview_medium_payload,
                 "llm": llm_payload if reasoning_enabled else {},
                 "timing": timing,
                 "degraded": True,
                 "degrade_reason": llm_soft_degrade_reason or error_reason,
             }
 
-        error_code = f"model_parallel_failed:vlm:{error_reason}"
-        debug_payload = vlm_payload.get("debug") if isinstance(vlm_payload.get("debug"), dict) else None
+        error_code = f"model_parallel_failed:ocr:{error_reason}"
+        debug_payload = ocr_payload.get("debug") if isinstance(ocr_payload.get("debug"), dict) else None
         err = RuntimeError(error_code)
         err.parallel_error_context = _build_parallel_error_context(
             error_code,
-            debug_payload or {**_redacted_preview(error_reason), "parse_stage": "vlm_result"},
+            debug_payload or {**_redacted_preview(error_reason), "parse_stage": "ocr_result"},
         )
         raise err
 
     if llm_soft_degrade_reason:
         return {
-            "vlm": vlm_payload,
+            "ocr": ocr_payload,
+            "vlm": ocr_payload,
+            "overview_light": overview_light_payload,
+            "overview_medium": overview_medium_payload,
             "llm": llm_payload if reasoning_enabled else {},
             "timing": timing,
             "degraded": True,
@@ -2592,7 +3071,10 @@ def _run_parallel_model_inference(
         }
 
     return {
-        "vlm": vlm_payload,
+        "ocr": ocr_payload,
+        "vlm": ocr_payload,
+        "overview_light": overview_light_payload,
+        "overview_medium": overview_medium_payload,
         "llm": llm_payload if reasoning_enabled else {},
         "timing": timing,
     }
@@ -2812,12 +3294,10 @@ class SpatialPipeline:
             default_value=False,
         )
 
-        visual_review_enabled = force_composite_v5 or _option_enabled(
-            hints_options.get("visualReviewEnabled"), default_value=False
-        )
-        visual_remote_enabled = visual_review_enabled and _option_enabled(
-            hints_options.get("visualRemoteEnabled"), default_value=False
-        )
+        # [Phase4] ????? VLM ?????visual_perception ????
+        # VLM ?? model_parallel ?????????????????????
+        visual_review_enabled = False
+        visual_remote_enabled = False
         self_validation_enabled = force_composite_v5 or _option_enabled(
             hints_options.get("selfValidationEnabled"), default_value=False
         )
@@ -2843,6 +3323,8 @@ class SpatialPipeline:
         except (TypeError, ValueError):
             v5_region_dedup_containment_threshold = 0.92
         visual_model_name = _normalize_visual_model_name(hints_options.get("visualModel"))
+        ocr_model_name = str(hints_options.get("ocrModel") or "glm-ocr").strip() or "glm-ocr"
+        overview_model_name = str(hints_options.get("overviewModel") or "qwen3.5-0.8b").strip() or "qwen3.5-0.8b"
         visual_endpoint = str(
             hints_options.get("visualEndpoint") or "http://localhost:1234/v1/chat/completions"
         )
@@ -2858,6 +3340,19 @@ class SpatialPipeline:
             default_value=3500,
             max_value=15000,
         )
+        overview_enabled = _option_enabled(
+            hints_options.get("overviewEnabled"),
+            default_value=bool(visual_image_data_url),
+        )
+        overview_medium_enabled = _option_enabled(
+            hints_options.get("overviewMediumEnabled"),
+            default_value=True,
+        )
+        overview_timeout_ms = _resolve_limit(
+            hints_options.get("overviewTimeoutMs"),
+            default_value=min(visual_timeout_ms, 2200),
+            max_value=15000,
+        )
         model_budget_ms = _resolve_limit(
             hints_options.get("modelBudgetMs"),
             default_value=5000,
@@ -2871,9 +3366,9 @@ class SpatialPipeline:
         allow_vlm_remote_failure = vlm_failure_mode not in {"strict", "hard", "fail"}
         reasoning_enabled = _option_enabled(
             hints_options.get("reasoningEnabled"),
-            default_value=visual_review_enabled,
+            default_value=False,
         )
-        reasoning_model_name = str(hints_options.get("reasoningModel") or "qwen/qwen3-1.7b")
+        reasoning_model_name = str(hints_options.get("reasoningModel") or "qwen3.5-4b")
         reasoning_endpoint = str(
             hints_options.get("reasoningEndpoint")
             or hints_options.get("llmEndpoint")
@@ -2901,6 +3396,11 @@ class SpatialPipeline:
             hints_options.get("nameAuditTimeoutMs"),
             default_value=900,
             max_value=4000,
+        )
+        name_audit_max_items = _resolve_limit(
+            hints_options.get("nameAuditMaxItems"),
+            default_value=24,
+            max_value=80,
         )
 
         if not categories and isinstance(source_policy, dict) and source_policy.get("has_category_filter"):
@@ -2946,7 +3446,7 @@ class SpatialPipeline:
         semantic_anchor_hints = _normalize_anchor_list(semantic_anchor_hints)
 
         spatial_constraint_polygon = _build_spatial_constraint_polygon(spatial_context)
-        # 纯图推理模式下不做语义关键词过滤，保持候选点覆盖范围更广。
+        # ????????????????????????????
         if need_graph_reasoning and query_type == "graph_reasoning":
             terms = []
 
@@ -3058,8 +3558,10 @@ class SpatialPipeline:
         )
         graph_distance_threshold_m = float(hints_options.get("graphDistanceThresholdM") or 280.0)
 
-        max_fetch_limit = _resolve_limit(hints_options.get("maxFetchLimit"), default_value=20000, max_value=500000)
-        fetch_limit = _resolve_limit(hints_options.get("limit"), default_value=8000, max_value=max_fetch_limit)
+        max_fetch_limit = _resolve_limit(hints_options.get("maxFetchLimit"), default_value=50000, max_value=500000)
+        # [Phase1] ? area/graph ???????????????????????
+        _default_limit = 20000 if query_type == "area_analysis" else 8000
+        fetch_limit = _resolve_limit(hints_options.get("limit"), default_value=_default_limit, max_value=max_fetch_limit)
         print(
             f"[PIPELINE_DEBUG] hints_options limit={hints_options.get('limit')} maxFetchLimit={hints_options.get('maxFetchLimit')} resolved_fetch_limit={fetch_limit}",
             flush=True,
@@ -3072,7 +3574,8 @@ class SpatialPipeline:
             fetch_limit = min(fetch_limit, max(600, graph_max_nodes * 3))
 
         # 注释说明
-        db_order_by_distance = True
+        # [Phase1] area/graph ???????????? POI ?????????
+        db_order_by_distance = query_type not in {"area_analysis", "graph_reasoning"}
 
         yield {
             "type": "STAGE",
@@ -3097,6 +3600,9 @@ class SpatialPipeline:
         effective_terms = list(terms)
         term_filter_relaxed = False
         model_timing_ms = {
+            "ocr_ms": 0.0,
+            "overview_light_ms": 0.0,
+            "overview_medium_ms": 0.0,
             "vlm_ms": 0.0,
             "llm_ms": 0.0,
             "parallel_wall_ms": 0.0,
@@ -3105,14 +3611,22 @@ class SpatialPipeline:
         }
         model_context = {
             "visualModel": visual_model_name if visual_review_enabled else None,
+            "ocrModel": ocr_model_name,
+            "overviewEnabled": bool(overview_enabled),
+            "overviewModel": overview_model_name if overview_enabled else None,
+            "overviewMediumEnabled": bool(overview_enabled and overview_medium_enabled),
             "reasoningModel": reasoning_model_name if reasoning_enabled else None,
             "reasoningEnabled": bool(reasoning_enabled),
             "modelBudgetMs": int(model_budget_ms),
             "visualTimeoutMs": int(visual_timeout_ms),
+            "overviewTimeoutMs": int(overview_timeout_ms),
             "reasoningTimeoutMs": int(reasoning_timeout_ms),
         }
         vlm_anchor_landmarks: List[str] = []
         vlm_anchor_aliases: List[str] = []
+        vlm_overview_light: Dict[str, Any] = {}
+        vlm_overview_medium: Dict[str, Any] = {}
+        vlm_overview_fused_summary = ""
         llm_spatial_priors: Dict[str, Any] = {}
         model_parallel_degraded = False
         model_parallel_degrade_reason = ""
@@ -3120,6 +3634,51 @@ class SpatialPipeline:
         anchor_bypass_requested_count = 0
         anchor_bypass_injected_count = 0
         anchor_bypass_query_count = 0
+        # Stage B: model_parallel and fetch_pois run concurrently.
+        # model_parallel depends only on visual_image_data_url + spatial_context,
+        # fetch_pois depends only on spatial_context + categories — no data dependency.
+        model_parallel_enabled = bool(visual_image_data_url)
+        _mp_future: Future | None = None
+        _mp_executor: ThreadPoolExecutor | None = None
+        if model_parallel_enabled:
+            yield {
+                "type": "STAGE",
+                "payload": {
+                    "stage": "model_parallel_start",
+                    "model_budget_ms": int(model_budget_ms),
+                    "visual_model": visual_model_name,
+                    "ocr_model": ocr_model_name,
+                    "overview_model": overview_model_name if overview_enabled else None,
+                    "overview_medium_enabled": bool(overview_enabled and overview_medium_enabled),
+                    "reasoning_model": reasoning_model_name,
+                },
+            }
+            _mp_executor = ThreadPoolExecutor(max_workers=1)
+            _mp_future = _mp_executor.submit(
+                run_with_timing,
+                "phase4_model_parallel.py",
+                _run_parallel_model_inference,
+                semantic_query=semantic_query,
+                spatial_context=spatial_context,
+                categories=fetch_categories,
+                image_data_url=visual_image_data_url,
+                visual_model_name=visual_model_name,
+                ocr_model_name=ocr_model_name,
+                visual_endpoint=visual_endpoint,
+                visual_timeout_ms=visual_timeout_ms,
+                reasoning_enabled=reasoning_enabled,
+                reasoning_model_name=reasoning_model_name,
+                reasoning_endpoint=reasoning_endpoint,
+                reasoning_timeout_ms=reasoning_timeout_ms,
+                model_budget_ms=model_budget_ms,
+                allow_vlm_remote_failure=allow_vlm_remote_failure,
+                overview_enabled=overview_enabled,
+                overview_model_name=overview_model_name,
+                overview_medium_enabled=overview_enabled and overview_medium_enabled,
+                overview_timeout_ms=overview_timeout_ms,
+            )
+
+        # fetch_pois runs in main thread (concurrent with model_parallel)
         if payload_candidates and py_data_source in {"hybrid", "node"}:
             print(f"[PIPELINE_DEBUG] Using payload candidates (frontend POIs)", flush=True, file=sys.stderr)
             pois = _filter_payload_candidates(
@@ -3176,46 +3735,65 @@ class SpatialPipeline:
                 term_filter_relaxed = True
                 effective_terms = []
 
-        model_parallel_enabled = bool(
-            reasoning_enabled and (visual_remote_enabled or bool(visual_image_data_url))
-        )
-        if model_parallel_enabled:
-            yield {
-                "type": "STAGE",
-                "payload": {
-                    "stage": "model_parallel_start",
-                    "model_budget_ms": int(model_budget_ms),
-                    "visual_model": visual_model_name,
-                    "reasoning_model": reasoning_model_name,
-                },
-            }
-
+        # Wait for model_parallel result (it has been running concurrently)
+        if _mp_future is not None:
             try:
-                model_parallel_bundle = run_with_timing(
-                    "phase4_model_parallel.py",
-                    _run_parallel_model_inference,
-                    semantic_query=semantic_query,
-                    spatial_context=spatial_context,
-                    categories=fetch_categories,
-                    image_data_url=visual_image_data_url,
-                    visual_model_name=visual_model_name,
-                    visual_endpoint=visual_endpoint,
-                    visual_timeout_ms=visual_timeout_ms,
-                    reasoning_enabled=reasoning_enabled,
-                    reasoning_model_name=reasoning_model_name,
-                    reasoning_endpoint=reasoning_endpoint,
-                    reasoning_timeout_ms=reasoning_timeout_ms,
-                    model_budget_ms=model_budget_ms,
-                    allow_vlm_remote_failure=allow_vlm_remote_failure,
+                model_parallel_bundle = _mp_future.result(
+                    timeout=max(10, model_budget_ms / 1000 + 10),
                 )
                 model_timing_ms = dict(model_parallel_bundle.get("timing") or model_timing_ms)
                 model_parallel_degraded = bool(model_parallel_bundle.get("degraded"))
                 model_parallel_degrade_reason = str(model_parallel_bundle.get("degrade_reason") or "").strip()
-                vlm_result = model_parallel_bundle.get("vlm") if isinstance(model_parallel_bundle.get("vlm"), dict) else {}
+                ocr_result = (
+                    model_parallel_bundle.get("ocr")
+                    if isinstance(model_parallel_bundle.get("ocr"), dict)
+                    else (
+                        model_parallel_bundle.get("vlm")
+                        if isinstance(model_parallel_bundle.get("vlm"), dict)
+                        else {}
+                    )
+                )
+                overview_light_result = (
+                    model_parallel_bundle.get("overview_light")
+                    if isinstance(model_parallel_bundle.get("overview_light"), dict)
+                    else {}
+                )
+                overview_medium_result = (
+                    model_parallel_bundle.get("overview_medium")
+                    if isinstance(model_parallel_bundle.get("overview_medium"), dict)
+                    else {}
+                )
                 llm_result = model_parallel_bundle.get("llm") if isinstance(model_parallel_bundle.get("llm"), dict) else {}
 
-                vlm_anchor_landmarks = _normalize_anchor_list(vlm_result.get("landmarks") or [])
-                vlm_anchor_aliases = _normalize_anchor_list(vlm_result.get("aliases") or [])
+                vlm_anchor_landmarks = _normalize_anchor_list(ocr_result.get("landmarks") or [])
+                vlm_anchor_aliases = _normalize_anchor_list(ocr_result.get("aliases") or [])
+                vlm_overview_light = {
+                    "summary": str(overview_light_result.get("summary") or "").strip(),
+                    "road_pattern": str(overview_light_result.get("road_pattern") or "").strip(),
+                    "functional_distribution": str(overview_light_result.get("functional_distribution") or "").strip(),
+                    "key_observations": _normalize_anchor_list(overview_light_result.get("key_observations") or []),
+                    "confidence": float(overview_light_result.get("confidence") or 0.0),
+                    "success": bool(overview_light_result.get("success")),
+                    "model": overview_light_result.get("model") or overview_model_name,
+                }
+                vlm_overview_medium = {
+                    "summary": str(overview_medium_result.get("summary") or "").strip(),
+                    "road_pattern": str(overview_medium_result.get("road_pattern") or "").strip(),
+                    "functional_distribution": str(overview_medium_result.get("functional_distribution") or "").strip(),
+                    "key_observations": _normalize_anchor_list(overview_medium_result.get("key_observations") or []),
+                    "confidence": float(overview_medium_result.get("confidence") or 0.0),
+                    "success": bool(overview_medium_result.get("success")),
+                    "model": overview_medium_result.get("model") or visual_model_name,
+                }
+                overview_summary_candidates = _normalize_anchor_list(
+                    [
+                        vlm_overview_medium.get("summary"),
+                        vlm_overview_light.get("summary"),
+                    ]
+                )
+                vlm_overview_fused_summary = " | ".join(
+                    str(item).strip() for item in overview_summary_candidates if str(item).strip()
+                )[:480]
                 llm_spatial_priors = {
                     "summary": str(llm_result.get("summary") or "").strip(),
                     "focus_terms": _normalize_anchor_list(llm_result.get("focus_terms") or []),
@@ -3252,6 +3830,11 @@ class SpatialPipeline:
                         "stage": "model_parallel_done",
                         "vlm_anchor_count": len(vlm_anchor_landmarks),
                         "vlm_alias_count": len(vlm_anchor_aliases),
+                        "ocr_anchor_count": len(vlm_anchor_landmarks),
+                        "ocr_alias_count": len(vlm_anchor_aliases),
+                        "overview_light_summary_ready": bool(vlm_overview_light.get("summary")),
+                        "overview_medium_summary_ready": bool(vlm_overview_medium.get("summary")),
+                        "overview_fused_summary_ready": bool(vlm_overview_fused_summary),
                         "reasoning_focus_count": len(llm_spatial_priors.get("focus_terms") or []),
                         "anchor_boosted_poi_count": int(anchor_boosted_poi_count),
                         "degraded": bool(model_parallel_degraded),
@@ -3304,6 +3887,10 @@ class SpatialPipeline:
                 parallel_ctx["python_context"] = normalized_python_context
                 exc.parallel_error_context = parallel_ctx
                 raise
+            finally:
+                if _mp_executor is not None:
+                    _mp_executor.shutdown(wait=False)
+                    _mp_executor = None
 
         base_layer_anchor_bypass = _option_enabled(
             hints_options.get("baseLayerAnchorBypass"),
@@ -3392,19 +3979,6 @@ class SpatialPipeline:
             default_value=12000,
             max_value=120000,
         )
-        road_bundle = context_loader.load_road_context(
-            repository=self.repository,
-            spatial_context=spatial_context,
-            query_type=query_type,
-            enabled=road_boundary_enhancement,
-            fetch_limit=road_fetch_limit,
-            normalize_road_geometries_func=_normalize_road_geometries,
-        )
-        road_rows: List[Dict[str, Any]] = list(road_bundle.get("rows") or [])
-        road_geometries: List[Any] = list(road_bundle.get("geometries") or [])
-        road_index: STRtree | None = road_bundle.get("index")
-        road_source = str(road_bundle.get("source") or "disabled")
-
         landuse_boundary_enhancement = str(hints_options.get("landuseBoundaryEnhancement", "true")).lower() not in {
             "false",
             "0",
@@ -3416,14 +3990,21 @@ class SpatialPipeline:
             default_value=15000,
             max_value=150000,
         )
-        landuse_bundle = context_loader.load_landuse_context(
+
+        road_bundle, landuse_bundle = _load_boundary_context_bundles_parallel(
             repository=self.repository,
             spatial_context=spatial_context,
             query_type=query_type,
-            enabled=landuse_boundary_enhancement,
-            fetch_limit=landuse_fetch_limit,
-            normalize_landuse_geometries_func=_normalize_landuse_geometries,
+            road_boundary_enhancement=road_boundary_enhancement,
+            road_fetch_limit=road_fetch_limit,
+            landuse_boundary_enhancement=landuse_boundary_enhancement,
+            landuse_fetch_limit=landuse_fetch_limit,
         )
+        road_rows: List[Dict[str, Any]] = list(road_bundle.get("rows") or [])
+        road_geometries: List[Any] = list(road_bundle.get("geometries") or [])
+        road_index: STRtree | None = road_bundle.get("index")
+        road_source = str(road_bundle.get("source") or "disabled")
+
         landuse_rows: List[Dict[str, Any]] = list(landuse_bundle.get("rows") or [])
         landuse_geometries: List[Any] = list(landuse_bundle.get("geometries") or [])
         landuse_weights: List[float] = [
@@ -3467,7 +4048,7 @@ class SpatialPipeline:
             },
         }
 
-        # ͼҪ߿Ƭģ·
+        # 提前返回图推理
         # 提前返回以保证大规模候选下图分析响应速度。
         if query_type == "graph_reasoning":
             final_results = {
@@ -3611,9 +4192,9 @@ class SpatialPipeline:
         coords: List[Tuple[float, float]] = [
             (float(poi["lon"]), float(poi["lat"])) for poi in pois if poi.get("lon") is not None and poi.get("lat") is not None
         ]
-        # 在昂贵的下游建模前先输出一个快速预览边界。
+        # ????????????????????????????
         if len(coords) >= 3:
-            # ²ԱԤ߽ȶҿ١
+            # 采样预览边界
             preview_coords = _sample_coordinates(coords, 3000)
             sketch_polygon = mapping(MultiPoint(preview_coords).convex_hull)
             yield {
@@ -3645,17 +4226,94 @@ class SpatialPipeline:
             max_value=120000,
         )
         cluster_adaptive = str(hints_options.get("clusterAdaptive", "true")).lower() not in {"false", "0", "off", "no"}
+        cluster_preagg_enabled = _option_enabled(
+            hints_options.get("clusterH3PreAggregate"),
+            default_value=(query_type == "area_analysis"),
+        )
+        cluster_preagg_threshold = _resolve_limit(
+            hints_options.get("clusterH3PreAggregateThreshold"),
+            default_value=2500,
+            max_value=200000,
+        )
+        cluster_preagg_resolution = _resolve_limit(
+            hints_options.get("clusterH3Resolution"),
+            default_value=_dynamic_h3_resolution(_extract_area_km2(spatial_context)),
+            max_value=12,
+        )
+        cluster_preagg_summary: Dict[str, Any] = {
+            "enabled": False,
+            "requested": bool(cluster_preagg_enabled),
+            "threshold": int(cluster_preagg_threshold),
+            "resolution": int(cluster_preagg_resolution),
+            "engine": "none",
+            "cell_count": 0,
+            "point_count": len(coords),
+        }
+
+        cluster_input_coords = list(coords)
+        cluster_input_weights: List[float] | None = None
+        cluster_input_members: List[List[int]] | None = None
+
+        if cluster_preagg_enabled and len(coords) >= cluster_preagg_threshold:
+            preagg_bundle = run_with_timing(
+                "h3_preaggregate_cluster.py",
+                preaggregate_coordinates_h3,
+                coords,
+                resolution=cluster_preagg_resolution,
+            )
+            preagg_points = list(preagg_bundle.get("points") or [])
+            preagg_weights = [float(value) for value in (preagg_bundle.get("weights") or [])]
+            preagg_members = [list(item or []) for item in (preagg_bundle.get("members") or [])]
+            if len(preagg_points) >= 2 and len(preagg_points) < len(coords) and len(preagg_weights) == len(preagg_points):
+                cluster_input_coords = preagg_points
+                cluster_input_weights = preagg_weights
+                cluster_input_members = preagg_members
+                cluster_preagg_summary = {
+                    "enabled": True,
+                    "requested": True,
+                    "threshold": int(cluster_preagg_threshold),
+                    "resolution": int(preagg_bundle.get("resolution", cluster_preagg_resolution) or cluster_preagg_resolution),
+                    "engine": str(preagg_bundle.get("engine") or "none"),
+                    "cell_count": int(preagg_bundle.get("cell_count", len(preagg_points)) or len(preagg_points)),
+                    "point_count": len(preagg_points),
+                }
 
         cluster_result = run_with_timing(
             "hdbscan_cluster.py",
             cluster_points,
-            coords,
+            cluster_input_coords,
+            sample_weights=cluster_input_weights,
             min_cluster_size=cluster_min_cluster_size,
             min_samples=cluster_min_samples,
             adaptive=cluster_adaptive,
             max_hdbscan_points=cluster_max_hdbscan_points,
+            core_dist_n_jobs=-1,
         )
         labels = cluster_result.labels
+        if cluster_input_members is not None:
+            mapped_labels = [-1 for _ in coords]
+            for agg_idx, member_indexes in enumerate(cluster_input_members):
+                label_value = -1
+                if 0 <= agg_idx < len(labels):
+                    try:
+                        label_value = int(labels[agg_idx])
+                    except Exception:
+                        label_value = -1
+                for original_idx in member_indexes:
+                    if 0 <= int(original_idx) < len(mapped_labels):
+                        mapped_labels[int(original_idx)] = label_value
+            labels = mapped_labels
+            unique_clusters = {label for label in labels if label >= 0}
+            noise_count = len([label for label in labels if label < 0])
+            cluster_result = ClusterResult(
+                labels=labels,
+                cluster_count=len(unique_clusters),
+                noise_count=noise_count,
+                engine=f"{cluster_result.engine}+h3_preagg",
+                effective_min_cluster_size=cluster_result.effective_min_cluster_size,
+                effective_min_samples=cluster_result.effective_min_samples,
+                input_point_count=len(coords),
+            )
 
         alpha_max_input_points = _resolve_limit(
             hints_options.get("alphaMaxInputPoints"),
@@ -3704,14 +4362,24 @@ class SpatialPipeline:
 
         boundary_methods: List[str] = []
         cluster_entries: List[Dict[str, Any]] = []
+        v5_in_memory_join_summary: Dict[str, Any] = {
+            "used": False,
+            "enriched_rows": 0,
+            "block_matches": 0,
+            "aoi_matches": 0,
+            "landuse_matches": 0,
+            "road_surface_count": 0,
+            "aoi_surface_count": 0,
+            "landuse_surface_count": 0,
+        }
 
         # ──────────────────────────────────────────────────────────────────
-        # Composite V5: 路网地块边界组装链路
+        # Composite V5: ???????????
         # 当启用 composite_v5 时，走全新的地块 union 边界生成链路，
         # 替代传统的 alpha-shape / 凸包边界。
         # ──────────────────────────────────────────────────────────────────
         if force_composite_v5 and hasattr(self.repository, "spatial_join_pois"):
-            print("[PIPELINE_V5] composite_v5 链路激活", flush=True, file=sys.stderr)
+            print("[PIPELINE_V5] composite_v5 pipeline enabled", flush=True, file=sys.stderr)
 
             # 构建 BBOX WKT 用于三层面查询
             v5_bbox_wkt = None
@@ -3727,9 +4395,13 @@ class SpatialPipeline:
 
             if v5_bbox_wkt:
                 # 获取三层面数据
-                v5_road_blocks = self.repository.fetch_road_blocks(bbox_wkt=v5_bbox_wkt, limit=5000)
-                v5_osm_aoi = self.repository.fetch_osm_aoi(bbox_wkt=v5_bbox_wkt, limit=3000)
-                v5_euluc = self.repository.fetch_euluc(bbox_wkt=v5_bbox_wkt, limit=3000)
+                v5_road_blocks, v5_osm_aoi, v5_euluc = _fetch_v5_surface_layers_parallel(
+                    repository=self.repository,
+                    bbox_wkt=v5_bbox_wkt,
+                    road_limit=5000,
+                    aoi_limit=3000,
+                    euluc_limit=3000,
+                )
                 print(
                     f"[PIPELINE_V5] 三层面: blocks={len(v5_road_blocks)} aoi={len(v5_osm_aoi)} euluc={len(v5_euluc)}",
                     flush=True, file=sys.stderr,
@@ -3783,38 +4455,23 @@ class SpatialPipeline:
                     v5_block_geom_map[block_id] = geom
                 water_mask_cache: Dict[str, Dict[str, Any] | None] = {}
 
-                # 空间连接 POI（如果 POI 还没有 block_id，则重新获取）
-                if pois and pois[0].get("block_id") is None:
-                    v5_pois = self.repository.spatial_join_pois(
-                        clip_wkt=v5_bbox_wkt,
-                        categories=fetch_categories,
-                        terms=effective_terms if not term_filter_relaxed else [],
-                        limit=fetch_limit,
+                # V5 数据层走内存 STRtree 空间关联，避免二次 POI + LATERAL JOIN
+                needs_v5_enrichment = any(
+                    _is_missing_surface_value(poi.get("block_id"))
+                    or _is_missing_surface_value(poi.get("aoi_name"))
+                    or _is_missing_surface_value(poi.get("land_type"))
+                    for poi in (pois or [])
+                )
+                if pois and needs_v5_enrichment:
+                    pois, v5_in_memory_join_summary = _enrich_pois_with_surface_layers(
+                        pois=pois,
+                        road_blocks=v5_road_blocks,
+                        osm_aoi_features=v5_osm_aoi,
+                        euluc_features=v5_euluc,
                     )
-                    if v5_pois:
-                        pois = v5_pois
-                        coords = [
-                            (float(poi["lon"]), float(poi["lat"]))
-                            for poi in pois
-                            if poi.get("lon") is not None and poi.get("lat") is not None
-                        ]
-                        # 用新 POI 重新聚类
-                        cluster_result = run_with_timing(
-                            "hdbscan_cluster.py",
-                            cluster_points,
-                            coords,
-                            min_cluster_size=cluster_min_cluster_size,
-                            min_samples=cluster_min_samples,
-                            adaptive=cluster_adaptive,
-                            max_hdbscan_points=cluster_max_hdbscan_points,
-                        )
-                        labels = cluster_result.labels
-                        grouped_indices = defaultdict(list)
-                        for idx, label in enumerate(labels):
-                            if label >= 0:
-                                grouped_indices[label].append(idx)
+                    v5_in_memory_join_summary["used"] = True
 
-                # V5 地块边界组装
+                # V5 ???????
                 v5_districts = block_assembler.assemble_block_boundaries(
                     cluster_labels=labels,
                     pois=pois,
@@ -3823,15 +4480,15 @@ class SpatialPipeline:
                     euluc_features=v5_euluc,
                     vlm_anchor_texts=vlm_anchor_texts,
                 )
-                print(f"[PIPELINE_V5] 生成 {len(v5_districts)} 个片区", flush=True, file=sys.stderr)
+                print(f"[PIPELINE_V5] generated {len(v5_districts)} districts", flush=True, file=sys.stderr)
 
-                # 将 V5 片区转换为 cluster_entries 格式（兼容下游结果组装）
+                # ? V5 ????? cluster_entries ??????????????
                 for district in v5_districts:
                     d_pois = district.pois
                     d_coords = [(float(p["lon"]), float(p["lat"])) for p in d_pois if p.get("lon") and p.get("lat")]
 
                     categories_counter = _build_category_counter(d_pois)
-                    top_category = categories_counter.most_common(1)[0][0] if categories_counter else "未分类"
+                    top_category = categories_counter.most_common(1)[0][0] if categories_counter else "unclassified"
                     top_count = categories_counter.most_common(1)[0][1] if categories_counter else 0
                     poi_quality = _cluster_poi_quality(d_pois)
 
@@ -3946,7 +4603,7 @@ class SpatialPipeline:
                     boundary_quality = {"quality_score": 0.85 if "road_block" in boundary_method else 0.65, "method": "v5_block"}
 
                     # V5 片区的置信度构建
-                    # 由于地块边界本身就贴合路网，method_confidence 先验值更高
+                    # ?? V5 ??????????? method_confidence ???????
                     layer_bundle = {"outer": {}, "transition": {"confidence": district.name_confidence}, "core": {}}
                     boundary_conf = _build_boundary_confidence(
                         layer_bundle=layer_bundle,
@@ -3957,7 +4614,7 @@ class SpatialPipeline:
                         semantic_anchor_confidence=district.name_confidence if district.name_source != "fallback" else None,
                         niche_consistency_score=None,
                     )
-                    # 强制标记 V5 模型名称，确保前端显示正确
+                    # ???? V5 ?????????????
                     boundary_conf["explain"]["model"] = "composite_v5"
 
                     vitality_score = _calc_vitality_score(
@@ -4027,7 +4684,7 @@ class SpatialPipeline:
         # 传统 (V1-V4) 边界构建链路
         # ──────────────────────────────────────────────────────────────────
         if not cluster_entries:
-            # 走传统链路（V5 未启用或未产出结果）
+            # ????? V1-V4 ???????????????
             for cluster_id, indices in grouped_indices.items():
                 cluster_points_list = [coords[idx] for idx in indices]
                 cluster_pois = [pois[idx] for idx in indices]
@@ -4284,6 +4941,7 @@ class SpatialPipeline:
                 model_name=name_audit_model_name,
                 endpoint=visual_endpoint,
                 timeout_ms=name_audit_timeout_ms,
+                remote_max_items=name_audit_max_items,
             )
             print(
                 "[PIPELINE_V5] 命名审核完成: "
@@ -4302,25 +4960,44 @@ class SpatialPipeline:
                     "stage": "visual_perception",
                 },
             }
-            for entry in cluster_entries:
+            # 筛选需要 VLM 审阅的 entry（跳过已有结果或空 POI 的）
+            _vp_pending: list[tuple[int, dict]] = []
+            for _vp_idx, entry in enumerate(cluster_entries):
                 existing_visual = entry.get("visual_morphology")
                 if isinstance(existing_visual, dict) and existing_visual.get("score") is not None:
                     continue
                 poi_count = int(entry.get("poi_count", 0))
                 if poi_count <= 0:
                     continue
-                visual_review = _review_cluster_morphology(
-                    spatial_context=spatial_context,
-                    boundary_geojson=entry.get("boundary_geojson"),
-                    boundary_quality=entry.get("boundary_quality"),
-                    poi_count=poi_count,
-                    model_name=visual_model_name,
-                    endpoint=visual_endpoint,
-                    image_data_url=visual_image_data_url,
-                    enable_remote=visual_remote_enabled,
-                    timeout_ms=visual_timeout_ms,
-                )
-                entry["visual_morphology"] = visual_review
+                _vp_pending.append((_vp_idx, entry))
+
+            if _vp_pending:
+                # 并行调用 VLM：每个 cluster 的审阅是独立 HTTP I/O，无共享状态
+                def _vp_task(vp_entry: dict) -> dict:
+                    return _review_cluster_morphology(
+                        spatial_context=spatial_context,
+                        boundary_geojson=vp_entry.get("boundary_geojson"),
+                        boundary_quality=vp_entry.get("boundary_quality"),
+                        poi_count=int(vp_entry.get("poi_count", 0)),
+                        model_name=visual_model_name,
+                        endpoint=visual_endpoint,
+                        image_data_url=visual_image_data_url,
+                        enable_remote=visual_remote_enabled,
+                        timeout_ms=visual_timeout_ms,
+                    )
+
+                _vp_max_workers = min(len(_vp_pending), 4)
+                with ThreadPoolExecutor(max_workers=_vp_max_workers) as _vp_pool:
+                    _vp_futures = [
+                        (_vp_idx, _vp_pool.submit(_vp_task, entry))
+                        for _vp_idx, entry in _vp_pending
+                    ]
+                    for _vp_idx, fut in _vp_futures:
+                        try:
+                            visual_review = fut.result(timeout=max(15, visual_timeout_ms / 1000 + 5))
+                        except Exception:
+                            visual_review = {"score": None, "error": "visual_review_timeout"}
+                        cluster_entries[_vp_idx]["visual_morphology"] = visual_review
 
         self_validation_result = {
             "cluster_scores": {},
@@ -4498,10 +5175,10 @@ class SpatialPipeline:
         vlm_extracted_texts = _normalize_anchor_list(
             list(vlm_anchor_texts) + list(vlm_anchor_landmarks) + list(vlm_anchor_aliases)
         )
-        if not vlm_extracted_texts and visual_image_data_url:
+        if visual_image_data_url:
             screenshot_texts = vlm_reviewer.extract_map_text(
                 image_data_url=visual_image_data_url,
-                model_name=visual_model_name,
+                model_name=ocr_model_name,
                 endpoint=visual_endpoint,
                 timeout_ms=visual_timeout_ms,
             )
@@ -4535,6 +5212,13 @@ class SpatialPipeline:
                 "cluster_effective_min_samples": cluster_result.effective_min_samples,
                 "cluster_input_point_count": cluster_result.input_point_count,
                 "single_cluster_fallback_applied": single_cluster_fallback_applied,
+                "cluster_preagg_enabled": bool(cluster_preagg_summary.get("enabled")),
+                "cluster_preagg_requested": bool(cluster_preagg_summary.get("requested")),
+                "cluster_preagg_threshold": int(cluster_preagg_summary.get("threshold", 0)),
+                "cluster_preagg_resolution": int(cluster_preagg_summary.get("resolution", 0)),
+                "cluster_preagg_engine": cluster_preagg_summary.get("engine"),
+                "cluster_preagg_cell_count": int(cluster_preagg_summary.get("cell_count", 0)),
+                "cluster_preagg_point_count": int(cluster_preagg_summary.get("point_count", len(coords))),
                 "h3_resolution": h3_resolution,
                 "h3_engine": h3_summary.get("engine", "none"),
                 "h3_cell_count": len(h3_summary.get("cells", [])),
@@ -4563,6 +5247,19 @@ class SpatialPipeline:
                 "visual_review_mode": visual_modes[0] if len(visual_modes) == 1 else ("mixed" if visual_modes else "disabled"),
                 "visual_review_modes": visual_modes,
                 "visual_review_model": visual_model_name if visual_review_enabled else None,
+                "ocr_enabled": bool(visual_image_data_url),
+                "ocr_model": ocr_model_name if visual_image_data_url else None,
+                "overview_enabled": bool(overview_enabled and visual_image_data_url),
+                "overview_model": overview_model_name if (overview_enabled and visual_image_data_url) else None,
+                "overview_medium_enabled": bool(overview_enabled and overview_medium_enabled and visual_image_data_url),
+                "overview_medium_model": (
+                    visual_model_name if (overview_enabled and overview_medium_enabled and visual_image_data_url) else None
+                ),
+                "overview_light_summary": vlm_overview_light.get("summary") or None,
+                "overview_medium_summary": vlm_overview_medium.get("summary") or None,
+                "overview_fused_summary": vlm_overview_fused_summary or None,
+                "overview_light_confidence": float(vlm_overview_light.get("confidence") or 0.0),
+                "overview_medium_confidence": float(vlm_overview_medium.get("confidence") or 0.0),
                 "avg_self_validation_confidence": float(self_validation_summary.get("avg_score", 0.0)),
                 "self_validation_model": self_validation_summary.get("model"),
                 "avg_skg_consistency_score": float(skg_summary.get("avg_score", 0.0)),
@@ -4592,16 +5289,29 @@ class SpatialPipeline:
                 "v5_region_dedup_before_count": int(v5_region_dedup_summary.get("before_count", len(cluster_entries))),
                 "v5_region_dedup_after_count": int(v5_region_dedup_summary.get("after_count", len(cluster_entries))),
                 "v5_region_dedup_removed_count": int(v5_region_dedup_summary.get("removed_count", 0)),
+                "v5_in_memory_join_used": bool(v5_in_memory_join_summary.get("used")),
+                "v5_in_memory_join_enriched_rows": int(v5_in_memory_join_summary.get("enriched_rows", 0)),
+                "v5_in_memory_join_block_matches": int(v5_in_memory_join_summary.get("block_matches", 0)),
+                "v5_in_memory_join_aoi_matches": int(v5_in_memory_join_summary.get("aoi_matches", 0)),
+                "v5_in_memory_join_landuse_matches": int(v5_in_memory_join_summary.get("landuse_matches", 0)),
+                "v5_in_memory_join_road_surface_count": int(v5_in_memory_join_summary.get("road_surface_count", 0)),
+                "v5_in_memory_join_aoi_surface_count": int(v5_in_memory_join_summary.get("aoi_surface_count", 0)),
+                "v5_in_memory_join_landuse_surface_count": int(v5_in_memory_join_summary.get("landuse_surface_count", 0)),
                 "name_audit_enabled": bool(name_audit_enabled),
                 "name_audit_remote_enabled": bool(name_audit_remote_enabled),
                 "name_audit_model": name_audit_model_name if name_audit_remote_enabled else "rule_guard_v2",
+                "name_audit_max_items": int(name_audit_max_items),
                 "name_audit_rule_rewritten": int(name_audit_summary.get("rule_rewritten", 0)),
                 "name_audit_llm_rewritten": int(name_audit_summary.get("llm_rewritten", 0)),
                 "name_audit_duplicate_rewritten": int(name_audit_summary.get("duplicate_rewritten", 0)),
                 "name_audit_llm_attempted": bool(name_audit_summary.get("llm_attempted", False)),
+                "name_audit_remote_input_count": int(name_audit_summary.get("remote_input_count", 0)),
+                "name_audit_remote_sent_count": int(name_audit_summary.get("remote_sent_count", 0)),
                 "vlm_extracted_texts": vlm_extracted_texts,
                 "vlm_anchor_landmarks": vlm_anchor_landmarks,
                 "vlm_anchor_aliases": vlm_anchor_aliases,
+                "vlm_overview_light": vlm_overview_light,
+                "vlm_overview_medium": vlm_overview_medium,
                 "llm_spatial_priors": llm_spatial_priors,
                 "anchor_boosted_poi_count": int(anchor_boosted_poi_count),
                 "anchor_injected_poi_count": int(anchor_bypass_injected_count),
@@ -4643,10 +5353,13 @@ class SpatialPipeline:
                         "enabled": bool(name_audit_enabled),
                         "remote_enabled": bool(name_audit_remote_enabled),
                         "model": name_audit_model_name if name_audit_remote_enabled else "rule_guard_v2",
+                        "max_items": int(name_audit_max_items),
                         "rule_rewritten": int(name_audit_summary.get("rule_rewritten", 0)),
                         "llm_rewritten": int(name_audit_summary.get("llm_rewritten", 0)),
                         "duplicate_rewritten": int(name_audit_summary.get("duplicate_rewritten", 0)),
                         "llm_attempted": bool(name_audit_summary.get("llm_attempted", False)),
+                        "remote_input_count": int(name_audit_summary.get("remote_input_count", 0)),
+                        "remote_sent_count": int(name_audit_summary.get("remote_sent_count", 0)),
                     },
                     "v5_region_dedup": {
                         "enabled": bool(v5_region_dedup_summary.get("enabled")),
@@ -4660,6 +5373,17 @@ class SpatialPipeline:
                     "visual_review_enabled": visual_review_enabled,
                     "visual_remote_enabled": visual_remote_enabled,
                     "visual_review_model": visual_model_name if visual_review_enabled else None,
+                    "ocr_enabled": bool(visual_image_data_url),
+                    "ocr_model": ocr_model_name if visual_image_data_url else None,
+                    "overview_enabled": bool(overview_enabled and visual_image_data_url),
+                    "overview_model": overview_model_name if (overview_enabled and visual_image_data_url) else None,
+                    "overview_medium_enabled": bool(overview_enabled and overview_medium_enabled and visual_image_data_url),
+                    "overview_medium_model": (
+                        visual_model_name if (overview_enabled and overview_medium_enabled and visual_image_data_url) else None
+                    ),
+                    "overview_light_summary": vlm_overview_light.get("summary") or None,
+                    "overview_medium_summary": vlm_overview_medium.get("summary") or None,
+                    "overview_fused_summary": vlm_overview_fused_summary or None,
                     "reasoning_enabled": bool(reasoning_enabled),
                     "reasoning_model": reasoning_model_name if reasoning_enabled else None,
                     "model_budget_ms": int(model_budget_ms),
@@ -4676,6 +5400,3 @@ class SpatialPipeline:
                 },
             },
         }
-
-
-

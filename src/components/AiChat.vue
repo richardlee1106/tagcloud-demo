@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="ai-chat-container">
     <!-- 头部状态栏 -->
     <div class="chat-header">
@@ -286,10 +286,11 @@ const isTyping = ref(false);
 const currentStage = ref(''); // 原始 stage 名称（来自 SSE）
 const streamQueue = ref('');
 
+// 阶段顺序与后端实际执行顺序一致：planner → spatial → visual → fusion → writer
 const stageSteps = [
   { key: 'planner', label: '意图处理', hint: '正在理解问题意图与约束...' },
-  { key: 'visual', label: '视觉感知', hint: '正在提取视口锚点与视觉形态特征...' },
   { key: 'spatial', label: '空间分析', hint: '正在执行空间检索、聚类与边界建模...' },
+  { key: 'visual', label: '视觉感知', hint: '正在提取视口锚点与视觉形态特征...' },
   { key: 'fusion', label: '空间推理', hint: '正在进行自校验、知识图谱与置信度融合...' },
   { key: 'writer', label: '组织回答', hint: '正在整理答案并生成可读输出...' }
 ];
@@ -298,21 +299,41 @@ function normalizeStageName(stageName) {
   const raw = String(stageName || '').toLowerCase();
   if (!raw) return '';
 
-  if (raw.includes('planner') || raw.includes('intent')) return 'planner';
-  if (raw.includes('visual') || raw.includes('vlm') || raw.includes('ocr') || raw.includes('snapshot')) return 'visual';
-  if (raw.includes('fusion') || raw.includes('self_validation') || raw.includes('skg') || raw.includes('validate') || raw.includes('name_audit')) return 'fusion';
-  if (raw.includes('writer') || raw.includes('answer') || raw.includes('compose')) return 'writer';
+  // 意图处理阶段
+  if (raw.includes('planner') || raw.includes('intent') || raw.includes('irrelevant') || raw.includes('smalltalk') || raw.includes('general_qa')) return 'planner';
+  // 空间分析阶段（先于视觉感知执行）
   if (raw.includes('fetch_candidates') || raw.includes('cluster') || raw.includes('region_modeling')) return 'spatial';
-  if (raw.includes('executor') || raw.includes('spatial') || raw.includes('compute') || raw.includes('python') || raw.includes('region_comparison')) return 'spatial';
+  if (raw.includes('executor') || raw.includes('compute') || raw.includes('python') || raw.includes('region_comparison')) return 'spatial';
+  // 视觉感知阶段（含 model_parallel 并行推理）
+  if (raw.includes('visual') || raw.includes('vlm') || raw.includes('ocr') || raw.includes('snapshot')) return 'visual';
+  if (raw.includes('model_parallel')) return 'visual';
+  // 空间推理/融合阶段
+  if (raw.includes('fusion') || raw.includes('self_validation') || raw.includes('skg') || raw.includes('validate') || raw.includes('name_audit')) return 'fusion';
+  // 回答生成阶段
+  if (raw.includes('writer') || raw.includes('answer') || raw.includes('compose')) return 'writer';
+
+  // 含 'spatial' 关键词的归到 spatial（放在最后避免误匹配 self_validation 等）
+  if (raw.includes('spatial')) return 'spatial';
 
   return '';
 }
 
 const normalizedStageKey = computed(() => normalizeStageName(currentStage.value));
 
+// 记录已到达的最高阶段索引，防止 UI 回退
+let highWaterStageIndex = -1;
+
 const stageActiveIndex = computed(() => {
   const idx = stageSteps.findIndex((step) => step.key === normalizedStageKey.value);
-  if (idx >= 0) return idx;
+  if (idx >= 0) {
+    // 单调递增守卫：只允许前进不允许后退
+    if (idx >= highWaterStageIndex) {
+      highWaterStageIndex = idx;
+    }
+    return highWaterStageIndex;
+  }
+  // 无匹配时保持在已到达的最高阶段
+  if (highWaterStageIndex >= 0) return highWaterStageIndex;
   return isTyping.value ? 0 : -1;
 });
 
@@ -715,13 +736,18 @@ async function sendMessage() {
       nameAuditEnabled: true,
       nameAuditRemoteEnabled: deepSpatialMode,
       nameAuditTimeoutMs: deepSpatialMode ? 900 : 420,
-      visualModel: 'qwen/qwen3-vl-4b',
+      visualModel: 'qwen3.5-4b',
+      ocrModel: 'glm-ocr',
+      overviewEnabled: Boolean(screenshotBase64),
+      overviewModel: 'qwen3.5-0.8b',
+      overviewMediumEnabled: Boolean(screenshotBase64),
+      overviewTimeoutMs: deepSpatialMode ? 2200 : 1400,
       visualTimeoutMs: deepSpatialMode ? 4500 : 2200,
       vlmFailureMode: 'soft',
       visualSnapshotDataUrl: screenshotBase64,
       screenshotBase64, // legacy fallback key
-      reasoningEnabled: deepSpatialMode,
-      reasoningModel: 'qwen/qwen3-1.7b',
+      reasoningEnabled: false,
+      reasoningModel: 'qwen3.5-4b',
       reasoningTimeoutMs: deepSpatialMode ? 2800 : 1200,
       modelBudgetMs: deepSpatialMode ? 8000 : 5000,
       limit: deepSpatialMode ? 8000 : 4200,
@@ -792,6 +818,7 @@ async function sendMessage() {
     }).catch(() => {});
     isTyping.value = false;
     currentStage.value = '';
+    highWaterStageIndex = -1;
     await nextTick();
     scrollToBottom(true, 'auto');
   }
@@ -838,6 +865,7 @@ function clearChat() {
   messages.value = [];
   extractedPOIs.value = [];
   currentStage.value = '';
+  highWaterStageIndex = -1;
   resetStreamState();
 }
 
@@ -1954,5 +1982,3 @@ defineExpose({
   }
 }
 </style>
-
-

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from typing import Any, Dict, List
+from typing import Any, Dict, Iterable, List, Tuple
 
 try:
     import h3  # type: ignore
@@ -75,4 +75,80 @@ def aggregate_pois_h3(
         "engine": "h3" if h3 is not None else "grid_fallback",
         "resolution": int(resolution),
         "cells": cells,
+    }
+
+
+def preaggregate_coordinates_h3(
+    coordinates: Iterable[Tuple[float, float]],
+    *,
+    resolution: int,
+) -> Dict[str, Any]:
+    """Pre-aggregate coordinates by H3/grid cell for faster clustering."""
+    cell_buckets: Dict[str, Dict[str, Any]] = {}
+    engine = "h3" if h3 is not None else "grid_fallback"
+
+    for idx, coordinate in enumerate(coordinates):
+        if not isinstance(coordinate, (list, tuple)) or len(coordinate) < 2:
+            continue
+        try:
+            lon = float(coordinate[0])
+            lat = float(coordinate[1])
+        except (TypeError, ValueError):
+            continue
+
+        if h3 is not None:
+            try:
+                cell_id = h3.latlng_to_cell(lat, lon, int(resolution))
+            except Exception:
+                cell_id = _fallback_cell_id(lon, lat, int(resolution))
+                engine = "grid_fallback"
+        else:
+            cell_id = _fallback_cell_id(lon, lat, int(resolution))
+
+        bucket = cell_buckets.setdefault(
+            cell_id,
+            {
+                "sum_lon": 0.0,
+                "sum_lat": 0.0,
+                "indices": [],
+            },
+        )
+        bucket["sum_lon"] += lon
+        bucket["sum_lat"] += lat
+        bucket["indices"].append(int(idx))
+
+    if not cell_buckets:
+        return {
+            "engine": engine,
+            "resolution": int(resolution),
+            "cell_count": 0,
+            "points": [],
+            "weights": [],
+            "members": [],
+        }
+
+    ordered_cells = sorted(
+        cell_buckets.items(),
+        key=lambda item: (-len(item[1]["indices"]), str(item[0])),
+    )
+
+    points: List[Tuple[float, float]] = []
+    weights: List[int] = []
+    members: List[List[int]] = []
+    for _cell_id, bucket in ordered_cells:
+        indices = list(bucket.get("indices") or [])
+        if not indices:
+            continue
+        count = len(indices)
+        points.append((float(bucket["sum_lon"]) / count, float(bucket["sum_lat"]) / count))
+        weights.append(int(count))
+        members.append(indices)
+
+    return {
+        "engine": engine,
+        "resolution": int(resolution),
+        "cell_count": len(points),
+        "points": points,
+        "weights": weights,
+        "members": members,
     }
