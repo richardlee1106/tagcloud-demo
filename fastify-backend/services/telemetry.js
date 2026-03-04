@@ -261,6 +261,39 @@ function buildWindowStats(fromTs, toTs) {
   const cacheL2Ops = filtered.filter((event) => event.type === 'cache_l2_op').length
   const cacheL2Errors = filtered.filter((event) => event.type === 'cache_l2_error').length
 
+  const prefetchAttempts = filtered.filter((event) => event.type === 'prefetch_attempt')
+  const prefetchHits = filtered.filter((event) => event.type === 'prefetch_hit')
+  const prefetchDegraded = filtered.filter((event) => event.type === 'prefetch_degraded')
+  const prefetchWasted = filtered.filter((event) => event.type === 'prefetch_wasted')
+  const prefetchOverlapValues = filtered
+    .filter((event) => event.type === 'prefetch_overlap_delta_ms')
+    .map((event) => Number(event.value))
+    .filter(Number.isFinite)
+
+  const prefetchHitByQueryType = new Map()
+  const prefetchWastedByQueryType = new Map()
+  const readQueryType = (event) => String(event?.labels?.query_type || 'unknown')
+
+  prefetchHits.forEach((event) => {
+    const queryType = readQueryType(event)
+    prefetchHitByQueryType.set(queryType, Number(prefetchHitByQueryType.get(queryType) || 0) + 1)
+  })
+  prefetchWasted.forEach((event) => {
+    const queryType = readQueryType(event)
+    prefetchWastedByQueryType.set(queryType, Number(prefetchWastedByQueryType.get(queryType) || 0) + 1)
+  })
+
+  const prefetchWastedRateByQueryType = {}
+  const allPrefetchQueryTypes = new Set([
+    ...prefetchHitByQueryType.keys(),
+    ...prefetchWastedByQueryType.keys()
+  ])
+  for (const queryType of allPrefetchQueryTypes) {
+    const hits = Number(prefetchHitByQueryType.get(queryType) || 0)
+    const wasted = Number(prefetchWastedByQueryType.get(queryType) || 0)
+    prefetchWastedRateByQueryType[queryType] = hits > 0 ? wasted / hits : 0
+  }
+
   const incidents = filtered.filter((event) => event.type === 'incident')
   const sev12Count = incidents.filter((event) => {
     const severity = String(event.labels.severity || '').toLowerCase()
@@ -274,6 +307,12 @@ function buildWindowStats(fromTs, toTs) {
     sse_schema_error_rate: sseEvents > 0 ? sseSchemaErrors / sseEvents : 0,
     sse_event_error_rate: sseEvents > 0 ? sseEventErrors / sseEvents : 0,
     cache_l2_error_rate: cacheL2Ops > 0 ? cacheL2Errors / cacheL2Ops : 0,
+    prefetch_degraded_total: prefetchDegraded.length,
+    prefetch_wasted_total: prefetchWasted.length,
+    prefetch_overlap_delta_ms_p50: percentile(prefetchOverlapValues, 50),
+    prefetch_overlap_delta_ms_p95: percentile(prefetchOverlapValues, 95),
+    prefetch_wasted_rate: prefetchHits.length > 0 ? prefetchWasted.length / prefetchHits.length : 0,
+    prefetch_wasted_rate_by_query_type: prefetchWastedRateByQueryType,
     sev1_sev2_incidents: sev12Count,
     raw: {
       events: filtered.length,
@@ -286,6 +325,11 @@ function buildWindowStats(fromTs, toTs) {
       sse_event_errors: sseEventErrors,
       cache_l2_ops: cacheL2Ops,
       cache_l2_errors: cacheL2Errors,
+      prefetch_attempts: prefetchAttempts.length,
+      prefetch_hits: prefetchHits.length,
+      prefetch_degraded: prefetchDegraded.length,
+      prefetch_wasted: prefetchWasted.length,
+      prefetch_overlap_samples: prefetchOverlapValues.length,
       incidents: incidents.length
     }
   }
@@ -393,6 +437,16 @@ export function getKpiReport({ window = '7d', nowTs = Date.now() } = {}) {
   }
 
   const m1Pass = Object.values(m1Gate).every((item) => item.pass)
+  const prefetchWastedRate = Number(current?.prefetch_wasted_rate || 0)
+  const prefetchReviewThreshold = 0.05
+  const prefetchWastedRateByQueryType = current?.prefetch_wasted_rate_by_query_type || {}
+  const prefetchFlaggedQueryTypes = Object.entries(prefetchWastedRateByQueryType)
+    .filter(([, rate]) => Number(rate) > prefetchReviewThreshold)
+    .map(([queryType, rate]) => ({
+      query_type: queryType,
+      wasted_rate: Number(rate)
+    }))
+    .sort((a, b) => b.wasted_rate - a.wasted_rate)
 
   return {
     generated_at: new Date(nowTs).toISOString(),
@@ -415,6 +469,12 @@ export function getKpiReport({ window = '7d', nowTs = Date.now() } = {}) {
         metrics: m1Gate
       },
       stability: stabilityGate,
+      prefetch_quality: {
+        threshold: prefetchReviewThreshold,
+        current: prefetchWastedRate,
+        pass: prefetchWastedRate <= prefetchReviewThreshold,
+        flagged_query_types: prefetchFlaggedQueryTypes
+      },
       route_b_ready: m1Pass && stabilityGate.pass
     },
     daily_stability: dailyStats

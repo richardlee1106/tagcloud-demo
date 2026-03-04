@@ -110,3 +110,83 @@ test('parseIntent does not use fast path for key-conclusion macro requests', asy
 
   assert.equal(result.fastPath, false)
 })
+
+test('parseIntent falls back to non-stream planner when streaming payload is truncated', async () => {
+  const callModes = []
+  const result = await parseIntent(
+    '\u8bf7\u5206\u6790\u8fd9\u7247\u533a\u57df\u7684\u9910\u996e\u5206\u5e03\u4e0e\u6d3b\u529b\u70ed\u70b9\u3002',
+    {
+      plannerLlmEnabled: true,
+      plannerStreamingEnabled: true,
+      plannerLlmCaller: async ({ mode }) => {
+        callModes.push(mode || 'legacy')
+        if (mode === 'stream') {
+          return {
+            streamChunks: [
+              '{"query_type":"area_analysis","intent_mode":"macro_overview","scope":{"geometry_source":"viewport"'
+            ],
+            tokenUsage: {
+              prompt_tokens: 10,
+              completion_tokens: 3,
+              total_tokens: 13
+            }
+          }
+        }
+
+        return {
+          queryPlan: {
+            query_type: 'area_analysis',
+            intent_mode: 'macro_overview',
+            categories: ['\u9910\u996e\u670d\u52a1'],
+            confidence: {
+              score: 8,
+              level: 'high',
+              reasons: ['llm_non_stream_fallback']
+            }
+          },
+          tokenUsage: {
+            prompt_tokens: 20,
+            completion_tokens: 8,
+            total_tokens: 28
+          }
+        }
+      }
+    }
+  )
+
+  assert.deepEqual(callModes, ['stream', 'non_stream'])
+  assert.equal(result.routerUsed, true)
+  assert.equal(result.queryPlan?.query_type, 'area_analysis')
+  assert.equal(result.tokenUsage?.total_tokens, 28)
+  assert.equal(result.diagnostics?.planner_streaming?.fallback_used, true)
+  assert.equal(result.diagnostics?.planner_streaming?.fallback_error_code, 'planner_stream_truncated')
+})
+
+test('parseIntent streaming success moves parser state to S4', async () => {
+  const result = await parseIntent(
+    '\u8bf7\u5bf9\u6bd4\u8fd9\u7247\u533a\u7684\u9910\u996e\u4e0e\u6559\u80b2\u4e1a\u6001\uff0c\u7ed9\u51fa\u53ef\u6267\u884c\u7ed3\u8bba\u3002',
+    {
+      plannerLlmEnabled: true,
+      plannerStreamingEnabled: true,
+      plannerLlmCaller: async ({ mode }) => {
+        if (mode === 'stream') {
+          return {
+            streamChunks: [
+              '{"query_type":"area_analysis","intent_mode":"macro_overview","scope":{"geometry_source":"viewport","viewport":[114.3,30.5,114.4,30.6]},"entities":{"categories":["\u9910\u996e\u670d\u52a1"]}}'
+            ],
+            tokenUsage: {
+              prompt_tokens: 12,
+              completion_tokens: 10,
+              total_tokens: 22
+            }
+          }
+        }
+        throw new Error('non-stream should not be called')
+      }
+    }
+  )
+
+  assert.equal(result.queryPlan?.query_type, 'area_analysis')
+  assert.equal(result.diagnostics?.planner_streaming?.fallback_used, false)
+  assert.equal(result.diagnostics?.planner_streaming?.final_state, 'S4')
+})

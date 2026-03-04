@@ -434,9 +434,9 @@ export function getQueueMode() {
 }
 
 /**
-/**
  * 统计当前内存快照中的任务状态分布，便于统一监控队列健康。
  */
+function buildSnapshotStatusStats() {
   const stats = {
     total: jobSnapshots.size,
     queued: 0,
@@ -487,9 +487,9 @@ function parseHealthThreshold(rawValue, fallback) {
 }
 
 /**
-/**
  * 规范化告警对象，便于 API 与脚本统一解析。
  */
+function createQueueAlert(code, severity, message, extra = {}) {
   return {
     code,
     severity,

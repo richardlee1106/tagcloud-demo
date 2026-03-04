@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """VLM helpers for morphology review and map-anchor extraction."""
 
 from __future__ import annotations
@@ -581,7 +581,7 @@ def review_cluster_morphology(
     boundary_geojson: Dict[str, Any] | None,
     boundary_quality: Dict[str, Any] | None,
     poi_count: int,
-    model_name: str = "qwen3.5-4b",
+    model_name: str = "qwen3.5-2b",
     endpoint: str = "http://localhost:1234/v1/chat/completions",
     image_data_url: str | None = None,
     enable_remote: bool = False,
@@ -641,4 +641,5 @@ def review_cluster_morphology(
         "summary": str(remote.get("summary") or "Remote visual review completed."),
         "remote": remote,
     }
+
 

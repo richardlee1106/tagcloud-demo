@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """Lightweight LLM spatial reasoning helper."""
 
 from __future__ import annotations
@@ -206,7 +206,7 @@ def infer_spatial_priors(
     categories: List[str] | None,
     vlm_landmarks: List[str] | None,
     vlm_aliases: List[str] | None,
-    model_name: str = "qwen3.5-4b",
+    model_name: str = "qwen3.5-2b",
     endpoint: str = "http://localhost:1234/v1/chat/completions",
     timeout_ms: int = 1200,
 ) -> Dict[str, Any]:
@@ -294,3 +294,4 @@ def infer_spatial_priors(
     }
     result["success"] = True
     return result
+

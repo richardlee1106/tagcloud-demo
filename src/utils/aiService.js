@@ -41,6 +41,56 @@ function extractModelTiming(payload) {
   return null
 }
 
+const REASONING_START_RE = /^(thinking process|thought process|reasoning process|思考过程|推理过程|分析步骤|分析过程|let'?s think)\s*[:：]?/i
+const REASONING_HEADING_RE = /^(\d+\.\s*)?\*{0,2}\s*(analyze the request|evaluate data|evaluate data\s*&\s*constraints|drafting content|refining for tone|final polish|revised draft|final plan)\s*[:：]?/i
+const REASONING_MARKERS = [
+  'analyze the request',
+  'evaluate data',
+  'constraints',
+  'drafting content',
+  'refining for tone',
+  'final polish',
+  'revised draft',
+  'final plan'
+]
+
+function stripThinkTags(text = '') {
+  return String(text || '')
+    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .replace(/<\/?think>/gi, '')
+    .trim()
+}
+
+function looksLikeReasoningTranscriptStart(text = '') {
+  const probe = String(text || '').trimStart()
+  if (!probe) return false
+  return REASONING_START_RE.test(probe) || REASONING_HEADING_RE.test(probe)
+}
+
+function looksLikeReasoningContinuation(text = '') {
+  const probe = String(text || '').trim()
+  if (!probe) return true
+  if (looksLikeReasoningTranscriptStart(probe)) return true
+
+  const lowered = probe.toLowerCase()
+  const markerHitCount = REASONING_MARKERS.reduce(
+    (count, marker) => (lowered.includes(marker) ? count + 1 : count),
+    0
+  )
+  if (markerHitCount >= 2) return true
+  if (/^(\d+\.\s+|[-*]\s+)/.test(probe) && markerHitCount >= 1) return true
+  return false
+}
+
+function sanitizeAssistantOutputText(text = '') {
+  if (typeof text !== 'string') return ''
+  const withoutThink = stripThinkTags(text)
+  if (!withoutThink) return ''
+  // 过滤常见“思考过程”前缀，防止渲染到用户界面。
+  if (looksLikeReasoningTranscriptStart(withoutThink)) return ''
+  return withoutThink
+}
+
 // 当前服务商信息（从后端获取）
 let currentProvider = {
   online: false,
@@ -207,6 +257,26 @@ export async function sendChatMessageStream(messages, onChunk, options = {}, poi
   let currentEvent = null // 跟踪当前 SSE 事件类型
   let lastModelTimingSignature = null
   let hasTextOutput = false
+  let suppressReasoningTranscript = false
+
+  const consumeAssistantText = (rawText) => {
+    const candidate = stripThinkTags(rawText)
+    if (!candidate) return ''
+
+    if (looksLikeReasoningTranscriptStart(candidate)) {
+      suppressReasoningTranscript = true
+      return ''
+    }
+
+    if (suppressReasoningTranscript) {
+      if (looksLikeReasoningContinuation(candidate)) {
+        return ''
+      }
+      suppressReasoningTranscript = false
+    }
+
+    return candidate
+  }
 
   while (true) {
     const { done, value } = await reader.read()
@@ -239,6 +309,9 @@ export async function sendChatMessageStream(messages, onChunk, options = {}, poi
 
           if (eventType && META_EVENT_TYPES.has(eventType)) {
             const payload = JSON.parse(data)
+            if (eventType === 'refined_result' && typeof payload?.answer === 'string') {
+              payload.answer = sanitizeAssistantOutputText(payload.answer)
+            }
             const validation = validateSSEEventPayload(eventType, payload)
             if (!validation.ok) {
               console.warn('[AI Frontend] SSE payload schema mismatch:', {
@@ -298,7 +371,9 @@ export async function sendChatMessageStream(messages, onChunk, options = {}, poi
               }
             }
             if (eventType === 'refined_result') {
-              const answerText = typeof payload?.answer === 'string' ? payload.answer : ''
+              const answerText = consumeAssistantText(
+                typeof payload?.answer === 'string' ? payload.answer : ''
+              )
               if (!hasTextOutput && answerText.trim()) {
                 fullContent += answerText
                 hasTextOutput = true
@@ -319,7 +394,8 @@ export async function sendChatMessageStream(messages, onChunk, options = {}, poi
           
           // 如果后端直接发的 { content: '...' } 格式 (index.js 修改后)
           if (parsed.content !== undefined) {
-             const delta = parsed.content
+             const delta = consumeAssistantText(parsed.content)
+             if (!delta) continue
              fullContent += delta
              hasTextOutput = true
              onChunk(delta)
@@ -328,7 +404,7 @@ export async function sendChatMessageStream(messages, onChunk, options = {}, poi
 
           // 兼容 OpenAI 格式
           const choice = parsed.choices?.[0]
-          const delta = choice?.delta?.content || choice?.text || ''
+          const delta = consumeAssistantText(choice?.delta?.content || choice?.text || '')
           
           if (delta) {
              fullContent += delta
@@ -350,7 +426,7 @@ export async function sendChatMessageStream(messages, onChunk, options = {}, poi
     }
   }
 
-  fullContent = fullContent.replace(/<think>[\s\S]*?<\/think>/g, '').trim()
+  fullContent = sanitizeAssistantOutputText(fullContent)
   return fullContent
 }
 
@@ -558,7 +634,7 @@ export async function semanticSearch(keyword, features = [], options = {}) {
        properties: {
           id: p.id,
           '名称': p.name,
-          '小类': p.category,
+          '小类': p.category || p.category_small || p.category_mid || p.category_big || p.type || '未分类',
           '地址': p.address,
           // 0 = 红色(默认), 4 = 紫色(AI推荐)
           _groupIndex: options.colorIndex !== undefined ? options.colorIndex : 0 
@@ -608,7 +684,7 @@ export function getCurrentProviderInfo() {
     id: currentProvider.provider,
     name: currentProvider.providerName,
     apiBase: API_BASE,
-    modelId: currentProvider.provider === 'local' ? 'qwen3.5-4b' : 'mimo-v2-flash'
+    modelId: currentProvider.provider === 'local' ? 'qwen3.5-2b' : 'mimo-v2-flash'
   }
 }
 
@@ -626,3 +702,4 @@ export async function getAvailableModels() {
     return []
   }
 }
+

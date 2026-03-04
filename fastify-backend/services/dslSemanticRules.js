@@ -10,6 +10,20 @@ function normalizeRiskLevel(dsl = {}) {
   return normalizeText(dsl?.uncertainty?.risk_level).toLowerCase() || 'low'
 }
 
+function normalizeRiskLevelValue(value) {
+  const normalized = normalizeText(value).toLowerCase()
+  if (normalized === 'critical') return 'critical'
+  if (normalized === 'high') return 'high'
+  if (normalized === 'medium') return 'medium'
+  return 'low'
+}
+
+function normalizeEventSeq(value) {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return null
+  return Math.max(0, Math.trunc(numeric))
+}
+
 function pushError(errors, {
   rule_id,
   path,
@@ -90,6 +104,127 @@ function collectDagErrors(operators = [], errors = []) {
         fix_hint: 'Break cyclic depends_on references and keep operators as a DAG.'
       })
       break
+    }
+  }
+}
+
+export function evaluateContextBindingConsistency({
+  currentBinding = {},
+  previousState = null,
+  riskLevel = 'low'
+} = {}) {
+  const normalizedRiskLevel = normalizeRiskLevelValue(riskLevel)
+  const clientViewId = normalizeText(currentBinding?.client_view_id)
+  const viewportHash = normalizeText(currentBinding?.viewport_hash)
+  const eventSeq = normalizeEventSeq(currentBinding?.event_seq)
+
+  const degraded = !clientViewId || !viewportHash || eventSeq == null
+  if (degraded) {
+    return {
+      context_binding_degraded: true,
+      context_stale: false,
+      context_refreshed: false,
+      context_view_changed: false,
+      idempotent_replay: false,
+      requires_clarification: false,
+      should_update_state: false,
+      reason: 'context_binding_degraded',
+      normalized: {
+        client_view_id: clientViewId || null,
+        viewport_hash: viewportHash || null,
+        event_seq: eventSeq
+      }
+    }
+  }
+
+  const lastEventSeq = normalizeEventSeq(previousState?.last_event_seq)
+  const lastViewportHash = normalizeText(previousState?.last_viewport_hash)
+  if (lastEventSeq == null || !lastViewportHash) {
+    return {
+      context_binding_degraded: false,
+      context_stale: false,
+      context_refreshed: false,
+      context_view_changed: false,
+      idempotent_replay: false,
+      requires_clarification: false,
+      should_update_state: true,
+      reason: 'context_first_seen',
+      normalized: {
+        client_view_id: clientViewId,
+        viewport_hash: viewportHash,
+        event_seq: eventSeq
+      }
+    }
+  }
+
+  if (eventSeq < lastEventSeq) {
+    return {
+      context_binding_degraded: false,
+      context_stale: true,
+      context_refreshed: false,
+      context_view_changed: false,
+      idempotent_replay: false,
+      requires_clarification: true,
+      should_update_state: false,
+      reason: 'context_stale',
+      normalized: {
+        client_view_id: clientViewId,
+        viewport_hash: viewportHash,
+        event_seq: eventSeq
+      }
+    }
+  }
+
+  if (eventSeq === lastEventSeq && viewportHash === lastViewportHash) {
+    return {
+      context_binding_degraded: false,
+      context_stale: false,
+      context_refreshed: false,
+      context_view_changed: false,
+      idempotent_replay: true,
+      requires_clarification: false,
+      should_update_state: false,
+      reason: 'context_idempotent_replay',
+      normalized: {
+        client_view_id: clientViewId,
+        viewport_hash: viewportHash,
+        event_seq: eventSeq
+      }
+    }
+  }
+
+  if (viewportHash === lastViewportHash) {
+    return {
+      context_binding_degraded: false,
+      context_stale: false,
+      context_refreshed: false,
+      context_view_changed: false,
+      idempotent_replay: false,
+      requires_clarification: false,
+      should_update_state: true,
+      reason: 'context_accepted',
+      normalized: {
+        client_view_id: clientViewId,
+        viewport_hash: viewportHash,
+        event_seq: eventSeq
+      }
+    }
+  }
+
+  const highRisk = normalizedRiskLevel === 'high' || normalizedRiskLevel === 'critical'
+  return {
+    context_binding_degraded: false,
+    context_stale: false,
+    context_refreshed: !highRisk,
+    context_view_changed: true,
+    idempotent_replay: false,
+    requires_clarification: highRisk,
+    should_update_state: !highRisk,
+    reason: highRisk ? 'context_view_changed_high_risk' : 'context_view_changed_low_risk_refreshed',
+    normalized: {
+      client_view_id: clientViewId,
+      viewport_hash: viewportHash,
+      event_seq: eventSeq
     }
   }
 }
@@ -213,5 +348,6 @@ export function validateDslSemanticRules(dsl = {}, runtimeContext = {}) {
 }
 
 export default {
-  validateDslSemanticRules
+  validateDslSemanticRules,
+  evaluateContextBindingConsistency
 }

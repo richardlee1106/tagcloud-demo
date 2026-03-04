@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 
 import {
   validateDsl,
+  validateSpatialPlan,
   assertValidSpatialPlan,
   DslValidationError
 } from '../services/dslValidator.js'
@@ -145,4 +146,85 @@ test('assertValidSpatialPlan throws DslValidationError for invalid DSL input', (
     assert.equal(err.code, 'dsl_schema_invalid')
     return true
   })
+})
+
+test('validateSpatialPlan auto-enables critic for high-risk legacy query plans', () => {
+  const legacyPlan = {
+    query_type: 'area_analysis',
+    confidence: {
+      level: 'high',
+      score: 8
+    }
+  }
+
+  const result = validateSpatialPlan(legacyPlan, {
+    spatialContext: {
+      viewport: [114.30, 30.50, 114.40, 30.60]
+    },
+    options: {}
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.normalized_dsl?.uncertainty?.risk_level, 'high')
+  assert.equal(result.normalized_dsl?.routing?.critic_enabled, true)
+})
+
+test('validateDsl uses compat mode when DSL_V1_COMPAT_MODE=true', () => {
+  const previousCompatMode = process.env.DSL_V1_COMPAT_MODE
+  const previousCompatModeLegacy = process.env.V1_COMPAT_MODE
+  process.env.DSL_V1_COMPAT_MODE = 'true'
+  delete process.env.V1_COMPAT_MODE
+
+  try {
+    const dsl = buildValidDsl()
+    dsl.unexpected_root = 1
+
+    const result = validateDsl(dsl)
+
+    assert.equal(result.diagnostics?.compat_mode, 'compat')
+    assert.equal(result.diagnostics?.dsl_schema_degraded, true)
+    if (result.ok) {
+      assert.equal(Object.prototype.hasOwnProperty.call(result.normalized_dsl, 'unexpected_root'), false)
+    }
+  } finally {
+    if (previousCompatMode == null) {
+      delete process.env.DSL_V1_COMPAT_MODE
+    } else {
+      process.env.DSL_V1_COMPAT_MODE = previousCompatMode
+    }
+    if (previousCompatModeLegacy == null) {
+      delete process.env.V1_COMPAT_MODE
+    } else {
+      process.env.V1_COMPAT_MODE = previousCompatModeLegacy
+    }
+  }
+})
+
+test('validateDsl uses strict mode by default when compat env flags are disabled', () => {
+  const previousCompatMode = process.env.DSL_V1_COMPAT_MODE
+  const previousCompatModeLegacy = process.env.V1_COMPAT_MODE
+  process.env.DSL_V1_COMPAT_MODE = 'false'
+  delete process.env.V1_COMPAT_MODE
+
+  try {
+    const dsl = buildValidDsl()
+    dsl.unexpected_root = 1
+
+    const result = validateDsl(dsl)
+
+    assert.equal(result.ok, false)
+    assert.equal(result.error_code, 'dsl_schema_invalid')
+    assert.equal(result.diagnostics?.compat_mode, 'strict')
+  } finally {
+    if (previousCompatMode == null) {
+      delete process.env.DSL_V1_COMPAT_MODE
+    } else {
+      process.env.DSL_V1_COMPAT_MODE = previousCompatMode
+    }
+    if (previousCompatModeLegacy == null) {
+      delete process.env.V1_COMPAT_MODE
+    } else {
+      process.env.V1_COMPAT_MODE = previousCompatModeLegacy
+    }
+  }
 })

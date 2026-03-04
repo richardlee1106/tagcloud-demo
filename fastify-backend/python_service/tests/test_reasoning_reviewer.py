@@ -1,4 +1,4 @@
-import unittest
+﻿import unittest
 
 from pipeline import reasoning_reviewer
 
@@ -26,7 +26,7 @@ class ReasoningReviewerTest(unittest.TestCase):
                 categories=["购物服务"],
                 vlm_landmarks=["武汉大学"],
                 vlm_aliases=["武大"],
-                model_name="qwen3.5-4b",
+                model_name="qwen3.5-2b",
                 endpoint="http://localhost:1234/v1/chat/completions",
                 timeout_ms=1500,
             )
@@ -116,3 +116,4 @@ class ReasoningReviewerTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

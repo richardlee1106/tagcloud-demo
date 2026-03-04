@@ -248,6 +248,10 @@ class RAGSession {
       category: resolvePoiCategory(p),
       distance: resolvePoiDistance(p)
     }));
+    this.summary.totalPOIsRetrieved = Math.max(
+      Number(this.summary.totalPOIsRetrieved || 0),
+      Array.isArray(pois) ? pois.length : 0
+    );
     this.log('Fusion', 'FinalPOIs', { count: pois.length });
   }
 
@@ -625,6 +629,7 @@ class RAGSession {
         if (Array.isArray(item?.extracted_texts) && item.extracted_texts.length > 0) {
           details.push(`texts=${item.extracted_texts.slice(0, 8).join(', ')}`);
         }
+        if (item?.extracted_reason) details.push(`reason=${item.extracted_reason}`);
         if (item?.summary) {
           const summaryText = String(item.summary);
           details.push(`summary=${summaryText.length > 80 ? `${summaryText.slice(0, 80)}...` : summaryText}`);

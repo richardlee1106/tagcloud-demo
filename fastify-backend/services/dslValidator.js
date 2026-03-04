@@ -5,6 +5,7 @@ import addFormats from 'ajv-formats'
 
 import { validateDslSemanticRules } from './dslSemanticRules.js'
 import { validateDslPolicyRules } from './dslPolicyRules.js'
+import { applyDslPatch } from './dslPatchEngine.js'
 
 const SPATIAL_DSL_SCHEMA = JSON.parse(
   readFileSync(new URL('../schemas/spatial_query_v1.schema.json', import.meta.url), 'utf8')
@@ -50,13 +51,13 @@ function normalizeCompatMode(runtimeContext = {}) {
   if (explicit === 'strict') return 'strict'
   if (explicit === 'compat') return 'compat'
 
-  const strictEnabled = toBoolean(
+  const compatEnabled = toBoolean(
     process.env.DSL_V1_COMPAT_MODE
     ?? process.env.V1_COMPAT_MODE
     ?? 'false',
     false
   )
-  return strictEnabled ? 'strict' : 'compat'
+  return compatEnabled ? 'compat' : 'strict'
 }
 
 function isSpatialDslObject(value) {
@@ -196,7 +197,12 @@ function toLegacyDslEnvelope(queryPlan = {}, runtimeContext = {}) {
     ?? 3000
   )
   const resultLimit = Number(queryPlan?.constraints?.result_limit ?? queryPlan?.result_limit ?? options?.limit ?? 200)
-  const criticEnabled = queryPlan?.routing?.critic_enabled === true || options?.criticEnabled === true
+  // Legacy plan 通常不显式携带 routing.critic_enabled。
+  // 对 high/critical 风险自动补齐 critic，避免被语义规则拦截。
+  const criticEnabled = queryPlan?.routing?.critic_enabled === true
+    || options?.criticEnabled === true
+    || riskLevel === 'high'
+    || riskLevel === 'critical'
 
   return {
     dsl_version: 'spatial_query_v1',
@@ -350,6 +356,79 @@ function runPolicyValidation(dsl) {
   })
 }
 
+function resolvePatchBaseDsl(runtimeContext = {}) {
+  const candidates = [
+    runtimeContext.baseDsl,
+    runtimeContext.base_dsl,
+    runtimeContext.previousDsl,
+    runtimeContext.previous_dsl
+  ]
+  const found = candidates.find((item) => item && typeof item === 'object' && !Array.isArray(item))
+  return found || null
+}
+
+function runPatchModeValidation(dsl, runtimeContext = {}) {
+  const revision = dsl?.revision && typeof dsl.revision === 'object' ? dsl.revision : {}
+  const revisionMode = normalizeText(revision?.mode).toLowerCase() || 'rebuild'
+  const patchOps = Array.isArray(revision?.patch_ops) ? revision.patch_ops : []
+
+  if (revisionMode !== 'patch') {
+    return {
+      ok: true,
+      normalized_dsl: dsl,
+      diagnostics: {
+        revision_mode: revisionMode,
+        patch_applied: false,
+        patch_ops_count: patchOps.length
+      }
+    }
+  }
+
+  const baseDsl = resolvePatchBaseDsl(runtimeContext)
+  const patched = applyDslPatch({
+    baseDsl,
+    currentDsl: dsl,
+    patchOps
+  })
+  if (!patched.ok) {
+    return buildFailure({
+      stage: 'semantic',
+      error_code: patched.error_code || 'dsl_semantic_invalid',
+      errors: patched.errors || [],
+      fix_hint: patched.fix_hint || 'Patch failed. Switch to revision.mode=rebuild or fix patch_ops.',
+      diagnostics: {
+        revision_mode: revisionMode,
+        patch_applied: false
+      }
+    })
+  }
+
+  const schemaRecheck = runSchemaValidation(patched.patched_dsl, runtimeContext)
+  if (!schemaRecheck.ok) {
+    return {
+      ...schemaRecheck,
+      diagnostics: {
+        ...(schemaRecheck.diagnostics || {}),
+        revision_mode: revisionMode,
+        patch_applied: true,
+        patch_ops_count: patchOps.length
+      }
+    }
+  }
+
+  return {
+    ok: true,
+    normalized_dsl: schemaRecheck.normalized_dsl,
+    diagnostics: {
+      ...(schemaRecheck.diagnostics || {}),
+      revision_mode: revisionMode,
+      patch_applied: true,
+      patch_ops_count: patchOps.length,
+      ...(patched.diagnostics || {})
+    }
+  }
+}
+
 export class DslValidationError extends Error {
   constructor(validationResult) {
     const payload = validationResult || {}
@@ -372,7 +451,19 @@ export function validateDsl(dsl, runtimeContext = {}) {
   const schemaResult = runSchemaValidation(dsl, runtimeContext)
   if (!schemaResult.ok) return schemaResult
 
-  const semanticResult = runSemanticValidation(schemaResult.normalized_dsl, {
+  const patchResult = runPatchModeValidation(schemaResult.normalized_dsl, runtimeContext)
+  if (!patchResult.ok) {
+    return {
+      ...patchResult,
+      diagnostics: {
+        ...schemaResult.diagnostics,
+        ...(patchResult.diagnostics || {})
+      }
+    }
+  }
+
+  const effectiveDsl = patchResult.normalized_dsl
+  const semanticResult = runSemanticValidation(effectiveDsl, {
     ...runtimeContext,
     enforceOperatorRules: runtimeContext.enforceOperatorRules !== false
   })
@@ -380,19 +471,21 @@ export function validateDsl(dsl, runtimeContext = {}) {
     return {
       ...semanticResult,
       diagnostics: {
+        ...schemaResult.diagnostics,
+        ...(patchResult.diagnostics || {}),
         ...semanticResult.diagnostics,
-        ...schemaResult.diagnostics
       }
     }
   }
 
-  const policyResult = runPolicyValidation(schemaResult.normalized_dsl)
+  const policyResult = runPolicyValidation(effectiveDsl)
   if (!policyResult.ok) {
     return {
       ...policyResult,
       diagnostics: {
+        ...schemaResult.diagnostics,
+        ...(patchResult.diagnostics || {}),
         ...policyResult.diagnostics,
-        ...schemaResult.diagnostics
       }
     }
   }
@@ -400,9 +493,10 @@ export function validateDsl(dsl, runtimeContext = {}) {
   return {
     ok: true,
     stage: 'policy',
-    normalized_dsl: schemaResult.normalized_dsl,
+    normalized_dsl: effectiveDsl,
     diagnostics: {
       ...schemaResult.diagnostics,
+      ...(patchResult.diagnostics || {}),
       semantic_pass: true,
       policy_pass: true
     }

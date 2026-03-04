@@ -106,6 +106,17 @@
                 <span v-if="msg.queryType" class="intent-pill">Type: {{ msg.queryType }}</span>
                 <span v-if="msg.intentMeta?.intentMode" class="intent-pill">Mode: {{ msg.intentMeta.intentMode }}</span>
               </div>
+              <div
+                v-if="DSL_META_GRAY_ENABLED && msg.prefetchDebug"
+                class="pipeline-prefetch-inline"
+              >
+                <span class="prefetch-pill" :class="`is-${msg.prefetchDebug.status || 'unknown'}`">
+                  Prefetch: {{ formatPrefetchState(msg.prefetchDebug) }}
+                </span>
+                <span class="prefetch-overlap-inline">
+                  Δ{{ formatPrefetchOverlap(msg.prefetchDebug.overlapDeltaMs) }}
+                </span>
+              </div>
             </div>
 
             <div v-if="msg.content && msg.content.trim()" class="message-text" v-html="renderMessageHtml(msg)"></div>
@@ -342,6 +353,19 @@ const currentStageHint = computed(() => {
   return stageSteps[stageActiveIndex.value]?.hint || '';
 });
 
+function formatPrefetchState(prefetchDebug = {}) {
+  if (prefetchDebug?.degraded === true) return '降级';
+  if (prefetchDebug?.wasted === true) return '浪费';
+  return '有效';
+}
+
+function formatPrefetchOverlap(value = 0) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return '0ms';
+  const rounded = Math.round(numeric);
+  return `${rounded > 0 ? '+' : ''}${rounded}ms`;
+}
+
 function toEmbeddedIntentMode(intentMode, queryType = '') {
   const rawMode = String(intentMode || '').trim().toLowerCase();
   const rawType = String(queryType || '').trim().toLowerCase();
@@ -409,6 +433,7 @@ const streamScrollTick = ref(0);
 const isOnline = ref(null);
 const messagesContainer = ref(null);
 const inputRef = ref(null);
+const chatSessionId = ref(`session_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`);
 const extractedPOIs = ref([]); // AI 提取的 POI 名称列表
 const { dispatchMetaEvent } = useAiStreamDispatcher({
   messagesRef: messages,
@@ -639,6 +664,25 @@ marked.setOptions({
 });
 const markdownRenderCache = new WeakMap();
 
+const REASONING_START_RE = /^(thinking process|thought process|reasoning process|思考过程|推理过程|分析步骤|分析过程|let'?s think)\s*[:：]?/i
+const REASONING_HEADING_RE = /^(\d+\.\s*)?\*{0,2}\s*(analyze the request|evaluate data|evaluate data\s*&\s*constraints|drafting content|refining for tone|final polish|revised draft|final plan)\s*[:：]?/i
+
+function stripThinkTagsFromText(text = '') {
+  return String(text || '')
+    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .replace(/<\/?think>/gi, '')
+    .trim()
+}
+
+function sanitizeAssistantVisibleText(text = '') {
+  const cleaned = stripThinkTagsFromText(text)
+  if (!cleaned) return ''
+  if (REASONING_START_RE.test(cleaned) || REASONING_HEADING_RE.test(cleaned)) {
+    return ''
+  }
+  return cleaned
+}
+
 async function sendMessage() {
   const text = inputText.value.trim();
   if (!text || isTyping.value) return;
@@ -722,11 +766,14 @@ async function sendMessage() {
     const dslMetaSkeleton = buildDslMetaSkeleton({
       enabled: DSL_META_GRAY_ENABLED,
       requestId,
-      spatialContext
+      spatialContext,
+      drawMode: props.drawMode,
+      regions: normalizedRegions
     });
 
     const options = {
       requestId,
+      sessionId: chatSessionId.value,
       clientMetrics: {
         panel: 'ai-chat',
         messageCount: messages.value.length,
@@ -747,7 +794,7 @@ async function sendMessage() {
       nameAuditEnabled: true,
       nameAuditRemoteEnabled: deepSpatialMode,
       nameAuditTimeoutMs: deepSpatialMode ? 900 : 420,
-      visualModel: 'qwen3.5-4b',
+      visualModel: 'qwen3.5-2b',
       ocrModel: 'glm-ocr',
       overviewEnabled: Boolean(screenshotBase64),
       overviewModel: 'qwen3.5-0.8b',
@@ -758,7 +805,7 @@ async function sendMessage() {
       visualSnapshotDataUrl: screenshotBase64,
       screenshotBase64, // legacy fallback key
       reasoningEnabled: false,
-      reasoningModel: 'qwen3.5-4b',
+      reasoningModel: 'qwen3.5-2b',
       reasoningTimeoutMs: deepSpatialMode ? 2800 : 1200,
       modelBudgetMs: deepSpatialMode ? 8000 : 5000,
       limit: deepSpatialMode ? 8000 : 4200,
@@ -767,13 +814,15 @@ async function sendMessage() {
       spatialContext,
       regions: normalizedRegions,
       analysisDepth: deepSpatialMode ? 'deep' : 'fast',
-      ...(DSL_META_GRAY_ENABLED ? dslMetaSkeleton : {})
+      ...dslMetaSkeleton
     };
 
     await sendChatMessageStream(
       apiMessages,
       (chunk) => {
-        enqueueStreamChunk(chunk, aiMessageIndex);
+        const safeChunk = sanitizeAssistantVisibleText(chunk);
+        if (!safeChunk) return;
+        enqueueStreamChunk(safeChunk, aiMessageIndex);
       },
       options,
       props.poiFeatures,
@@ -893,11 +942,16 @@ function saveChatHistory() {
   messages.value.forEach(msg => {
     const role = msg.role === 'user' ? '用户' : '智能助手';
     const time = new Date(msg.timestamp).toLocaleTimeString();
-    content += `[${role}] ${time}:\n${msg.content}\n\n`;
+    const rawContent = String(msg.content || '');
+    const safeContent = msg.role === 'assistant'
+      ? sanitizeAssistantVisibleText(rawContent)
+      : rawContent;
+    content += `[${role}] ${time}:\n${safeContent}\n\n`;
     content += "-----------------------------------\n\n";
   });
   
-  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+  // 写入 UTF-8 BOM，避免 Windows 文本编辑器打开时出现中文乱码。
+  const blob = new Blob(['\uFEFF', content], { type: 'text/plain;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
@@ -1048,7 +1102,10 @@ function renderMarkdown(text) {
 
 function renderMessageHtml(message) {
   if (!message || typeof message !== 'object') return '';
-  const content = String(message.content || '');
+  const rawContent = String(message.content || '');
+  const content = message.role === 'assistant'
+    ? sanitizeAssistantVisibleText(rawContent)
+    : rawContent;
   if (!content) return '';
 
   const cached = markdownRenderCache.get(message);
@@ -1198,12 +1255,12 @@ function extractPOIsFromResponse(content) {
 function renderToTagCloud() {
   // 如果提取的数据包含坐标，说明是后端下发的结构化数据，直接作为 Feature 数组传出
   if (extractedPOIs.value.length > 0 && extractedPOIs.value[0].lon) {
-     const features = extractedPOIs.value.map(p => ({
+      const features = extractedPOIs.value.map(p => ({
         type: 'Feature',
         properties: {
            id: p.id || `temp_${Math.random()}`,
            '名称': p.name,
-           '小类': p.category,
+           '小类': p.category || p.category_small || p.category_mid || p.category_big || p.type || '未分类',
            '地址': p.address,
            '_is_temp': true // 标记为临时数据
         },
@@ -1241,11 +1298,12 @@ const latestAssistantMessage = computed(() => {
 
 const latestAssistantMessageText = computed(() => {
   if (!latestAssistantMessage.value?.content) return '';
-  return String(latestAssistantMessage.value.content);
+  return sanitizeAssistantVisibleText(latestAssistantMessage.value.content);
 });
 
 function normalizeNarrativeText(raw = '') {
-  const plain = String(raw || '')
+  const safeRaw = sanitizeAssistantVisibleText(raw)
+  const plain = String(safeRaw || '')
     .replace(/```[\s\S]*?```/g, ' ')
     .replace(/\|.*\|/g, ' ')
     .replace(/[#>*`]/g, ' ')
@@ -1260,19 +1318,67 @@ function normalizeNarrativeText(raw = '') {
   return `${plain.slice(0, 180)}...`
 }
 
+function isWeakFeatureClaimText(text = '') {
+  const probe = String(text || '')
+  if (!probe) return false
+
+  const weakTokens = /(道路名|道路|路口|楼栋号?|门牌号?|停车场|出入口|宾馆酒店|宾馆|酒店)/i
+  const claimTokens = /(明显特征|核心特征|主特征|关键特征)/i
+  return weakTokens.test(probe) && claimTokens.test(probe)
+}
+
+function buildEvidenceNarrative(message) {
+  const hotspots = Array.isArray(message?.spatialClusters?.hotspots) ? message.spatialClusters.hotspots : []
+  const regions = Array.isArray(message?.vernacularRegions) ? message.vernacularRegions : []
+  const fuzzyRegions = Array.isArray(message?.fuzzyRegions) ? message.fuzzyRegions : []
+
+  const hotspotCount = hotspots.length
+  const regionCount = regions.length
+  const fuzzyCount = fuzzyRegions.length
+
+  if (hotspotCount === 0 && regionCount === 0 && fuzzyCount === 0) {
+    return ''
+  }
+
+  const topHotspot = hotspots[0] || null
+  const topRegion = regions[0] || null
+  const hotspotLabel = String(
+    topHotspot?.name ||
+    topHotspot?.dominantCategories?.[0]?.category ||
+    topHotspot?.dominant_categories?.[0]?.category ||
+    ''
+  ).trim()
+  const regionLabel = String(
+    topRegion?.name ||
+    topRegion?.dominant_category ||
+    topRegion?.theme ||
+    ''
+  ).trim()
+
+  const parts = [
+    `已识别 ${hotspotCount} 个高密度热点、${regionCount} 个主导业态片区、${fuzzyCount} 个边界模糊片区。`
+  ]
+
+  if (hotspotLabel) {
+    parts.push(`当前热点锚点为「${hotspotLabel}」附近。`)
+  }
+  if (regionLabel) {
+    parts.push(`建议优先围绕「${regionLabel}」做机会验证与对比追问。`)
+  }
+
+  return parts.join('')
+}
+
 const analysisNarrativeText = computed(() => {
   const message = latestAssistantMessage.value
   if (!message) return ''
 
+  const fromEvidence = buildEvidenceNarrative(message)
+  if (fromEvidence) return fromEvidence
+
   const fromContent = normalizeNarrativeText(message.content || '')
-  if (fromContent) return fromContent
-
-  const hotspotCount = Array.isArray(message.spatialClusters?.hotspots) ? message.spatialClusters.hotspots.length : 0
-  const regionCount = Array.isArray(message.vernacularRegions) ? message.vernacularRegions.length : 0
-  const fuzzyCount = Array.isArray(message.fuzzyRegions) ? message.fuzzyRegions.length : 0
-
-  if (hotspotCount > 0 || regionCount > 0 || fuzzyCount > 0) {
-    return `已识别 ${hotspotCount} 个热点片区、${regionCount} 个主导业态片区、${fuzzyCount} 个边界模糊片区，可结合下方模板执行定位与追问。`
+  if (fromContent && !isWeakFeatureClaimText(fromContent)) {
+    return fromContent
   }
 
   return ''
@@ -1789,6 +1895,47 @@ defineExpose({
   padding: 3px 8px;
 }
 
+.pipeline-prefetch-inline {
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+}
+
+.prefetch-pill {
+  border-radius: 999px;
+  border: 1px solid rgba(125, 211, 252, 0.52);
+  background: rgba(8, 47, 73, 0.55);
+  color: #dff4ff;
+  font-size: 10px;
+  padding: 2px 8px;
+}
+
+.prefetch-pill.is-effective {
+  border-color: rgba(74, 222, 128, 0.65);
+  background: rgba(21, 78, 50, 0.48);
+  color: #dcfce7;
+}
+
+.prefetch-pill.is-wasted {
+  border-color: rgba(250, 204, 21, 0.72);
+  background: rgba(113, 63, 18, 0.52);
+  color: #fef3c7;
+}
+
+.prefetch-pill.is-degraded {
+  border-color: rgba(251, 146, 60, 0.72);
+  background: rgba(124, 45, 18, 0.52);
+  color: #ffedd5;
+}
+
+.prefetch-overlap-inline {
+  font-size: 10px;
+  color: rgba(191, 219, 254, 0.85);
+}
+
 .analysis-board {
   border: 1px solid var(--line-soft);
   border-radius: 16px;
@@ -2029,3 +2176,4 @@ defineExpose({
   }
 }
 </style>
+

@@ -15,6 +15,12 @@ import { insertOperatorTimingEvents } from './database.js'
 import { callLLM, generateEmbedding } from './llm.js'
 import { buildFailureDiagnostics } from './errorDiagnostics.js'
 import { assertValidSpatialPlan } from './dslValidator.js'
+import { createPrefetchOrchestrator } from './prefetchOrchestrator.js'
+import {
+  loadContextBindingState,
+  updateContextBindingState
+} from './contextBindingState.js'
+import { evaluateContextBindingConsistency } from './dslSemanticRules.js'
 import { isVectorDBAvailable, parallelHybridSearch } from './vectordb.js'
 import {
   classifyGeoRelevance,
@@ -67,6 +73,183 @@ function normalizeQueryType(queryPlan = {}) {
   return String(rawType).trim().toLowerCase() || 'poi_search'
 }
 
+function normalizeRiskLevel(queryPlan = {}) {
+  const raw = queryPlan?.uncertainty?.risk_level
+    || queryPlan?.risk_level
+    || queryPlan?.confidence?.level
+    || 'low'
+  const normalized = String(raw || '').trim().toLowerCase()
+  if (normalized === 'critical') return 'critical'
+  if (normalized === 'high') return 'high'
+  if (normalized === 'medium') return 'medium'
+  return 'low'
+}
+
+function shouldEnableCriticForRisk(queryPlan = {}, options = {}) {
+  const riskLevel = normalizeRiskLevel(queryPlan)
+  if (riskLevel === 'high' || riskLevel === 'critical') return true
+  return options?.criticEnabled === true || queryPlan?.routing?.critic_enabled === true
+}
+
+function applyCriticRouting(queryPlan = {}, criticEnabled = false) {
+  if (!criticEnabled || !queryPlan || typeof queryPlan !== 'object' || Array.isArray(queryPlan)) {
+    return queryPlan
+  }
+
+  const existingRouting = queryPlan?.routing && typeof queryPlan.routing === 'object'
+    ? queryPlan.routing
+    : {}
+
+  return {
+    ...queryPlan,
+    routing: {
+      ...existingRouting,
+      critic_enabled: true
+    }
+  }
+}
+
+function normalizeContextBindingValue(options = {}, queryPlan = {}) {
+  const candidate = (
+    (options?.context_binding && typeof options.context_binding === 'object' ? options.context_binding : null)
+    || (queryPlan?.context_binding && typeof queryPlan.context_binding === 'object' ? queryPlan.context_binding : null)
+  )
+  if (!candidate) return {}
+
+  const eventSeqRaw = Number(candidate.event_seq)
+  return {
+    client_view_id: String(candidate.client_view_id || '').trim(),
+    viewport_hash: String(candidate.viewport_hash || '').trim(),
+    event_seq: Number.isFinite(eventSeqRaw) ? Math.max(0, Math.trunc(eventSeqRaw)) : null,
+    map_state_version: candidate.map_state_version ?? null,
+    captured_at_ms: Number.isFinite(Number(candidate.captured_at_ms))
+      ? Math.max(0, Math.trunc(Number(candidate.captured_at_ms)))
+      : null,
+    source: String(candidate.source || '').trim() || null
+  }
+}
+
+function buildScopeSnapshot(queryPlan = {}, spatialContext = {}) {
+  if (queryPlan?.scope && typeof queryPlan.scope === 'object') {
+    try {
+      return structuredClone(queryPlan.scope)
+    } catch {
+      return JSON.parse(JSON.stringify(queryPlan.scope))
+    }
+  }
+
+  if (Array.isArray(spatialContext?.viewport) && spatialContext.viewport.length >= 4) {
+    return {
+      geometry_source: 'viewport',
+      viewport: spatialContext.viewport.slice(0, 4).map((value) => Number(value))
+    }
+  }
+
+  if (Array.isArray(spatialContext?.boundary) && spatialContext.boundary.length >= 3) {
+    return {
+      geometry_source: 'polygon',
+      polygon: spatialContext.boundary
+    }
+  }
+
+  return null
+}
+
+function applyRefreshedContextScope(queryPlan = {}, spatialContext = {}, contextDecision = {}) {
+  if (!contextDecision?.context_refreshed) return queryPlan
+  if (!Array.isArray(spatialContext?.viewport) || spatialContext.viewport.length < 4) return queryPlan
+
+  const nextViewport = spatialContext.viewport.slice(0, 4).map((value) => Number(value))
+  if (isSpatialDslQueryPlan(queryPlan)) {
+    if (String(queryPlan?.scope?.geometry_source || '').trim().toLowerCase() !== 'viewport') {
+      return queryPlan
+    }
+    return {
+      ...queryPlan,
+      scope: {
+        ...(queryPlan.scope || {}),
+        geometry_source: 'viewport',
+        viewport: nextViewport
+      }
+    }
+  }
+
+  if (queryPlan?.scope && typeof queryPlan.scope === 'object') {
+    return {
+      ...queryPlan,
+      scope: {
+        ...queryPlan.scope,
+        geometry_source: 'viewport',
+        viewport: nextViewport
+      }
+    }
+  }
+
+  return queryPlan
+}
+
+async function buildContextClarificationResult({
+  report = {},
+  requestId = '',
+  userQuestion = '',
+  contextDecision = {}
+} = {}) {
+  const staleReason = contextDecision?.context_stale === true
+  const clarificationReason = staleReason ? 'context_stale' : 'context_view_changed'
+  const clarificationQuestion = staleReason
+    ? '检测到这是较早的地图请求，请在当前视图下重新发送该问题。'
+    : '检测到你发送期间地图视图已发生变化。请确认是否基于当前视图重新分析。'
+
+  await report.reportStage?.('clarification_needed', {
+    reason: clarificationReason,
+    context_binding_degraded: contextDecision?.context_binding_degraded === true,
+    context_stale: contextDecision?.context_stale === true,
+    context_view_changed: contextDecision?.context_view_changed === true
+  })
+  await report.reportText?.(clarificationQuestion)
+  await report.reportProgress?.(1, { stage: 'completed', mode: 'clarification_needed' })
+
+  return {
+    success: true,
+    request_id: requestId,
+    query: userQuestion,
+    query_plan: {
+      query_type: 'clarification_needed',
+      intent_mode: 'clarification',
+      categories: [],
+      clarification_required: true,
+      clarification_question: clarificationQuestion,
+      confidence: {
+        score: 8,
+        level: 'high',
+        reasons: [clarificationReason]
+      }
+    },
+    answer: clarificationQuestion,
+    results: {
+      mode: 'clarification_needed',
+      pois: [],
+      boundary: null,
+      spatial_clusters: { hotspots: [] },
+      vernacular_regions: [],
+      fuzzy_regions: [],
+      stats: {
+        query_type: 'clarification_needed',
+        context_binding_degraded: contextDecision?.context_binding_degraded === true,
+        context_stale: contextDecision?.context_stale === true,
+        context_refreshed: false,
+        context_view_changed: contextDecision?.context_view_changed === true
+      }
+    },
+    diagnostics: {
+      engine: 'context_binding_guard',
+      request_id: requestId,
+      clarification_reason: clarificationReason,
+      context_binding: contextDecision
+    }
+  }
+}
+
 function isSpatialDslQueryPlan(queryPlan = {}) {
   return String(queryPlan?.dsl_version || '').trim().toLowerCase() === 'spatial_query_v1'
     && queryPlan?.task
@@ -91,7 +274,7 @@ function toExecutableQueryPlan(queryPlan = {}) {
 }
 
 const LEGACY_VISUAL_MODEL_ALIASES = new Map([
-  ['qwen3.5-4b', 'qwen3.5-4b']
+  ['qwen3.5-2b', 'qwen3.5-2b']
 ])
 
 function upgradeLegacyVisualModelAlias(modelName = '') {
@@ -100,7 +283,7 @@ function upgradeLegacyVisualModelAlias(modelName = '') {
   return LEGACY_VISUAL_MODEL_ALIASES.get(normalized.toLowerCase()) || normalized
 }
 
-export function normalizeVisualModelName(modelName, { fallback = 'qwen3.5-4b' } = {}) {
+export function normalizeVisualModelName(modelName, { fallback = 'qwen3.5-2b' } = {}) {
   const explicitModel = upgradeLegacyVisualModelAlias(modelName)
   if (explicitModel) {
     return explicitModel
@@ -117,7 +300,7 @@ export function normalizeVisualModelName(modelName, { fallback = 'qwen3.5-4b' } 
     return envModel
   }
 
-  return upgradeLegacyVisualModelAlias(fallback) || 'qwen3.5-4b'
+  return upgradeLegacyVisualModelAlias(fallback) || 'qwen3.5-2b'
 }
 
 
@@ -306,6 +489,15 @@ function buildPipelineStageChecklist(stats = {}, writerMeta = {}) {
   const normalizedStats = stats && typeof stats === 'object' ? stats : {}
   const ocrTexts = normalizeTextArray(normalizedStats.vlm_extracted_texts, { limit: 6, maxLen: 40 })
   const ocrEnabled = normalizedStats.ocr_enabled === true
+  const modelParallelDegraded = normalizedStats.model_parallel_degraded === true
+  const modelParallelDegradeReason = normalizeShortText(normalizedStats.model_parallel_degrade_reason || '', 80)
+  const ocrExtractedReason = !ocrEnabled
+    ? 'ocr_disabled'
+    : (ocrTexts.length === 0
+      ? (modelParallelDegraded && modelParallelDegradeReason
+        ? `model_parallel_degraded:${modelParallelDegradeReason}`
+        : 'no_text_detected')
+      : null)
   const overviewEnabled = normalizedStats.overview_enabled === true
   const overviewMediumEnabled = normalizedStats.overview_medium_enabled === true
   const visualReviewEnabled = String(normalizedStats.visual_review_mode || '').toLowerCase() !== 'disabled'
@@ -324,7 +516,8 @@ function buildPipelineStageChecklist(stats = {}, writerMeta = {}) {
       ok: ocrEnabled,
       model: normalizedStats.ocr_model || null,
       extracted_count: ocrTexts.length,
-      extracted_texts: ocrTexts
+      extracted_texts: ocrTexts,
+      extracted_reason: ocrExtractedReason
     },
     {
       key: 'overview_light_vlm',
@@ -848,7 +1041,6 @@ export function extractLastUserMessage(messages = []) {
 /**
  * 判断传入的计划是否符合 Spatial DSL 标准格式。
  */
- */
 /**
  * Detect greeting-only messages to avoid unnecessary spatial compute + long LLM latency.
  */
@@ -1201,6 +1393,17 @@ function buildGrpcRequest({ requestId, queryPlan, spatialContext, options, migra
         context_binding: options?.context_binding || queryPlan?.context_binding || null,
         revision: options?.revision || queryPlan?.revision || null,
         streaming_hints: options?.streaming_hints || queryPlan?.streaming_hints || null,
+        prefetch_attempted: options?.prefetch_attempted === true,
+        prefetch_hit: options?.prefetch_hit === true,
+        prefetch_degraded: options?.prefetch_degraded === true,
+        prefetch_wasted: options?.prefetch_wasted === true,
+        prefetch_overlap_delta_ms: Number.isFinite(Number(options?.prefetch_overlap_delta_ms))
+          ? Number(options.prefetch_overlap_delta_ms)
+          : 0,
+        context_refreshed: options?.context_refreshed === true,
+        context_stale: options?.context_stale === true,
+        context_view_changed: options?.context_view_changed === true,
+        context_binding_degraded: options?.context_binding_degraded === true,
         limit: options?.limit,
         maxFetchLimit: options?.maxFetchLimit,
         clusterMaxHdbscanPoints: options?.clusterMaxHdbscanPoints,
@@ -1334,10 +1537,17 @@ function resolveComputeMode(executorEnvelope, migrationDecision) {
  */
 /**
  * 1) 首先尝试从 L1/L2 缓存中通过 WKT 和提示词哈希进行匹配；
- * 1) 濠电姷鏁搁崑鐐差焽濞嗘挸瑙﹂悗锝庡枟閺咁亪姊?Python gRPC
+ * 1) 命中失败后再走 Python gRPC 主路径，避免无效计算开销。
  * 2) 缓存失效后，调用 Python 微服务进行流式计算，并监听进度上报。
  */
- */
+function runShadowPythonCompute({
+  requestId,
+  queryPlan,
+  spatialContext,
+  options = {},
+  migrationDecision = {},
+  poiFeatures = []
+}) {
   // Shadow run is best-effort and must never break the primary request.
   computeSpatialStream(
     buildGrpcRequest({
@@ -1352,6 +1562,85 @@ function resolveComputeMode(executorEnvelope, migrationDecision) {
   ).catch((err) => {
     console.warn(`[SpatialJobRunner] shadow python compute failed: ${err.message}`)
   })
+}
+
+function normalizeStreamingHints(options = {}, queryPlan = {}) {
+  const candidate = (
+    (options?.streaming_hints && typeof options.streaming_hints === 'object' ? options.streaming_hints : null)
+    || (queryPlan?.streaming_hints && typeof queryPlan.streaming_hints === 'object' ? queryPlan.streaming_hints : null)
+    || {}
+  )
+
+  const prefetchOnFields = Array.isArray(candidate.prefetch_on_fields)
+    ? candidate.prefetch_on_fields
+      .map((field) => String(field || '').trim())
+      .filter(Boolean)
+    : []
+
+  return {
+    ...candidate,
+    allow_prefetch: candidate.allow_prefetch === true,
+    prefetch_on_fields: prefetchOnFields
+  }
+}
+
+function extractPlannerParserEvents(plannerOutput = {}) {
+  const parserEvents = plannerOutput?.diagnostics?.planner_streaming?.parser_events
+  return Array.isArray(parserEvents) ? parserEvents : []
+}
+
+function recordPrefetchObservability(prefetchSummary = {}, { requestId = '', queryType = 'unknown', mode = 'sync' } = {}) {
+  const normalizedQueryType = String(queryType || 'unknown')
+  const normalizedMode = String(mode || 'sync')
+  const labels = {
+    query_type: normalizedQueryType,
+    mode: normalizedMode
+  }
+
+  if (prefetchSummary?.prefetch_attempted === true) {
+    telemetry.recordKpiEvent('prefetch_attempt', 1, {
+      ...labels,
+      trace_id: String(requestId || '')
+    })
+  }
+
+  if (prefetchSummary?.prefetch_hit === true) {
+    telemetry.recordKpiEvent('prefetch_hit', 1, {
+      ...labels,
+      trace_id: String(requestId || '')
+    })
+  }
+
+  if (prefetchSummary?.prefetch_degraded === true) {
+    telemetry.incrementCounter('prefetch_degraded_total', labels)
+    telemetry.recordKpiEvent('prefetch_degraded', 1, {
+      ...labels,
+      trace_id: String(requestId || ''),
+      error_code: Array.isArray(prefetchSummary?.prefetch_error_codes)
+        ? String(prefetchSummary.prefetch_error_codes[0] || 'prefetch_error')
+        : 'prefetch_error'
+    })
+  }
+
+  if (prefetchSummary?.prefetch_wasted === true) {
+    const wastedLabels = {
+      ...labels,
+      dsl_failure_error_code: String(prefetchSummary?.dsl_failure_error_code || 'dsl_validation_failed')
+    }
+    telemetry.incrementCounter('prefetch_wasted_total', wastedLabels)
+    telemetry.recordKpiEvent('prefetch_wasted', 1, {
+      ...wastedLabels,
+      trace_id: String(requestId || '')
+    })
+  }
+
+  const overlapDelta = Number(prefetchSummary?.prefetch_overlap_delta_ms)
+  if (prefetchSummary?.prefetch_attempted === true && Number.isFinite(overlapDelta)) {
+    telemetry.recordKpiEvent('prefetch_overlap_delta_ms', overlapDelta, {
+      ...labels,
+      trace_id: String(requestId || '')
+    })
+  }
 }
 
 /**
@@ -1579,6 +1868,8 @@ export async function executeSpatialPlanWithFallback({
 /**
  * 处理叙事（Narrative）长任务，通过 SSE 或 WebSocket 上报详细的执行足迹。
  */
+export async function runNarrativeSpatialJob(payload = {}, reporter = {}) {
+  const report = {
     reportStage: reporter.reportStage || (async () => {}),
     reportProgress: reporter.reportProgress || (async () => {}),
     reportPartial: reporter.reportPartial || (async () => {}),
@@ -1802,6 +2093,19 @@ export async function executeSpatialPlanWithFallback({
     })
 
     queryPlan = plannerOutput?.queryPlan
+
+    const plannerStreamDiag = plannerOutput?.diagnostics?.planner_streaming
+    if (plannerStreamDiag?.fallback_used === true) {
+      const fallbackErrorCode = String(plannerStreamDiag.fallback_error_code || 'planner_stream_unknown')
+      telemetry.incrementCounter('planner_stream_fallback_total', {
+        error_code: fallbackErrorCode,
+        mode: String(options?.mode || 'sync')
+      })
+      await report.reportStage('planner_stream_fallback', {
+        error_code: fallbackErrorCode,
+        parser_final_state: plannerStreamDiag?.final_state || null
+      })
+    }
   } catch (err) {
     await report.reportStage('planner_fallback', { reason: err.message })
     queryPlan = quickIntentClassify(userQuestion)
@@ -1893,10 +2197,72 @@ export async function executeSpatialPlanWithFallback({
 
   const enforced = resolveSourcePolicy(queryPlan, spatialContext, options)
   queryPlan = enforced.queryPlan
+  const criticEnabled = shouldEnableCriticForRisk(queryPlan, options)
+  queryPlan = applyCriticRouting(queryPlan, criticEnabled)
+
+  const sessionId = String(options?.sessionId || options?.session_id || requestId).trim() || requestId
+  const contextBinding = normalizeContextBindingValue(options, queryPlan)
+  const previousContextState = contextBinding.client_view_id
+    ? loadContextBindingState({
+      sessionId,
+      clientViewId: contextBinding.client_view_id
+    })
+    : null
+  const contextDecision = evaluateContextBindingConsistency({
+    currentBinding: contextBinding,
+    previousState: previousContextState,
+    riskLevel: normalizeRiskLevel(queryPlan)
+  })
+
+  if (contextDecision?.context_binding_degraded) {
+    telemetry.incrementCounter('context_binding_degraded_total', {
+      mode: String(options?.mode || 'sync')
+    })
+  }
+  if (contextDecision?.context_stale) {
+    telemetry.incrementCounter('context_stale_total', {
+      mode: String(options?.mode || 'sync')
+    })
+  }
+  if (contextDecision?.context_view_changed) {
+    telemetry.incrementCounter('context_view_changed_total', {
+      mode: String(options?.mode || 'sync')
+    })
+  }
+
+  await report.reportStage('context_binding_checked', {
+    session_id: sessionId,
+    client_view_id: contextDecision?.normalized?.client_view_id || null,
+    context_binding_degraded: contextDecision?.context_binding_degraded === true,
+    context_stale: contextDecision?.context_stale === true,
+    context_view_changed: contextDecision?.context_view_changed === true,
+    context_refreshed: contextDecision?.context_refreshed === true,
+    requires_clarification: contextDecision?.requires_clarification === true
+  })
+
+  if (contextDecision?.requires_clarification === true) {
+    return buildContextClarificationResult({
+      report,
+      requestId,
+      userQuestion,
+      contextDecision
+    })
+  }
+
+  queryPlan = applyRefreshedContextScope(queryPlan, spatialContext, contextDecision)
+  const streamingHints = normalizeStreamingHints(options, queryPlan)
 
   let effectiveOptions = {
     ...options,
+    sessionId,
+    criticEnabled,
     selectedCategories: enforced.policy.selected_categories,
+    context_binding: Object.keys(contextBinding).length > 0 ? contextBinding : (options?.context_binding || null),
+    context_binding_degraded: contextDecision?.context_binding_degraded === true,
+    context_stale: contextDecision?.context_stale === true,
+    context_refreshed: contextDecision?.context_refreshed === true,
+    context_view_changed: contextDecision?.context_view_changed === true,
+    streaming_hints: streamingHints,
     sourcePolicy: {
       ...(options.sourcePolicy || {}),
       ...enforced.policy
@@ -1908,13 +2274,61 @@ export async function executeSpatialPlanWithFallback({
     reason: 'not_started',
     py_data_source: String(effectiveOptions?.pyDataSource || 'python').toLowerCase()
   })
-
-  const validation = assertValidSpatialPlan(queryPlan, {
+  const normalizedQueryType = normalizeQueryType(queryPlan)
+  const prefetchOrchestrator = createPrefetchOrchestrator({
     requestId,
-    userQuestion,
+    queryPlan,
+    queryType: normalizedQueryType,
+    streamingHints,
+    plannerStreamEvents: extractPlannerParserEvents(plannerOutput),
     spatialContext,
-    options: effectiveOptions
+    sourcePolicy: effectiveOptions?.sourcePolicy || null,
+    userQuestion,
+    buildFingerprint: ({ plan }) => buildSpatialCacheFingerprint(plan, spatialContext, effectiveOptions, userQuestion)
   })
+  prefetchOrchestrator.triggerFromPlannerEvents()
+  let prefetchSummary = null
+
+  let validation
+  try {
+    validation = assertValidSpatialPlan(queryPlan, {
+      requestId,
+      userQuestion,
+      spatialContext,
+      options: effectiveOptions,
+      baseDsl: previousContextState?.last_dsl_snapshot || null,
+      contextBindingDecision: contextDecision,
+      sessionId
+    })
+  } catch (error) {
+    const dslFailureErrorCode = String(error?.diagnostics?.error_code || error?.code || 'dsl_validation_failed')
+    prefetchSummary = await prefetchOrchestrator.finalize({
+      validationPassed: false,
+      dslFailureErrorCode
+    })
+    recordPrefetchObservability(prefetchSummary, {
+      requestId,
+      queryType: normalizedQueryType,
+      mode: String(effectiveOptions?.mode || 'sync')
+    })
+
+    if (prefetchSummary?.prefetch_degraded === true) {
+      await report.reportStage('prefetch_degraded', {
+        error_codes: prefetchSummary.prefetch_error_codes
+      })
+    }
+    if (prefetchSummary?.prefetch_wasted === true) {
+      await report.reportStage('prefetch_wasted', {
+        dsl_failure_error_code: prefetchSummary.dsl_failure_error_code || dslFailureErrorCode
+      })
+    }
+
+    if (!error.diagnostics || typeof error.diagnostics !== 'object') {
+      error.diagnostics = {}
+    }
+    error.diagnostics.prefetch = prefetchSummary
+    throw error
+  }
   if (validation?.diagnostics?.dsl_schema_degraded === true) {
     telemetry.incrementCounter('dsl_schema_degraded_total', {
       mode: String(effectiveOptions?.mode || 'sync')
@@ -1929,6 +2343,25 @@ export async function executeSpatialPlanWithFallback({
 
   if (isSpatialDslQueryPlan(queryPlan)) {
     queryPlan = toExecutableQueryPlan(validation?.normalized_dsl || queryPlan)
+  }
+
+  if (
+    contextDecision?.context_binding_degraded !== true
+    && contextDecision?.should_update_state === true
+    && contextDecision?.normalized?.client_view_id
+    && contextDecision?.normalized?.viewport_hash
+    && contextDecision?.normalized?.event_seq != null
+  ) {
+    updateContextBindingState({
+      sessionId,
+      clientViewId: contextDecision.normalized.client_view_id,
+      lastEventSeq: contextDecision.normalized.event_seq,
+      lastViewportHash: contextDecision.normalized.viewport_hash,
+      lastScopeSnapshot: buildScopeSnapshot(queryPlan, spatialContext),
+      lastDslSnapshot: isSpatialDslQueryPlan(validation?.normalized_dsl || queryPlan)
+        ? (validation?.normalized_dsl || queryPlan)
+        : null
+    })
   }
 
   effectiveOptions = {
@@ -1975,11 +2408,39 @@ export async function executeSpatialPlanWithFallback({
     vector_used: vectorRetrievalMeta.used === true
   })
 
+  prefetchOrchestrator.markExecutionStart(Date.now())
+  if (!prefetchSummary) {
+    prefetchSummary = await prefetchOrchestrator.finalize({
+      validationPassed: true
+    })
+    recordPrefetchObservability(prefetchSummary, {
+      requestId,
+      queryType: normalizedQueryType,
+      mode: String(effectiveOptions?.mode || 'sync')
+    })
+
+    if (prefetchSummary?.prefetch_degraded === true) {
+      await report.reportStage('prefetch_degraded', {
+        error_codes: prefetchSummary.prefetch_error_codes
+      })
+    }
+  }
+
+  effectiveOptions = {
+    ...effectiveOptions,
+    prefetch_attempted: prefetchSummary?.prefetch_attempted === true,
+    prefetch_hit: prefetchSummary?.prefetch_hit === true,
+    prefetch_degraded: prefetchSummary?.prefetch_degraded === true,
+    prefetch_wasted: prefetchSummary?.prefetch_wasted === true,
+    prefetch_overlap_delta_ms: Number.isFinite(Number(prefetchSummary?.prefetch_overlap_delta_ms))
+      ? Number(prefetchSummary.prefetch_overlap_delta_ms)
+      : 0
+  }
+
   const shouldUseCache = shouldUseSpatialResultCache(queryPlan, effectiveOptions)
   const spatialCacheFingerprint = shouldUseCache
     ? buildSpatialCacheFingerprint(queryPlan, spatialContext, effectiveOptions, userQuestion)
     : null
-  const normalizedQueryType = normalizeQueryType(queryPlan)
 
   let normalizedExecutor = null
   let migrationDecision = null
@@ -2084,6 +2545,11 @@ export async function executeSpatialPlanWithFallback({
   })
   // 尝试在本地 L1 缓存中查找匹配，减少外部依赖 IO。
   // 闂傚倸鍊搁崐鎼佸磹閹间礁鐤柟鎯版閺勩儵鏌″搴″季闁?3闂傚倸鍊烽悞锔锯偓绗涘懐鐭欓柟鐑橆殕閸嬨倖淇婇悙顒傚矗ter 缂傚倸鍊搁崐鎼佸磹妞嬪海鐭嗗ù锝堛€€閸嬫挸顫濋悡搴ｄ桓闁芥鍠庨埞鎴︽偐閸欏鎮欓梺缁樺姇閿曨亪寮婚敐澶婄疀妞ゆ棁濮ゅВ鍕⒑?
+  if (!normalizedExecutor?.results || typeof normalizedExecutor.results !== 'object') {
+    normalizedExecutor.results = {}
+  }
+  normalizedExecutor.results.query_executed = queryPlan
+
   await report.reportStage('writer')
 
   let answer = ''
@@ -2159,10 +2625,30 @@ export async function executeSpatialPlanWithFallback({
   if (vectorStats.vector_used && !baseStats.candidate_source) {
     vectorStats.candidate_source = 'payload'
   }
+  const contextStats = {
+    context_binding_degraded: contextDecision?.context_binding_degraded === true,
+    context_stale: contextDecision?.context_stale === true,
+    context_refreshed: contextDecision?.context_refreshed === true,
+    context_view_changed: contextDecision?.context_view_changed === true
+  }
+  const prefetchStats = {
+    prefetch_attempted: prefetchSummary?.prefetch_attempted === true,
+    prefetch_hit: prefetchSummary?.prefetch_hit === true,
+    prefetch_degraded: prefetchSummary?.prefetch_degraded === true,
+    prefetch_wasted: prefetchSummary?.prefetch_wasted === true,
+    prefetch_overlap_delta_ms: Number.isFinite(Number(prefetchSummary?.prefetch_overlap_delta_ms))
+      ? Number(prefetchSummary.prefetch_overlap_delta_ms)
+      : 0
+  }
+  if (Array.isArray(prefetchSummary?.prefetch_error_codes) && prefetchSummary.prefetch_error_codes.length > 0) {
+    prefetchStats.prefetch_error_codes = prefetchSummary.prefetch_error_codes.slice(0, 5)
+  }
 
   finalResults.stats = {
     ...baseStats,
     ...vectorStats,
+    ...contextStats,
+    ...prefetchStats,
     token_usage: pipelineTokenUsage,
     planner_token_usage: plannerTokenUsage,
     writer_token_usage: writerTokenUsage,
@@ -2208,7 +2694,8 @@ export async function executeSpatialPlanWithFallback({
       planner: {
         confidence: plannerOutput?.confidence || plannerOutput?.queryPlan?.confidence || null,
         fast_path: plannerOutput?.fastPath || false,
-        token_usage: plannerTokenUsage
+        token_usage: plannerTokenUsage,
+        streaming: plannerOutput?.diagnostics?.planner_streaming || null
       },
       writer: {
         token_usage: writerTokenUsage,
@@ -2221,6 +2708,8 @@ export async function executeSpatialPlanWithFallback({
       fallback_reasons: normalizedExecutor?._fallback_reasons || [],
       migration: migrationDecision,
       vector_retrieval: vectorRetrievalMeta,
+      context_binding: contextDecision,
+      prefetch: prefetchSummary,
       cache_hit: Boolean(normalizedExecutor?.results?.stats?.cache_hit),
       pipeline_stage_checklist: pipelineStageChecklist,
       dsl_validation: validation?.diagnostics || null
@@ -2255,3 +2744,4 @@ export default {
   runNarrativeSpatialJob,
   toLegacySSEPayload
 }
+

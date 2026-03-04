@@ -29,6 +29,8 @@ const WRITER_SYSTEM_PROMPT = `你是 GeoLoom 地理助手，帮用户看懂地�
 - 如果 source_policy.category_source 是 all_categories，说明分析覆盖了所有类别
 - 如果 source_policy.category_source 是 ui_selector，说明只看了用户筛选的类别
 - 当证据不足时，坦诚说明而不是硬凑内容
+- 不要输出“Thinking Process”“思考过程”“分析步骤”或任何中间推理文本
+- 只输出最终可读答案，不要展示草稿、迭代过程、提示词或自我对话
 
 ## 输出格式
 1) 用 1-2 句话直接回答用户的问题
@@ -41,6 +43,9 @@ const WRITER_SYSTEM_PROMPT = `你是 GeoLoom 地理助手，帮用户看懂地�
 
 const DEFAULT_WRITER_CONTEXT_LIMIT = 9000
 const DEFAULT_WRITER_OUTPUT_LIMIT = 2200
+const ENABLE_WRITER_CORRECTION = ['1', 'true', 'yes', 'on'].includes(
+  String(process.env.WRITER_APPEND_CORRECTION || 'false').trim().toLowerCase()
+)
 
 // /ΰȫתֹԤ쳣
 function toPositiveInt(value, fallback) {
@@ -61,8 +66,20 @@ function trimContextText(context, maxChars) {
 }
 
 // 按 query_type 选择生成参数，平衡回答质量与延迟。
+function resolveWriterQueryType(executorResult, options = {}) {
+  const rawType = executorResult?.results?.query_executed?.query_type
+    || executorResult?.results?.query_executed?.task?.query_type
+    || executorResult?.results?.stats?.query_type
+    || executorResult?.query_plan?.query_type
+    || executorResult?.query_plan?.task?.query_type
+    || options?.queryType
+    || options?.query_type
+    || 'poi_search'
+  return String(rawType || '').trim().toLowerCase() || 'poi_search'
+}
+
 function resolveWriterProfile(executorResult, options = {}) {
-  const queryType = executorResult?.results?.query_executed?.query_type || 'poi_search'
+  const queryType = resolveWriterQueryType(executorResult, options)
 
   const profileByType = {
     poi_search: { temperature: 0.3, maxTokens: 1200, poiDisplayLimit: 10 },
@@ -109,6 +126,7 @@ function resolveWriterProfile(executorResult, options = {}) {
 
 // ֻƻþռȽϸʱ׷ӾƫشƵϡ
 function shouldAppendCorrection(report) {
+  if (!ENABLE_WRITER_CORRECTION) return false
   if (!report?.hasHallucination) return false
   const totalMentions = report.totalMentions || 0
   if (totalMentions === 0) return false
@@ -117,7 +135,6 @@ function shouldAppendCorrection(report) {
   return report.hallucinations.length >= 2 && ratio >= 0.35
 }
 
-// ߷ʱɺժҪȷشտء
 function buildConservativeCorrection(executorResult, report) {
   const results = executorResult?.results || {}
   const topPois = Array.isArray(results.pois) ? results.pois.slice(0, 5) : []
@@ -126,27 +143,27 @@ function buildConservativeCorrection(executorResult, report) {
   const lines = [
     '',
     '---',
-    '7215 **һУ**Ĵδ֤ݵĵصΪɺժҪ'
+    'NOTICE: verification checklist'
   ]
 
   if (topPois.length > 0) {
-    lines.push('**可核验 POI（Top 5）**：')
+    lines.push('Top 5 verifiable POIs:')
     topPois.forEach((poi, idx) => {
-      const category = poi.category || poi.type || '未知类别'
-      lines.push(`${idx + 1}. ${poi.name || '未命名 POI'}（${category}）`)
+      const category = poi.category || poi.type || 'unknown'
+      lines.push(`${idx + 1}. ${poi.name || 'unnamed POI'} (${category})`)
     })
   } else {
-    lines.push('当前结果中暂无可直接核验的 POI 明细。')
+    lines.push('No directly verifiable POI details in current result.')
   }
 
   if (Number.isFinite(stats.total_candidates)) {
-    lines.push(`- 候选量: ${stats.total_candidates}`)
+    lines.push(`- candidates: ${stats.total_candidates}`)
   }
   if (Number.isFinite(stats.execution_time_ms)) {
-    lines.push(`- 计算耗时: ${stats.execution_time_ms}ms`)
+    lines.push(`- runtime: ${stats.execution_time_ms}ms`)
   }
   if (report?.hallucinations?.length) {
-    lines.push(`- 待核验实体: ${report.hallucinations.join('、')}`)
+    lines.push(`- entities_to_verify: ${report.hallucinations.join(', ')}`)
   }
 
   return lines.join('\n')
@@ -199,8 +216,7 @@ function buildResultContext(executorResult, options = {}) {
   
   // 0. 执行错误/异常提示
   if (results.execution_failure || results.error_message) {
-    sections.push(`7215 **ѯִ**: ${results.error_message || '޷ȡλϢ'}`)
-    // ش󣬿ܲҪչʾݣΪǼ
+    sections.push(`Execution Error: ${results.error_message || 'Unable to resolve spatial context.'}`)
   }
   
   // 1. 锚点信息
@@ -585,6 +601,77 @@ function buildResultContext(executorResult, options = {}) {
   return trimContextText(rawContext, writerProfile.maxContextChars)
 }
 
+function normalizeStreamContentChunk(value) {
+  if (typeof value === 'string') return value
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeStreamContentChunk(item)).join('')
+  }
+  if (!value || typeof value !== 'object') return ''
+  if (typeof value.text === 'string') return value.text
+  if (typeof value.content === 'string') return value.content
+  if (Array.isArray(value.parts)) {
+    return value.parts.map((item) => normalizeStreamContentChunk(item)).join('')
+  }
+  return ''
+}
+
+function stripThinkTags(text = '') {
+  return String(text || '')
+    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .replace(/<\/?think>/gi, '')
+    .trim()
+}
+
+function isLeadingReasoningTranscript(text = '') {
+  const probe = String(text || '').trimStart()
+  if (!probe) return false
+  return /^(thinking process|thought process|reasoning process|思考过程|推理过程|分析过程|let'?s think)\s*[:：]?/i.test(probe)
+}
+
+function isReasoningHeadingOnly(text = '') {
+  const probe = String(text || '').trimStart()
+  if (!probe) return false
+  return /^(\d+\.\s*)?\*{0,2}\s*(analyze the request|evaluate data|drafting content|final polish)\s*[:：]?/i.test(probe)
+}
+
+const REASONING_SECTION_MARKERS = [
+  'analyze the request',
+  'evaluate data',
+  'evaluate data & constraints',
+  'drafting content',
+  'refining for tone',
+  'final polish',
+  'revised draft',
+  'final plan'
+]
+
+function isReasoningTranscript(text = '') {
+  const probe = String(text || '').trim()
+  if (!probe) return false
+
+  if (isLeadingReasoningTranscript(probe) || isReasoningHeadingOnly(probe)) {
+    return true
+  }
+
+  const lowered = probe.toLowerCase()
+  const markerHitCount = REASONING_SECTION_MARKERS.reduce(
+    (count, marker) => (lowered.includes(marker) ? count + 1 : count),
+    0
+  )
+  const hasReasoningLabel = /(thinking process|thought process|reasoning process|思考过程|推理过程|分析步骤)/i.test(probe)
+  if (hasReasoningLabel && markerHitCount >= 1) return true
+  return markerHitCount >= 3
+}
+
+function sanitizeRecoveredWriterOutput(text = '') {
+  const cleaned = stripThinkTags(text)
+  if (!cleaned) return ''
+  if (isReasoningTranscript(cleaned)) {
+    return ''
+  }
+  return cleaned
+}
+
 /**
  * 阶段 3 主入口：生成回答（流式）
  * 
@@ -651,11 +738,13 @@ export async function* generateAnswer(userQuestion, executorResult, options = {}
     let buffer = ''
     let totalTokens = 0
     let streamedOutput = ''
+    let rawFallbackContent = ''
     
     // 过滤 <think> 标签的状态机
     // 策略：在 think 标签内的内容直接丢弃，不累积
     let inThinkTag = false
     let pendingContent = ''
+    let suppressReasoningOutput = false
     
     while (true) {
       const { done, value } = await reader.read()
@@ -675,10 +764,18 @@ export async function* generateAnswer(userQuestion, executorResult, options = {}
         
         try {
           const parsed = JSON.parse(data)
-          let content = parsed.choices?.[0]?.delta?.content || ''
+          const choice = parsed?.choices?.[0] || {}
+          const delta = choice?.delta && typeof choice.delta === 'object' ? choice.delta : {}
+          const content = normalizeStreamContentChunk(delta.content)
+            || normalizeStreamContentChunk(choice?.message?.content)
+            || normalizeStreamContentChunk(choice?.text)
+            || normalizeStreamContentChunk(parsed?.output_text)
+          const reasoningContent = normalizeStreamContentChunk(delta.reasoning_content)
+            || normalizeStreamContentChunk(delta.text)
           
           if (content) {
             pendingContent += content
+            rawFallbackContent += content
             
             // 循环处理可能存在多个 think 标签的情况
             let safety = 0
@@ -693,9 +790,15 @@ export async function* generateAnswer(userQuestion, executorResult, options = {}
                 // 输出 <think> 之前的内容
                 const beforeThink = pendingContent.slice(0, openIdx)
                 if (beforeThink) {
-                  yield beforeThink
-                  streamedOutput += beforeThink
-                  totalTokens += beforeThink.length
+                  const reasoningLike = !streamedOutput && isReasoningTranscript(beforeThink)
+                  if (reasoningLike || suppressReasoningOutput) {
+                    suppressReasoningOutput = true
+                    rawFallbackContent += beforeThink
+                  } else {
+                    yield beforeThink
+                    streamedOutput += beforeThink
+                    totalTokens += beforeThink.length
+                  }
                 }
                 // 进入 think 状态，丢弃 <think> 标签
                 inThinkTag = true
@@ -736,12 +839,20 @@ export async function* generateAnswer(userQuestion, executorResult, options = {}
               }
               const outputPart = holdBack > 0 ? pendingContent.slice(0, -holdBack) : pendingContent
               if (outputPart) {
-                yield outputPart
-                streamedOutput += outputPart
-                totalTokens += outputPart.length
+                const reasoningLike = !streamedOutput && isReasoningTranscript(outputPart)
+                if (reasoningLike || suppressReasoningOutput) {
+                  suppressReasoningOutput = true
+                  rawFallbackContent += outputPart
+                } else {
+                  yield outputPart
+                  streamedOutput += outputPart
+                  totalTokens += outputPart.length
+                }
               }
               pendingContent = holdBack > 0 ? pendingContent.slice(-holdBack) : ''
             }
+          } else if (reasoningContent) {
+            // 忽略 reasoning_content，防止模型将中间推理回退到最终输出。
           }
         } catch {
           // 忽略解析错误
@@ -751,8 +862,56 @@ export async function* generateAnswer(userQuestion, executorResult, options = {}
     
     // 输出剩余内容
     if (pendingContent && !inThinkTag) {
-      yield pendingContent
-      streamedOutput += pendingContent
+      const reasoningLike = !streamedOutput && isReasoningTranscript(pendingContent)
+      if (reasoningLike || suppressReasoningOutput) {
+        suppressReasoningOutput = true
+        rawFallbackContent += pendingContent
+      } else {
+        yield pendingContent
+        streamedOutput += pendingContent
+        totalTokens += pendingContent.length
+      }
+    }
+
+    if (!String(streamedOutput || '').trim()) {
+      let recoveredOutput = ''
+      try {
+        const nonStreamResponse = await fetch(`${baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            model,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: userQuestion }
+            ],
+            temperature: writerProfile.temperature,
+            max_tokens: writerProfile.maxTokens,
+            stream: false
+          })
+        })
+
+        if (nonStreamResponse.ok) {
+          const nonStreamJson = await nonStreamResponse.json()
+          const nonStreamChoice = nonStreamJson?.choices?.[0] || {}
+          recoveredOutput = normalizeStreamContentChunk(nonStreamChoice?.message?.content)
+            || normalizeStreamContentChunk(nonStreamChoice?.text)
+            || normalizeStreamContentChunk(nonStreamJson?.output_text)
+          recoveredOutput = sanitizeRecoveredWriterOutput(recoveredOutput)
+        }
+      } catch (fallbackErr) {
+        console.warn(`[Writer] non-stream recovery failed: ${fallbackErr?.message || 'unknown'}`)
+      }
+
+      if (!recoveredOutput && rawFallbackContent) {
+        recoveredOutput = sanitizeRecoveredWriterOutput(rawFallbackContent)
+      }
+
+      if (recoveredOutput) {
+        yield recoveredOutput
+        streamedOutput += recoveredOutput
+        totalTokens += recoveredOutput.length
+      }
     }
     
     const validation = validateWriterOutput(streamedOutput, executorResult, {
@@ -865,7 +1024,18 @@ export function buildQuickReply(executorResult) {
   results.pois.slice(0, 10).forEach(poi => {
     const dist = poi.distance_m > 0 ? `${poi.distance_m}m` : '-'
     const rating = poi.rating ? poi.rating.toFixed(1) : '-'
-    reply += `| ${poi.name} | ${poi.category} | ${dist} | ${rating} |\n`
+    const category = poi.category_small
+      || poi.category_mid
+      || poi.category_big
+      || poi.category
+      || poi.type
+      || poi.properties?.category_small
+      || poi.properties?.category_mid
+      || poi.properties?.category_big
+      || poi.properties?.category
+      || poi.properties?.type
+      || '未分类'
+    reply += `| ${poi.name} | ${category} | ${dist} | ${rating} |\n`
   })
   
   return reply
@@ -894,22 +1064,37 @@ function extractMentionedPOIs(writerOutput) {
   if (!writerOutput) return []
   
   const mentioned = []
+
+  const descriptorKeywords = [
+    '区域', '分析', '建议', '总结', '扎堆', '周边', '机会点', '联动', '群体', '热点',
+    '核心', '特征', '主导', '活力', '片区', '业态', '可达性', '风险', '覆盖', '指数',
+    '策略', '趋势', '结论', '模板'
+  ]
+
+  const isLikelyPoiMention = (text = '') => {
+    const probe = String(text || '').trim()
+    if (!probe) return false
+    if (probe.length < 2 || probe.length > 40) return false
+    if (/[：:]/.test(probe)) return false
+    if (/[🌟💡⭐️🔥📍]/u.test(probe)) return false
+    if (descriptorKeywords.some((keyword) => probe.includes(keyword))) return false
+    return true
+  }
   
   // 模式 1: 「xxx」格式（中文书名号）
   const pattern1 = /「([^」]+)」/g
   let match
   while ((match = pattern1.exec(writerOutput)) !== null) {
-    mentioned.push(match[1])
+    if (isLikelyPoiMention(match[1])) {
+      mentioned.push(match[1].trim())
+    }
   }
   
   // 模式 2: **xxx** 格式（加粗）
   const pattern2 = /\*\*([^*]+)\*\*/g
   while ((match = pattern2.exec(writerOutput)) !== null) {
-    // 排除一些常见的非 POI 短语
-    const text = match[1]
-    if (text.length > 2 && text.length < 30 && 
-        !text.includes('区域') && !text.includes('分析') && 
-        !text.includes('建议') && !text.includes('总结')) {
+    const text = String(match[1] || '').trim()
+    if (isLikelyPoiMention(text)) {
       mentioned.push(text)
     }
   }
@@ -956,12 +1141,20 @@ export function detectHallucinations(writerOutput, executorResult) {
   // 构建有效 POI 名称集合
   const validNames = new Set()
   const validIds = new Set()
+  const validCategories = new Set()
+
+  const collectCategory = (value) => {
+    const normalized = String(value || '').trim().toLowerCase()
+    if (!normalized) return
+    validCategories.add(normalized)
+  }
   
   // 从 pois 中提取
   if (executorResult.results.pois) {
     executorResult.results.pois.forEach(poi => {
       if (poi.name) validNames.add(poi.name.toLowerCase())
       if (poi.id) validIds.add(String(poi.id))
+      collectCategory(poi.category_small || poi.category_mid || poi.category_big || poi.category || poi.type)
     })
   }
   
@@ -982,10 +1175,33 @@ export function detectHallucinations(writerOutput, executorResult) {
   // 从 area_profile.dominant_categories 中提取示例
   if (executorResult.results.area_profile?.dominant_categories) {
     executorResult.results.area_profile.dominant_categories.forEach(cat => {
+      collectCategory(cat.category)
       if (cat.examples) {
         cat.examples.forEach(ex => validNames.add(ex.toLowerCase()))
       }
     })
+  }
+
+  const hotspotEntries = executorResult.results.spatial_clusters?.hotspots || []
+  hotspotEntries.forEach((hotspot) => {
+    const domCats = hotspot?.dominantCategories || hotspot?.dominant_categories || []
+    if (Array.isArray(domCats)) {
+      domCats.forEach((cat) => collectCategory(cat?.category || cat?.name))
+    }
+  })
+
+  const descriptorWords = ['区域', '分析', '建议', '活动', '业态', '分布', '交通', '周边', '热点', '机会点', '特征', '核心', '联动', '群体']
+
+  const shouldIgnorePotentialHallucination = (mentionLower = '') => {
+    if (!mentionLower) return true
+    if (descriptorWords.some((word) => mentionLower.includes(word))) return true
+    if (validCategories.has(mentionLower)) return true
+    for (const category of validCategories) {
+      if (category && (mentionLower.includes(category) || category.includes(mentionLower))) {
+        return true
+      }
+    }
+    return false
   }
   
   // 检查每个提及的 POI
@@ -1021,10 +1237,7 @@ export function detectHallucinations(writerOutput, executorResult) {
     if (found) {
       result.validMentions.push(mention)
     } else {
-      // 可能是幻觉，但也可能是通用描述词
-      // 排除一些常见的非 POI 词
-      const commonWords = ['区域', '分析', '建议', '活动', '业态', '分布', '交通']
-      if (!commonWords.some(w => mentionLower.includes(w))) {
+      if (!shouldIgnorePotentialHallucination(mentionLower)) {
         result.hallucinations.push(mention)
       }
     }
@@ -1075,4 +1288,3 @@ export function validateWriterOutput(writerOutput, executorResult, options = {})
     hallucinationReport
   }
 }
-

@@ -154,7 +154,7 @@
 2. `operators.params` 从 `additionalProperties: true` 升级为按 `operator.type` 的条件子 schema 之前，不得声称“严格前置校验已完成”。
 3. 在 schema 未升级阶段，后端必须支持兼容回退：
    - 忽略未知字段并打点 `dsl_schema_degraded=true`
-   - 或启用 `v1_compat_mode=true` 的严格拒绝策略（二选一，需在环境变量中显式配置）
+   - 或保持 `v1_compat_mode=false` 的严格拒绝策略（二选一，需在环境变量中显式配置）
 
 ---
 

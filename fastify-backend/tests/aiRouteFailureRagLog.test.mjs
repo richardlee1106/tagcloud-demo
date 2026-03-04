@@ -1,4 +1,4 @@
-import test from 'node:test'
+﻿import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { createRAGSession } from '../services/ragLogger.js'
@@ -29,8 +29,8 @@ test('pipeline failure writes FailureDiagnostics entry and readable summary fiel
       mapZoom: 16.44
     },
     options: {
-      visualModel: 'qwen3.5-4b',
-      reasoningModel: 'qwen3.5-4b',
+      visualModel: 'qwen3.5-2b',
+      reasoningModel: 'qwen3.5-2b',
       reasoningEnabled: true,
       modelBudgetMs: 5000
     }
@@ -62,3 +62,4 @@ test('pipeline failure writes FailureDiagnostics entry and readable summary fiel
   assert.ok(readableSummary.includes('FailureSignature:'))
   assert.ok(readableSummary.includes('FailureHint:'))
 })
+

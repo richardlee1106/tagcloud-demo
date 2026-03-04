@@ -1,6 +1,7 @@
 import { extractCategoriesFromQuestion, expandCategory, CATEGORY_ONTOLOGY } from '../../services/categoryOntology.js'
 import { shouldHardBlockInput } from '../../services/relevanceGate.js'
 import { callLLM } from '../../services/llm.js'
+import { createDslStreamingParser } from '../../services/dslStreamingParser.js'
 
 export const QUERY_PLAN_DEFAULTS = {
   query_type: null,
@@ -44,6 +45,8 @@ export const QUERY_PLAN_DEFAULTS = {
 
 const QUICK_TOKEN_USAGE = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
 const PLANNER_LLM_MAX_TOKENS = 360
+const PLANNER_STREAM_FALLBACK_NO_JSON = 'planner_stream_no_json'
+const PLANNER_STREAM_FALLBACK_TRANSPORT = 'planner_stream_transport_error'
 const PLANNER_ALLOWED_QUERY_TYPES = new Set([
   'poi_search',
   'area_analysis',
@@ -198,6 +201,68 @@ function shouldEnablePlannerLlm(context = {}) {
   return ['1', 'true', 'yes', 'on'].includes(envValue)
 }
 
+function shouldEnablePlannerStreaming(context = {}) {
+  if (typeof context?.plannerStreamingEnabled === 'boolean') {
+    return context.plannerStreamingEnabled
+  }
+  const envValue = String(process.env.PLANNER_STREAMING_ENABLED || 'true').trim().toLowerCase()
+  return ['1', 'true', 'yes', 'on'].includes(envValue)
+}
+
+function normalizeStreamContentChunk(value) {
+  if (typeof value === 'string') return value
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => {
+        if (typeof item === 'string') return item
+        if (!item || typeof item !== 'object') return ''
+        return String(item.text ?? item.content ?? '')
+      })
+      .join('')
+  }
+  if (!value || typeof value !== 'object') return ''
+  return String(value.text ?? value.content ?? '')
+}
+
+function extractPlannerStreamChunk(parsed = {}) {
+  const choice = parsed?.choices?.[0] || {}
+  const delta = choice?.delta && typeof choice.delta === 'object' ? choice.delta : {}
+  return normalizeStreamContentChunk(delta.content)
+    || normalizeStreamContentChunk(choice?.message?.content)
+    || normalizeStreamContentChunk(choice?.text)
+    || normalizeStreamContentChunk(parsed?.output_text)
+    || ''
+}
+
+function normalizePlannerRawPlan(payload = null) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null
+  if (payload.query_plan && typeof payload.query_plan === 'object') {
+    return payload.query_plan
+  }
+  if (payload.queryPlan && typeof payload.queryPlan === 'object') {
+    return payload.queryPlan
+  }
+  return payload
+}
+
+function buildPlannerPromptPayload(userQuestion, context = {}, seedPlan = {}) {
+  const contextPayload = {
+    hasSelectedArea: Boolean(context?.hasSelectedArea),
+    poiCount: Number(context?.poiCount || 0),
+    viewportCenter: context?.viewportCenter || null,
+    selectedCategories: Array.isArray(context?.selectedCategories) ? context.selectedCategories.slice(0, 20) : []
+  }
+
+  const userPayload = JSON.stringify({
+    question: userQuestion,
+    context: contextPayload,
+    seed_query_plan: seedPlan
+  })
+
+  const promptText = `${PLANNER_LLM_SYSTEM_PROMPT}\n${userPayload}`
+  return { userPayload, promptText }
+}
+
 function extractFirstJsonObject(content = '') {
   const cleaned = String(content || '')
     .replace(/<think>[\s\S]*?<\/think>/g, '')
@@ -256,6 +321,92 @@ function estimateTokenUsage({ promptText = '', completionText = '' } = {}) {
     completion_tokens: completionTokens,
     total_tokens: totalTokens,
     estimated: true
+  }
+}
+
+async function callPlannerLlmNonStream(userPayload, promptText) {
+  const response = await callLLM({
+    messages: [
+      { role: 'system', content: PLANNER_LLM_SYSTEM_PROMPT },
+      { role: 'user', content: userPayload }
+    ],
+    temperature: 0.1,
+    max_tokens: PLANNER_LLM_MAX_TOKENS,
+    stream: false
+  })
+
+  const data = await response.json()
+  const rawText = data?.choices?.[0]?.message?.content || ''
+  const tokenUsage = normalizeTokenUsage(data?.usage)
+    || estimateTokenUsage({
+      promptText,
+      completionText: rawText
+    })
+  const parsedPayload = extractFirstJsonObject(rawText)
+
+  return {
+    parsedPayload,
+    rawText,
+    tokenUsage
+  }
+}
+
+async function readPlannerStreamingResponse(response, parser) {
+  const reader = response?.body?.getReader?.()
+  if (!reader) {
+    throw new Error('planner_stream_body_unavailable')
+  }
+
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let streamedText = ''
+  let streamTokenUsage = null
+
+  const consumeLine = (line) => {
+    const trimmed = String(line || '').trim()
+    if (!trimmed.startsWith('data:')) return
+
+    const dataText = trimmed.slice(5).trim()
+    if (!dataText || dataText === '[DONE]') return
+
+    try {
+      const parsed = JSON.parse(dataText)
+      const usage = normalizeTokenUsage(parsed?.usage)
+      if (usage) {
+        streamTokenUsage = usage
+      }
+      const chunk = extractPlannerStreamChunk(parsed)
+      if (!chunk) return
+
+      streamedText += chunk
+      parser.push(chunk)
+    } catch {
+    }
+  }
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split('\n')
+    buffer = lines.pop() || ''
+    for (const line of lines) {
+      consumeLine(line)
+    }
+  }
+
+  buffer += decoder.decode()
+
+  if (buffer.trim()) {
+    consumeLine(buffer)
+  }
+
+  const parserResult = parser.finish()
+  return {
+    streamedText,
+    streamTokenUsage,
+    parserResult
   }
 }
 
@@ -349,73 +500,224 @@ async function callPlannerLlm(userQuestion, context = {}, seedPlan = {}) {
   const injectedCaller = typeof context?.plannerLlmCaller === 'function'
     ? context.plannerLlmCaller
     : null
+  const streamingEnabled = shouldEnablePlannerStreaming(context)
+  const { userPayload, promptText } = buildPlannerPromptPayload(userQuestion, context, seedPlan)
+
+  const buildStreamingDiagnostics = ({
+    mode = 'non_stream',
+    fallbackUsed = false,
+    fallbackErrorCode = null,
+    parserEvents = [],
+    finalState = null
+  } = {}) => ({
+    planner_streaming: {
+      mode,
+      fallback_used: fallbackUsed,
+      fallback_error_code: fallbackUsed ? String(fallbackErrorCode || 'planner_stream_unknown') : null,
+      parser_events: Array.isArray(parserEvents) ? parserEvents : [],
+      final_state: finalState || null
+    }
+  })
 
   if (injectedCaller) {
-    const callerResult = await injectedCaller({
+    if (!streamingEnabled) {
+      const callerResult = await injectedCaller({
+        question: userQuestion,
+        context,
+        seedPlan,
+        mode: 'non_stream'
+      })
+      const rawPlan = normalizePlannerRawPlan(callerResult) || seedPlan
+      const normalizedPlan = sanitizePlannerLlmPlan(rawPlan, seedPlan, userQuestion)
+      const tokenUsage = normalizeTokenUsage(callerResult?.tokenUsage || callerResult?.token_usage)
+        || estimateTokenUsage({
+          promptText,
+          completionText: JSON.stringify(callerResult || {})
+        })
+      return {
+        queryPlan: normalizedPlan,
+        tokenUsage,
+        diagnostics: buildStreamingDiagnostics({
+          mode: 'non_stream',
+          fallbackUsed: false
+        })
+      }
+    }
+
+    const streamResult = await injectedCaller({
       question: userQuestion,
       context,
-      seedPlan
+      seedPlan,
+      mode: 'stream'
     })
 
-    const rawPlan = callerResult?.queryPlan || callerResult?.query_plan || callerResult
-    const normalizedPlan = sanitizePlannerLlmPlan(rawPlan, seedPlan, userQuestion)
-    const tokenUsage = normalizeTokenUsage(callerResult?.tokenUsage || callerResult?.token_usage)
-      || estimateTokenUsage({
-        promptText: userQuestion,
-        completionText: JSON.stringify(callerResult || {})
+    const streamChunks = Array.isArray(streamResult?.streamChunks)
+      ? streamResult.streamChunks.map((chunk) => String(chunk ?? ''))
+      : null
+
+    if (streamChunks) {
+      const streamEvents = []
+      const parser = createDslStreamingParser({
+        onEvent: (event) => streamEvents.push(event)
       })
 
+      for (const chunk of streamChunks) {
+        parser.push(chunk)
+      }
+      const parserResult = parser.finish()
+      const streamedText = streamChunks.join('')
+      const parsedPayload = parserResult.ok
+        ? (parserResult.parsed_dsl || extractFirstJsonObject(streamedText))
+        : null
+      const streamRawPlan = normalizePlannerRawPlan(parsedPayload)
+      const streamTokenUsage = normalizeTokenUsage(streamResult?.tokenUsage || streamResult?.token_usage)
+        || estimateTokenUsage({
+          promptText,
+          completionText: streamedText
+        })
+
+      if (streamRawPlan) {
+        const executingSnapshot = parser.enterExecuting()
+        return {
+          queryPlan: sanitizePlannerLlmPlan(streamRawPlan, seedPlan, userQuestion),
+          tokenUsage: streamTokenUsage,
+          diagnostics: buildStreamingDiagnostics({
+            mode: 'stream',
+            fallbackUsed: false,
+            parserEvents: streamEvents,
+            finalState: executingSnapshot?.state || parserResult?.state || null
+          })
+        }
+      }
+
+      const fallbackErrorCode = parserResult?.error_code || PLANNER_STREAM_FALLBACK_NO_JSON
+      const fallbackResult = await injectedCaller({
+        question: userQuestion,
+        context,
+        seedPlan,
+        mode: 'non_stream',
+        fallback_error_code: fallbackErrorCode
+      })
+      const fallbackRawPlan = normalizePlannerRawPlan(fallbackResult) || seedPlan
+      const fallbackTokenUsage = normalizeTokenUsage(fallbackResult?.tokenUsage || fallbackResult?.token_usage)
+        || estimateTokenUsage({
+          promptText,
+          completionText: JSON.stringify(fallbackResult || {})
+        })
+
+      return {
+        queryPlan: sanitizePlannerLlmPlan(fallbackRawPlan, seedPlan, userQuestion),
+        tokenUsage: fallbackTokenUsage,
+        diagnostics: buildStreamingDiagnostics({
+          mode: 'stream',
+          fallbackUsed: true,
+          fallbackErrorCode,
+          parserEvents: streamEvents,
+          finalState: parserResult?.state || null
+        })
+      }
+    }
+
+    const directRawPlan = normalizePlannerRawPlan(streamResult) || seedPlan
+    const directTokenUsage = normalizeTokenUsage(streamResult?.tokenUsage || streamResult?.token_usage)
+      || estimateTokenUsage({
+        promptText,
+        completionText: JSON.stringify(streamResult || {})
+      })
     return {
-      queryPlan: normalizedPlan,
-      tokenUsage
+      queryPlan: sanitizePlannerLlmPlan(directRawPlan, seedPlan, userQuestion),
+      tokenUsage: directTokenUsage,
+      diagnostics: buildStreamingDiagnostics({
+        mode: 'stream',
+        fallbackUsed: false
+      })
     }
   }
 
-  const contextPayload = {
-    hasSelectedArea: Boolean(context?.hasSelectedArea),
-    poiCount: Number(context?.poiCount || 0),
-    viewportCenter: context?.viewportCenter || null,
-    selectedCategories: Array.isArray(context?.selectedCategories) ? context.selectedCategories.slice(0, 20) : []
-  }
-  const userPayload = JSON.stringify({
-    question: userQuestion,
-    context: contextPayload,
-    seed_query_plan: seedPlan
-  })
-
-  const response = await callLLM({
-    messages: [
-      { role: 'system', content: PLANNER_LLM_SYSTEM_PROMPT },
-      { role: 'user', content: userPayload }
-    ],
-    temperature: 0.1,
-    max_tokens: PLANNER_LLM_MAX_TOKENS,
-    stream: false
-  })
-
-  const data = await response.json()
-  const rawText = data?.choices?.[0]?.message?.content || ''
-  const tokenUsage = normalizeTokenUsage(data?.usage)
-    || estimateTokenUsage({
-      promptText: `${PLANNER_LLM_SYSTEM_PROMPT}\n${userPayload}`,
-      completionText: rawText
+  if (streamingEnabled) {
+    const streamEvents = []
+    const parser = createDslStreamingParser({
+      onEvent: (event) => streamEvents.push(event)
     })
-  const parsed = extractFirstJsonObject(rawText)
-  if (!parsed) {
-    return {
-      queryPlan: seedPlan,
-      tokenUsage
+
+    try {
+      const streamResponse = await callLLM({
+        messages: [
+          { role: 'system', content: PLANNER_LLM_SYSTEM_PROMPT },
+          { role: 'user', content: userPayload }
+        ],
+        temperature: 0.1,
+        max_tokens: PLANNER_LLM_MAX_TOKENS,
+        stream: true
+      })
+
+      const streamResult = await readPlannerStreamingResponse(streamResponse, parser)
+      const streamedPayload = streamResult?.parserResult?.ok
+        ? (streamResult?.parserResult?.parsed_dsl || extractFirstJsonObject(streamResult?.streamedText || ''))
+        : null
+      const streamedRawPlan = normalizePlannerRawPlan(streamedPayload)
+
+      if (streamedRawPlan) {
+        const executingSnapshot = parser.enterExecuting()
+        const tokenUsage = streamResult?.streamTokenUsage
+          || estimateTokenUsage({
+            promptText,
+            completionText: streamResult?.streamedText || ''
+          })
+        return {
+          queryPlan: sanitizePlannerLlmPlan(streamedRawPlan, seedPlan, userQuestion),
+          tokenUsage,
+          diagnostics: buildStreamingDiagnostics({
+            mode: 'stream',
+            fallbackUsed: false,
+            parserEvents: streamEvents,
+            finalState: executingSnapshot?.state || streamResult?.parserResult?.state || null
+          })
+        }
+      }
+
+      const fallbackErrorCode = streamResult?.parserResult?.error_code || PLANNER_STREAM_FALLBACK_NO_JSON
+      const fallbackResult = await callPlannerLlmNonStream(userPayload, promptText)
+      const fallbackRawPlan = normalizePlannerRawPlan(fallbackResult?.parsedPayload) || seedPlan
+
+      return {
+        queryPlan: sanitizePlannerLlmPlan(fallbackRawPlan, seedPlan, userQuestion),
+        tokenUsage: fallbackResult?.tokenUsage || QUICK_TOKEN_USAGE,
+        diagnostics: buildStreamingDiagnostics({
+          mode: 'stream',
+          fallbackUsed: true,
+          fallbackErrorCode,
+          parserEvents: streamEvents,
+          finalState: streamResult?.parserResult?.state || null
+        })
+      }
+    } catch {
+      const fallbackResult = await callPlannerLlmNonStream(userPayload, promptText)
+      const fallbackRawPlan = normalizePlannerRawPlan(fallbackResult?.parsedPayload) || seedPlan
+      return {
+        queryPlan: sanitizePlannerLlmPlan(fallbackRawPlan, seedPlan, userQuestion),
+        tokenUsage: fallbackResult?.tokenUsage || QUICK_TOKEN_USAGE,
+        diagnostics: buildStreamingDiagnostics({
+          mode: 'stream',
+          fallbackUsed: true,
+          fallbackErrorCode: PLANNER_STREAM_FALLBACK_TRANSPORT,
+          parserEvents: streamEvents,
+          finalState: null
+        })
+      }
     }
   }
 
-  const rawPlan = parsed.query_plan && typeof parsed.query_plan === 'object'
-    ? parsed.query_plan
-    : parsed
-  const normalizedPlan = sanitizePlannerLlmPlan(rawPlan, seedPlan, userQuestion)
+  const nonStreamResult = await callPlannerLlmNonStream(userPayload, promptText)
+  const rawPlan = normalizePlannerRawPlan(nonStreamResult?.parsedPayload) || seedPlan
 
   return {
-    queryPlan: normalizedPlan,
-    tokenUsage
+    queryPlan: sanitizePlannerLlmPlan(rawPlan, seedPlan, userQuestion),
+    tokenUsage: nonStreamResult?.tokenUsage || QUICK_TOKEN_USAGE,
+    diagnostics: buildStreamingDiagnostics({
+      mode: 'non_stream',
+      fallbackUsed: false
+    })
   }
 }
 
@@ -811,6 +1113,7 @@ export async function parseIntent(userQuestion, context = {}) {
 
   let tokenUsage = QUICK_TOKEN_USAGE
   let routerUsed = false
+  let diagnostics = null
 
   if (shouldEnablePlannerLlm(context)) {
     try {
@@ -820,6 +1123,9 @@ export async function parseIntent(userQuestion, context = {}) {
       }
       if (llmOutput?.tokenUsage && typeof llmOutput.tokenUsage === 'object') {
         tokenUsage = llmOutput.tokenUsage
+      }
+      if (llmOutput?.diagnostics && typeof llmOutput.diagnostics === 'object') {
+        diagnostics = llmOutput.diagnostics
       }
       routerUsed = true
     } catch (err) {
@@ -856,7 +1162,8 @@ export async function parseIntent(userQuestion, context = {}) {
     duration,
     confidence: queryPlan?.confidence?.level || 'medium',
     fastPath: false,
-    routerUsed
+    routerUsed,
+    diagnostics
   }
 }
 

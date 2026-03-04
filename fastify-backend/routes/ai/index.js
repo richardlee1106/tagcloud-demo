@@ -219,6 +219,29 @@ function recordDslValidationFailureTelemetry(failureDiagnostics, mode, traceId) 
   })
 }
 
+function ensureSessionIntentFromFailure(session, failureDiagnostics, fallbackQueryType = '') {
+  if (!session || typeof session !== 'object') return
+  const currentQueryType = String(session?.summary?.parsedIntent?.query_type || '').trim()
+  if (currentQueryType) return
+
+  const inferred = String(
+    failureDiagnostics?.query_type
+    || fallbackQueryType
+    || ''
+  ).trim()
+  if (!inferred) return
+
+  session.setIntent?.({
+    query_type: inferred,
+    intent_mode: 'fallback_from_failure',
+    confidence: {
+      score: 1,
+      level: 'low',
+      reasons: ['inferred_from_failure_diagnostics']
+    }
+  })
+}
+
 function logSessionStage(session, stage, payload = {}) {
   if (!session?.log) return
   if (String(stage || '') === 'pipeline_stage_checklist' && Array.isArray(payload?.items)) {
@@ -412,16 +435,14 @@ async function aiRoutes(fastify) {
     }
 
     const sessionId = options.sessionId || `session_${Date.now()}`
-    let session = ragSessions.get(sessionId)
-    if (!session) {
-      if (ragSessions.size >= RAG_SESSION_MAX) {
-        const oldestKey = ragSessions.keys().next().value
-        if (oldestKey !== undefined) ragSessions.delete(oldestKey)
-      }
-      session = createRAGSession()
-      session.createdAt = Date.now()
-      ragSessions.set(sessionId, session)
+    if (ragSessions.size >= RAG_SESSION_MAX) {
+      const oldestKey = ragSessions.keys().next().value
+      if (oldestKey !== undefined) ragSessions.delete(oldestKey)
     }
+    const session = createRAGSession()
+    session.createdAt = Date.now()
+    session.chatSessionId = sessionId
+    ragSessions.set(sessionId, session)
 
     const userQuestion = extractLastUserMessage(messages)
     if (!userQuestion) {
@@ -615,6 +636,7 @@ async function aiRoutes(fastify) {
             })
 
             recordPipelineFailure(session, 'async', asyncError.message, failureDiagnostics)
+            ensureSessionIntentFromFailure(session, failureDiagnostics, inferredQueryType)
             writeSSEEvent(reply, 'error', buildSseErrorPayload(asyncError.message, failureDiagnostics), sseMeta)
             recordDslValidationFailureTelemetry(failureDiagnostics, 'async', traceId)
             telemetry.incrementCounter('ai_chat_failures_total', { mode: 'async', reason: 'job_failed' })
@@ -661,6 +683,7 @@ async function aiRoutes(fastify) {
             })
 
             recordPipelineFailure(session, 'async', wrappedEventError.message, failureDiagnostics)
+            ensureSessionIntentFromFailure(session, failureDiagnostics, inferredQueryType)
             writeSSEEvent(reply, 'error', buildSseErrorPayload(wrappedEventError.message, failureDiagnostics), sseMeta)
             recordDslValidationFailureTelemetry(failureDiagnostics, 'async', traceId)
             telemetry.incrementCounter('ai_chat_failures_total', { mode: 'async', reason: 'event_exception' })
@@ -797,6 +820,7 @@ async function aiRoutes(fastify) {
       })
 
       recordPipelineFailure(session, decision.mode, syncError.message, failureDiagnostics)
+      ensureSessionIntentFromFailure(session, failureDiagnostics, inferredQueryType)
       writeSSEEvent(reply, 'error', buildSseErrorPayload(syncError.message, failureDiagnostics), sseMeta)
       recordDslValidationFailureTelemetry(failureDiagnostics, decision.mode, traceId)
       telemetry.incrementCounter('ai_chat_failures_total', { mode: decision.mode, reason: 'pipeline_error' })

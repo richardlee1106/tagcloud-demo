@@ -73,7 +73,7 @@ def _safe_json_loads(raw: Any, fallback: Any) -> Any:
 
 
 _VISUAL_MODEL_ALIAS_MAP: Dict[str, str] = {
-    "qwen3.5-4b": "qwen3.5-4b",
+    "qwen3.5-2b": "qwen3.5-2b",
 }
 
 _SOFT_VLM_FAILURE_CODES: set[str] = {
@@ -105,10 +105,10 @@ def _normalize_visual_model_name(raw_model_name: Any) -> str:
         or os.getenv("LOCAL_VLM_MODEL")
         or os.getenv("LOCAL_LLM_MODEL")
         or os.getenv("LLM_MODEL")
-        or "qwen3.5-4b"
+        or "qwen3.5-2b"
     ).strip()
     if not env_model_name:
-        env_model_name = "qwen3.5-4b"
+        env_model_name = "qwen3.5-2b"
     return _VISUAL_MODEL_ALIAS_MAP.get(env_model_name.lower(), env_model_name)
 
 
@@ -3344,17 +3344,26 @@ class SpatialPipeline:
             revision_mode = "rebuild"
         dsl_patch_ops = dsl_revision.get("patch_ops") if isinstance(dsl_revision.get("patch_ops"), list) else []
         dsl_context_binding_present = bool(dsl_context_binding)
-        context_binding_degraded = not (
+        context_binding_degraded = bool(hints_options.get("context_binding_degraded", False)) or not (
             isinstance(dsl_context_binding.get("client_view_id"), str)
             and str(dsl_context_binding.get("client_view_id")).strip()
             and dsl_context_binding.get("event_seq") is not None
         )
+        context_refreshed = bool(hints_options.get("context_refreshed", False))
+        context_stale = bool(hints_options.get("context_stale", False))
+        context_view_changed = bool(hints_options.get("context_view_changed", False))
         streaming_allow_prefetch = bool(dsl_streaming_hints.get("allow_prefetch", False))
         streaming_prefetch_on_fields = (
             [str(field).strip() for field in dsl_streaming_hints.get("prefetch_on_fields", []) if str(field).strip()]
             if isinstance(dsl_streaming_hints.get("prefetch_on_fields"), list)
             else []
         )
+        prefetch_degraded = bool(hints_options.get("prefetch_degraded", False))
+        prefetch_wasted = bool(hints_options.get("prefetch_wasted", False))
+        try:
+            prefetch_overlap_delta_ms = float(hints_options.get("prefetch_overlap_delta_ms", 0) or 0)
+        except (TypeError, ValueError):
+            prefetch_overlap_delta_ms = 0.0
         vlm_anchor_texts = _normalize_anchor_list(request.get("vlm_extracted_texts") or [])
         vlm_anchor_texts = _normalize_anchor_list(
             vlm_anchor_texts + _normalize_anchor_list(hints.get("vlm_extracted_texts") or [])
@@ -3444,7 +3453,7 @@ class SpatialPipeline:
             hints_options.get("reasoningEnabled"),
             default_value=False,
         )
-        reasoning_model_name = str(hints_options.get("reasoningModel") or "qwen3.5-4b")
+        reasoning_model_name = str(hints_options.get("reasoningModel") or "qwen3.5-2b")
         reasoning_endpoint = str(
             hints_options.get("reasoningEndpoint")
             or hints_options.get("llmEndpoint")
@@ -5400,11 +5409,17 @@ class SpatialPipeline:
                 "reasoning_model": reasoning_model_name if reasoning_enabled else None,
                 "dsl_context_binding_present": bool(dsl_context_binding_present),
                 "context_binding_degraded": bool(context_binding_degraded),
+                "context_refreshed": bool(context_refreshed),
+                "context_stale": bool(context_stale),
+                "context_view_changed": bool(context_view_changed),
                 "revision_mode": revision_mode,
                 "dsl_revision_base_trace_id": dsl_revision.get("base_trace_id"),
                 "dsl_patch_ops_count": int(len(dsl_patch_ops)),
                 "dsl_streaming_allow_prefetch": bool(streaming_allow_prefetch),
                 "dsl_streaming_prefetch_on_fields": streaming_prefetch_on_fields,
+                "prefetch_degraded": bool(prefetch_degraded),
+                "prefetch_wasted": bool(prefetch_wasted),
+                "prefetch_overlap_delta_ms": float(prefetch_overlap_delta_ms),
                 "operator_timings_ms": snapshot_operator_timings(),
             },
         }
@@ -5473,8 +5488,14 @@ class SpatialPipeline:
                     "model_timing_ms": model_timing_ms,
                     "revision_mode": revision_mode,
                     "context_binding_degraded": bool(context_binding_degraded),
+                    "context_refreshed": bool(context_refreshed),
+                    "context_stale": bool(context_stale),
+                    "context_view_changed": bool(context_view_changed),
                     "streaming_allow_prefetch": bool(streaming_allow_prefetch),
                     "streaming_prefetch_on_fields": streaming_prefetch_on_fields,
+                    "prefetch_degraded": bool(prefetch_degraded),
+                    "prefetch_wasted": bool(prefetch_wasted),
+                    "prefetch_overlap_delta_ms": float(prefetch_overlap_delta_ms),
                     "dsl_meta": {
                         "context_binding": dsl_context_binding,
                         "revision": {
@@ -5487,6 +5508,9 @@ class SpatialPipeline:
                             "prefetch_on_fields": streaming_prefetch_on_fields,
                         },
                         "context_binding_degraded": bool(context_binding_degraded),
+                        "context_refreshed": bool(context_refreshed),
+                        "context_stale": bool(context_stale),
+                        "context_view_changed": bool(context_view_changed),
                     },
                     "self_validation_enabled": self_validation_enabled,
                     "skg_enabled": skg_enabled,
@@ -5500,3 +5524,4 @@ class SpatialPipeline:
                 },
             },
         }
+

@@ -60,6 +60,26 @@ test('ingestExecutionStats accepts diagnostic token usage and coerces numeric st
   assert.equal(session.summary.tokenStats.details.length, 2)
 })
 
+test('generateMarkdownLog renders OCR extraction reason when texts are empty', () => {
+  const session = createRAGSession()
+
+  session.log('Pipeline', 'StageChecklist', [
+    {
+      key: 'ocr',
+      label: 'OCR text extraction',
+      ok: true,
+      model: 'glm-ocr',
+      extracted_count: 0,
+      extracted_texts: [],
+      extracted_reason: 'model_parallel_degraded:vlm_remote_error:http_500'
+    }
+  ])
+
+  const markdown = session.generateMarkdownLog()
+  assert.ok(markdown.includes('extracted=0'))
+  assert.ok(markdown.includes('reason=model_parallel_degraded:vlm_remote_error:http_500'))
+})
+
 test('setFinalPOIs maps category from category_small/mid/big and type fields', () => {
   const session = createRAGSession()
 

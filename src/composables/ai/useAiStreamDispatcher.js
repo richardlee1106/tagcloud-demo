@@ -5,6 +5,75 @@ export function useAiStreamDispatcher({
   normalizeRefinedResultEvidence,
   toEmbeddedIntentMode
 }) {
+  function toBooleanOrNull(value) {
+    if (value === true) return true
+    if (value === false) return false
+    return null
+  }
+
+  function toFiniteNumberOrNull(value) {
+    const numeric = Number(value)
+    return Number.isFinite(numeric) ? numeric : null
+  }
+
+  function resolvePrefetchStatusTag(prefetchDebug = {}) {
+    if (prefetchDebug.degraded === true) return 'degraded'
+    if (prefetchDebug.wasted === true) return 'wasted'
+    if (prefetchDebug.degraded === false || prefetchDebug.wasted === false) return 'effective'
+    return 'unknown'
+  }
+
+  function extractPrefetchDebugState(payload = {}) {
+    const root = payload && typeof payload === 'object' ? payload : {}
+    const statsSource = (
+      (root.results && typeof root.results === 'object' ? root.results.stats : null)
+      || (root.stats && typeof root.stats === 'object' ? root.stats : null)
+      || null
+    )
+    const diagnosticsSource = root.diagnostics && typeof root.diagnostics === 'object'
+      ? root.diagnostics
+      : null
+    const prefetchDiag = diagnosticsSource?.prefetch && typeof diagnosticsSource.prefetch === 'object'
+      ? diagnosticsSource.prefetch
+      : null
+
+    const degraded = toBooleanOrNull(
+      statsSource?.prefetch_degraded
+      ?? prefetchDiag?.prefetch_degraded
+      ?? root.prefetch_degraded
+    )
+    const wasted = toBooleanOrNull(
+      statsSource?.prefetch_wasted
+      ?? prefetchDiag?.prefetch_wasted
+      ?? root.prefetch_wasted
+    )
+    const overlapDeltaMs = toFiniteNumberOrNull(
+      statsSource?.prefetch_overlap_delta_ms
+      ?? prefetchDiag?.prefetch_overlap_delta_ms
+      ?? root.prefetch_overlap_delta_ms
+    )
+
+    if (degraded === null && wasted === null && overlapDeltaMs === null) {
+      return null
+    }
+
+    const normalized = {
+      degraded: degraded === true,
+      wasted: wasted === true,
+      overlapDeltaMs: overlapDeltaMs ?? 0
+    }
+    normalized.status = resolvePrefetchStatusTag(normalized)
+    return normalized
+  }
+
+  function applyPrefetchDebugToMessage(message, payload = {}) {
+    if (!message || !payload) return null
+    const prefetchDebug = extractPrefetchDebugState(payload)
+    if (!prefetchDebug) return null
+    message.prefetchDebug = prefetchDebug
+    return prefetchDebug
+  }
+
   function getMessage(aiMessageIndex) {
     return messagesRef.value?.[aiMessageIndex] || null
   }
@@ -53,6 +122,7 @@ export function useAiStreamDispatcher({
       if (normalized.fuzzyRegions.length > 0) currentMsg.fuzzyRegions = normalized.fuzzyRegions
       if (normalized.stats) currentMsg.analysisStats = normalized.stats
       if (normalized.stats?.model_timing_ms) currentMsg.modelTiming = normalized.stats.model_timing_ms
+      applyPrefetchDebugToMessage(currentMsg, data)
       applyIntentMetaToMessage(currentMsg, normalized.intent)
     }
 
@@ -78,6 +148,7 @@ export function useAiStreamDispatcher({
     if (type === 'stage') {
       if (currentMsg) {
         applySSEMetaToMessage(currentMsg, data)
+        applyPrefetchDebugToMessage(currentMsg, data)
       }
       const stageName = typeof data === 'string' ? data : data?.name
       const normalizedStage = String(stageName || '').trim().toLowerCase()
@@ -156,6 +227,7 @@ export function useAiStreamDispatcher({
         currentMsg.modelTiming = data.model_timing_ms
       }
       if (currentMsg) applySSEMetaToMessage(currentMsg, data)
+      if (currentMsg) applyPrefetchDebugToMessage(currentMsg, data)
       emit('ai-analysis-stats', data)
 
       const statsIntent = normalizeRefinedResultEvidence({

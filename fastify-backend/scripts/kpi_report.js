@@ -21,6 +21,12 @@ function formatLatency(value) {
   return `${Math.round(value)} ms`
 }
 
+function formatSignedLatency(value) {
+  if (!Number.isFinite(value)) return 'N/A'
+  const numeric = Math.round(value)
+  return `${numeric >= 0 ? '+' : ''}${numeric} ms`
+}
+
 function boolMark(value) {
   return value ? 'PASS' : 'FAIL'
 }
@@ -55,6 +61,14 @@ async function main() {
   const baselineMetrics = report?.periods?.baseline?.metrics || {}
   const m1 = report?.gate?.m1 || {}
   const stability = report?.gate?.stability || {}
+  const prefetchGate = report?.gate?.prefetch_quality || {}
+  const prefetchFlagged = Array.isArray(prefetchGate.flagged_query_types) ? prefetchGate.flagged_query_types : []
+  const prefetchFlaggedText = prefetchFlagged.length > 0
+    ? prefetchFlagged
+      .slice(0, 5)
+      .map((item) => `${item.query_type}:${formatPercent(item.wasted_rate, 'N/A')}`)
+      .join(', ')
+    : 'none'
 
   const markdown = [
     '# KPI 门禁评估结果',
@@ -73,6 +87,11 @@ async function main() {
     `- sse_schema_error_rate: ${formatPercent(currentMetrics.sse_schema_error_rate)}`,
     `- sse_event_error_rate: ${formatPercent(currentMetrics.sse_event_error_rate)}`,
     `- cache_l2_error_rate: ${formatPercent(currentMetrics.cache_l2_error_rate)}`,
+    `- prefetch_degraded_total: ${currentMetrics.prefetch_degraded_total ?? 0}`,
+    `- prefetch_wasted_total: ${currentMetrics.prefetch_wasted_total ?? 0}`,
+    `- prefetch_wasted_rate: ${formatPercent(currentMetrics.prefetch_wasted_rate)}`,
+    `- prefetch_overlap_delta_ms (P50): ${formatSignedLatency(currentMetrics.prefetch_overlap_delta_ms_p50)}`,
+    `- prefetch_overlap_delta_ms (P95): ${formatSignedLatency(currentMetrics.prefetch_overlap_delta_ms_p95)}`,
     `- sev1/sev2 incidents: ${currentMetrics.sev1_sev2_incidents ?? 'N/A'}`,
     '',
     '## 基线窗口指标',
@@ -93,6 +112,11 @@ async function main() {
     `- sse_event_error_rate < 0.5%: ${boolMark(Boolean(stability.sse_event_error_rate?.pass))}`,
     `- cache_l2_error_rate < 1%: ${boolMark(Boolean(stability.cache_l2_error_rate?.pass))}`,
     `- 无 Sev1/Sev2: ${boolMark(Boolean(stability.sev1_sev2_incidents?.pass))}`,
+    '',
+    '## Prefetch 质量',
+    '',
+    `- prefetch_wasted_rate <= 5%: ${boolMark(Boolean(prefetchGate.pass))} (current=${formatPercent(prefetchGate.current)})`,
+    `- flagged_query_types: ${prefetchFlaggedText}`,
     ''
   ].join('\n')
 

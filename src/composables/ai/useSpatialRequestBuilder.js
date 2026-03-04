@@ -1,3 +1,5 @@
+import { createContextBindingManager } from '../../utils/contextBinding.js'
+
 const DEEP_SPATIAL_KEYWORDS = [
   '模糊',
   '边界',
@@ -94,9 +96,13 @@ function inferAnalysisScale(zoom) {
 }
 
 export function useSpatialRequestBuilder({
-  poiCoordSys = (import.meta.env.VITE_POI_COORD_SYS || 'gcj02').toLowerCase()
+  poiCoordSys = (import.meta.env.VITE_POI_COORD_SYS || 'gcj02').toLowerCase(),
+  contextBindingSeed = ''
 } = {}) {
   const shouldProjectToBackend = poiCoordSys === 'wgs84'
+  const contextBindingManager = createContextBindingManager({
+    seed: contextBindingSeed || `view_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
+  })
 
   function gcj02ToWgs84(lon, lat) {
     if (outOfChina(lon, lat)) return [lon, lat]
@@ -235,25 +241,27 @@ export function useSpatialRequestBuilder({
   function buildDslMetaSkeleton({
     enabled = false,
     requestId = '',
-    spatialContext = {}
+    spatialContext = {},
+    drawMode = 'none',
+    regions = [],
+    mapStateVersion = null
   } = {}) {
-    if (!enabled) return {}
+    const contextBinding = contextBindingManager.next({
+      viewport: Array.isArray(spatialContext?.viewport) ? spatialContext.viewport : [],
+      drawMode: drawMode || spatialContext?.mode || 'none',
+      regions,
+      mapStateVersion,
+      sourceOverride: requestId ? 'frontend_injected' : 'frontend_generated'
+    })
 
-    const viewport = Array.isArray(spatialContext?.viewport) ? spatialContext.viewport : []
-    const viewportHashSeed = viewport.length >= 4
-      ? viewport.slice(0, 4).map((value) => Number(value).toFixed(6)).join(',')
-      : 'viewport_unavailable'
-    const traceSuffix = String(requestId || 'pending').slice(-16)
+    if (!enabled) {
+      return {
+        context_binding: contextBinding
+      }
+    }
 
     return {
-      context_binding: {
-        viewport_hash: `placeholder:${viewportHashSeed}`,
-        client_view_id: `view_placeholder_${traceSuffix || '0000'}`,
-        event_seq: 0,
-        map_state_version: null,
-        captured_at_ms: Date.now(),
-        source: 'frontend_placeholder'
-      },
+      context_binding: contextBinding,
       revision: {
         mode: 'rebuild',
         base_trace_id: null,

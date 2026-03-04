@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 空间查询 API 路由
  * 基于 PostgreSQL + PostGIS 的空间检索
  * 基于 Milvus 的语义向量检索
@@ -46,7 +46,7 @@ const INTENT_PARSE_PROMPT = `你是一个地理查询解析器，将用户的自
  */
 async function callLocalLLM(prompt, session = null) {
   const baseUrl = process.env.LLM_BASE_URL || 'http://localhost:1234/v1';
-  const model = process.env.LLM_MODEL || 'qwen3.5-4b';
+  const model = process.env.LLM_MODEL || 'qwen3.5-2b';
   
   const startTime = Date.now();
   
@@ -856,3 +856,4 @@ ${context}
     };
   });
 }
+

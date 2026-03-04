@@ -1,4 +1,4 @@
-# Composite V5 路网地块边界 — RAGLOG
+﻿# Composite V5 路网地块边界 — RAGLOG
 
 > 版本：v5.0  
 > 最后更新：2026-02-20  
@@ -244,7 +244,7 @@ composite_v5_score = weighted_sum(
 Mode A: 启发式评分（默认，0延迟）
   score = 0.30×quality + 0.24×coverage + 0.18×road_fit + 0.16×landuse_fit + 0.12×compactness + poi_bonus
 
-Mode B: VLM 远程评分（可选，需要 LM Studio + qwen3.5-4b）
+Mode B: VLM 远程评分（可选，需要 LM Studio + qwen3.5-2b）
   输入：地图截图 data URL + 边界信息 + BBOX
   输出：{ morphology_confidence, road_fit, landuse_fit, summary }
   融合：0.7 × VLM分数 + 0.3 × 启发式分数
@@ -322,3 +322,4 @@ Frontend (MapContainer.vue)
 | 3 | ۵ҪԲͬж̬չ | TODO |  |
 | 4 | VLM 地图 OCR 集成（截图→提取地名→Writer） | 规划中 | 中 |
 | 5 | 语义聚合：同一 AOI name 下的多聚类应当合并 | TODO | 高 |
+

@@ -753,6 +753,12 @@ def _build_hubei_university_pois():
 
 
 class SpatialPipelineTest(unittest.TestCase):
+    def test_visual_model_alias_keeps_2b(self):
+        self.assertEqual(
+            spatial_module._normalize_visual_model_name("qwen3.5-2b"),
+            "qwen3.5-2b",
+        )
+
     def test_poi_fetch_emits_final_event(self):
         pipeline = SpatialPipeline(repository=_StubRepository())
 
@@ -1389,7 +1395,7 @@ class SpatialPipelineTest(unittest.TestCase):
                 "visualRemoteEnabled": False,
                 "selfValidationEnabled": True,
                 "skgEnabled": True,
-                "visualModel": "qwen3.5-4b",
+                "visualModel": "qwen3.5-2b",
             }
         )
 
@@ -2376,6 +2382,12 @@ class SpatialPipelineTest(unittest.TestCase):
                     "allow_prefetch": True,
                     "prefetch_on_fields": ["scope", "entities.categories"],
                 },
+                "prefetch_degraded": True,
+                "prefetch_wasted": False,
+                "prefetch_overlap_delta_ms": -128,
+                "context_refreshed": True,
+                "context_stale": False,
+                "context_view_changed": True,
             }
         )
 
@@ -2388,15 +2400,27 @@ class SpatialPipelineTest(unittest.TestCase):
         self.assertEqual(int(stats.get("dsl_patch_ops_count", -1)), 0)
         self.assertTrue(bool(stats.get("dsl_context_binding_present")))
         self.assertFalse(bool(stats.get("context_binding_degraded")))
+        self.assertTrue(bool(stats.get("context_refreshed")))
+        self.assertFalse(bool(stats.get("context_stale")))
+        self.assertTrue(bool(stats.get("context_view_changed")))
         self.assertTrue(bool(stats.get("dsl_streaming_allow_prefetch")))
         self.assertEqual(
             stats.get("dsl_streaming_prefetch_on_fields"),
             ["scope", "entities.categories"],
         )
+        self.assertTrue(bool(stats.get("prefetch_degraded")))
+        self.assertFalse(bool(stats.get("prefetch_wasted")))
+        self.assertEqual(float(stats.get("prefetch_overlap_delta_ms", 0)), -128.0)
 
         self.assertEqual(diagnostics.get("revision_mode"), "rebuild")
         self.assertFalse(bool(diagnostics.get("context_binding_degraded")))
+        self.assertTrue(bool(diagnostics.get("context_refreshed")))
+        self.assertFalse(bool(diagnostics.get("context_stale")))
+        self.assertTrue(bool(diagnostics.get("context_view_changed")))
         self.assertTrue(bool(diagnostics.get("streaming_allow_prefetch")))
+        self.assertTrue(bool(diagnostics.get("prefetch_degraded")))
+        self.assertFalse(bool(diagnostics.get("prefetch_wasted")))
+        self.assertEqual(float(diagnostics.get("prefetch_overlap_delta_ms", 0)), -128.0)
         self.assertIn("dsl_meta", diagnostics)
         self.assertEqual(
             ((diagnostics.get("dsl_meta") or {}).get("revision") or {}).get("mode"),
@@ -2429,12 +2453,12 @@ class SpatialPipelineTest(unittest.TestCase):
                 spatial_context={"mode": "Viewport", "viewport": [114.30, 30.55, 114.36, 30.61]},
                 categories=["椁愰ギ鏈嶅姟"],
                 image_data_url="data:image/png;base64,stub",
-                visual_model_name="qwen3.5-4b",
+                visual_model_name="qwen3.5-2b",
                 ocr_model_name="glm-ocr",
                 visual_endpoint="http://localhost:1234/v1/chat/completions",
                 visual_timeout_ms=1200,
                 reasoning_enabled=True,
-                reasoning_model_name="qwen3.5-4b",
+                reasoning_model_name="qwen3.5-2b",
                 reasoning_endpoint="http://localhost:1234/v1/chat/completions",
                 reasoning_timeout_ms=1500,
                 model_budget_ms=5000,
@@ -2480,12 +2504,12 @@ class SpatialPipelineTest(unittest.TestCase):
                 spatial_context={"mode": "Viewport", "viewport": [114.30, 30.55, 114.36, 30.61]},
                 categories=["life_service"],
                 image_data_url="data:image/png;base64,stub",
-                visual_model_name="qwen3.5-4b",
+                visual_model_name="qwen3.5-2b",
                 ocr_model_name="glm-ocr",
                 visual_endpoint="http://localhost:1234/v1/chat/completions",
                 visual_timeout_ms=1200,
                 reasoning_enabled=True,
-                reasoning_model_name="qwen3.5-4b",
+                reasoning_model_name="qwen3.5-2b",
                 reasoning_endpoint="http://localhost:1234/v1/chat/completions",
                 reasoning_timeout_ms=1500,
                 model_budget_ms=5000,
@@ -2528,12 +2552,12 @@ class SpatialPipelineTest(unittest.TestCase):
                 spatial_context={"mode": "Viewport", "viewport": [114.30, 30.55, 114.36, 30.61]},
                 categories=["life_service"],
                 image_data_url="data:image/png;base64,stub",
-                visual_model_name="qwen3.5-4b",
+                visual_model_name="qwen3.5-2b",
                 ocr_model_name="glm-ocr",
                 visual_endpoint="http://localhost:1234/v1/chat/completions",
                 visual_timeout_ms=1200,
                 reasoning_enabled=True,
-                reasoning_model_name="qwen3.5-4b",
+                reasoning_model_name="qwen3.5-2b",
                 reasoning_endpoint="http://localhost:1234/v1/chat/completions",
                 reasoning_timeout_ms=1500,
                 model_budget_ms=5000,
@@ -2579,12 +2603,12 @@ class SpatialPipelineTest(unittest.TestCase):
                 spatial_context={"mode": "Viewport", "viewport": [114.30, 30.55, 114.36, 30.61]},
                 categories=["life_service"],
                 image_data_url="data:image/png;base64,stub",
-                visual_model_name="qwen3.5-4b",
+                visual_model_name="qwen3.5-2b",
                 ocr_model_name="glm-ocr",
                 visual_endpoint="http://localhost:1234/v1/chat/completions",
                 visual_timeout_ms=1200,
                 reasoning_enabled=True,
-                reasoning_model_name="qwen3.5-4b",
+                reasoning_model_name="qwen3.5-2b",
                 reasoning_endpoint="http://localhost:1234/v1/chat/completions",
                 reasoning_timeout_ms=1500,
                 model_budget_ms=5000,
@@ -2729,5 +2753,6 @@ class SpatialPipelineTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
