@@ -2427,6 +2427,31 @@ class SpatialPipelineTest(unittest.TestCase):
             "rebuild",
         )
 
+    def test_pipeline_outputs_normalized_critic_fields(self):
+        pipeline = SpatialPipeline(repository=_StubRepository(_build_clustered_pois()))
+        events = list(pipeline.run(_build_area_request()))
+        final_payload = next(event["payload"] for event in events if event.get("type") == "FINAL")
+        stats = (final_payload.get("results") or {}).get("stats") or {}
+        diagnostics = final_payload.get("diagnostics") or {}
+        critic = diagnostics.get("critic") or {}
+
+        self.assertIn("critic_pass", stats)
+        self.assertIn("critic_reasons", stats)
+        self.assertIn("critic_fix_suggestions", stats)
+        self.assertIn("critic_confidence", stats)
+
+        self.assertIsInstance(bool(stats.get("critic_pass")), bool)
+        self.assertIsInstance(stats.get("critic_reasons"), list)
+        self.assertIsInstance(stats.get("critic_fix_suggestions"), list)
+        self.assertIsInstance(float(stats.get("critic_confidence", 0.0)), float)
+
+        self.assertEqual(bool(critic.get("critic_pass")), bool(stats.get("critic_pass")))
+        self.assertEqual(list(critic.get("reasons") or []), list(stats.get("critic_reasons") or []))
+        self.assertEqual(
+            list(critic.get("fix_suggestions") or []),
+            list(stats.get("critic_fix_suggestions") or []),
+        )
+
     def test_parallel_model_inference_collects_timing_and_payload(self):
         original_vlm = spatial_module.vlm_reviewer.extract_map_anchors
         original_llm = spatial_module.reasoning_reviewer.infer_spatial_priors

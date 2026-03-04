@@ -1,0 +1,81 @@
+{
+  "generated_at": "2026-03-04T12:00:51.627Z",
+  "base_url": "http://127.0.0.1:3200",
+  "window": "1h",
+  "timeout_ms": 120000,
+  "poll_ms": 1000,
+  "cases": [
+    {
+      "name": "macro_hotspot",
+      "query": "请分析当前视野内的商业热点与业态分布",
+      "mode": "sync",
+      "job_id": "0ba96b20-600c-4c00-b375-00dc701574ac",
+      "elapsed_ms": 12054,
+      "query_type": "area_analysis",
+      "prefetch_policy_source": "unknown",
+      "prefetch_enabled": false,
+      "allow_prefetch": false,
+      "prefetch_on_fields": [],
+      "prefetch_attempted": false,
+      "prefetch_hit": false,
+      "prefetch_degraded": false,
+      "prefetch_wasted": false,
+      "prefetch_overlap_delta_ms": 0,
+      "prefetch_error_codes": []
+    },
+    {
+      "name": "poi_search",
+      "query": "请找出当前区域评分较高的咖啡店",
+      "mode": "sync",
+      "job_id": "5d1434cb-3ec3-460c-9e9e-5f138ede05d7",
+      "elapsed_ms": 10900,
+      "query_type": "poi_search",
+      "prefetch_policy_source": "unknown",
+      "prefetch_enabled": false,
+      "allow_prefetch": false,
+      "prefetch_on_fields": [],
+      "prefetch_attempted": false,
+      "prefetch_hit": false,
+      "prefetch_degraded": false,
+      "prefetch_wasted": false,
+      "prefetch_overlap_delta_ms": 0,
+      "prefetch_error_codes": []
+    },
+    {
+      "name": "comparison",
+      "query": "对比这几个片区的餐饮与便利店分布差异",
+      "mode": "sync",
+      "job_id": "7ff309b6-03cf-476a-a2a9-b1890e0cb0f8",
+      "elapsed_ms": 9902,
+      "query_type": "area_analysis",
+      "prefetch_policy_source": "unknown",
+      "prefetch_enabled": false,
+      "allow_prefetch": false,
+      "prefetch_on_fields": [],
+      "prefetch_attempted": false,
+      "prefetch_hit": false,
+      "prefetch_degraded": false,
+      "prefetch_wasted": false,
+      "prefetch_overlap_delta_ms": 0,
+      "prefetch_error_codes": []
+    }
+  ],
+  "kpi_before": {
+    "prefetch_attempts": 0,
+    "prefetch_hits": 0,
+    "prefetch_degraded": 0,
+    "prefetch_wasted": 0
+  },
+  "kpi_after": {
+    "prefetch_attempts": 0,
+    "prefetch_hits": 0,
+    "prefetch_degraded": 0,
+    "prefetch_wasted": 0
+  },
+  "kpi_delta": {
+    "prefetch_attempts_delta": 0,
+    "prefetch_hits_delta": 0,
+    "prefetch_degraded_delta": 0,
+    "prefetch_wasted_delta": 0
+  }
+}

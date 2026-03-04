@@ -11,6 +11,7 @@ import { resolveAnchor } from '../../services/geocoder.js';
 import { createRAGSession } from '../../services/ragLogger.js';
 import { computeSpatialStream, isGrpcComputeEnabled } from '../../services/grpcClient.js';
 import { resolveSourcePolicy } from '../../services/sourcePolicy.js';
+import { toSpatialPoiFeature } from '../../services/spatialFeatureMapper.js';
 
 /**
  * LLM 意图解析 Prompt
@@ -294,7 +295,7 @@ function fuseResults(vectorResults, spatialResults, strategy = 'intersection', s
 function buildPOIContext(pois, includeCoordinates = false) {
   const lines = pois.map((p, i) => {
     const name = p.name || p.poi_name || '未知';
-    const category = p.category_small || p.category_mid || p.type || '未分类';
+    const category = p.category_small || p.category_mid || p.category_big || p.type || '未分类';
     const distance = p.distance_meters ? `距离${Math.round(p.distance_meters)}m` : '';
     const address = p.address || p.poi_address || '';
     
@@ -436,6 +437,7 @@ export default async function spatialRoutes(fastify) {
           address: p.address || p.poi_address,
           type: p.type || p.poi_type,
           category: {
+            big: p.category_big || p['大类'],
             mid: p.category_mid || p['中类'],
             small: p.category_small || p['小类'],
           },
@@ -747,29 +749,7 @@ ${context}
         }
       ).policy;
 
-      const toFeature = (poi) => {
-        const lon = Number.parseFloat(poi?.lon);
-        const lat = Number.parseFloat(poi?.lat);
-        if (!Number.isFinite(lon) || !Number.isFinite(lat)) {
-          return null;
-        }
-
-        return {
-          type: 'Feature',
-          id: poi?.id || poi?.poiid,
-          geometry: {
-            type: 'Point',
-            coordinates: [lon, lat]
-          },
-          properties: {
-            name: poi?.name,
-            address: poi?.address,
-            type: poi?.type,
-            category_mid: poi?.category_mid,
-            category_small: poi?.category_small,
-          }
-        };
-      };
+      const toFeature = (poi) => toSpatialPoiFeature(poi);
 
       const preferPythonFetch = process.env.SPATIAL_FETCH_PY_ENABLED !== 'false';
       if (preferPythonFetch && isGrpcComputeEnabled()) {

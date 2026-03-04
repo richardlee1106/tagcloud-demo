@@ -47,6 +47,16 @@ async function main() {
   }
 
   const report = await response.json()
+  let complexityReport = null
+  try {
+    const complexityUrl = `${baseUrl.replace(/\/$/, '')}/complexity-calibration?window=${encodeURIComponent(window)}`
+    const complexityResponse = await fetch(complexityUrl)
+    if (complexityResponse.ok) {
+      complexityReport = await complexityResponse.json()
+    }
+  } catch {
+    complexityReport = null
+  }
 
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
   const reportDir = path.resolve('reports', 'kpi')
@@ -67,6 +77,14 @@ async function main() {
     ? prefetchFlagged
       .slice(0, 5)
       .map((item) => `${item.query_type}:${formatPercent(item.wasted_rate, 'N/A')}`)
+      .join(', ')
+    : 'none'
+  const complexityAdjusted = Array.isArray(complexityReport?.by_query_type)
+    ? complexityReport.by_query_type.filter((item) => Number(item?.delta || 0) !== 0).slice(0, 5)
+    : []
+  const complexityAdjustedText = complexityAdjusted.length > 0
+    ? complexityAdjusted
+      .map((item) => `${item.query_type}:${item.current_complexity_score}->${item.suggested_complexity_score}`)
       .join(', ')
     : 'none'
 
@@ -117,6 +135,11 @@ async function main() {
     '',
     `- prefetch_wasted_rate <= 5%: ${boolMark(Boolean(prefetchGate.pass))} (current=${formatPercent(prefetchGate.current)})`,
     `- flagged_query_types: ${prefetchFlaggedText}`,
+    '',
+    '## Complexity 校准',
+    '',
+    `- adjusted_query_types: ${complexityReport?.summary?.adjusted_query_types ?? 0}`,
+    `- top_deltas: ${complexityAdjustedText}`,
     ''
   ].join('\n')
 

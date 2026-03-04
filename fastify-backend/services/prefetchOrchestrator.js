@@ -99,6 +99,12 @@ export function createPrefetchOrchestrator(options = {}) {
   const prefetchOnFieldsSet = normalizePrefetchFields(options?.streamingHints?.prefetch_on_fields || [])
   const prefetchOnFields = [...prefetchOnFieldsSet]
   const enabled = allowPrefetch && prefetchOnFieldsSet.size > 0
+  const policySource = String(options?.streamingHints?.prefetch_policy_source || '').trim() || 'unknown'
+  const rolloutEnabled = options?.streamingHints?.prefetch_rollout_enabled === true
+  const rolloutEnv = String(options?.streamingHints?.prefetch_rollout_env || '').trim() || null
+  const rolloutEnvMatch = options?.streamingHints?.prefetch_rollout_env_match === true
+  const rolloutQueryType = String(options?.streamingHints?.prefetch_rollout_query_type || '').trim() || null
+  const rolloutQueryTypeMatch = options?.streamingHints?.prefetch_rollout_query_type_match === true
 
   const plannerEvents = normalizePlannerEvents(options?.plannerStreamEvents || [])
   const buildFingerprint = typeof options?.buildFingerprint === 'function'
@@ -222,6 +228,12 @@ export function createPrefetchOrchestrator(options = {}) {
       prefetch_enabled: enabled,
       allow_prefetch: allowPrefetch,
       prefetch_on_fields: prefetchOnFields,
+      prefetch_policy_source: policySource,
+      prefetch_rollout_enabled: rolloutEnabled,
+      prefetch_rollout_env: rolloutEnv,
+      prefetch_rollout_env_match: rolloutEnvMatch,
+      prefetch_rollout_query_type: rolloutQueryType,
+      prefetch_rollout_query_type_match: rolloutQueryTypeMatch,
       prefetch_triggered_events: [...triggeredEventSet],
       prefetch_attempted: attempted,
       prefetch_hit: prefetchHit,

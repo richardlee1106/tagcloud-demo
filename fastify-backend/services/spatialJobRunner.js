@@ -16,6 +16,8 @@ import { callLLM, generateEmbedding } from './llm.js'
 import { buildFailureDiagnostics } from './errorDiagnostics.js'
 import { assertValidSpatialPlan } from './dslValidator.js'
 import { createPrefetchOrchestrator } from './prefetchOrchestrator.js'
+import { resolvePrefetchRolloutPolicy } from './prefetchRolloutPolicy.js'
+import { recordOpsAuditEvent } from './opsAuditStore.js'
 import {
   loadContextBindingState,
   updateContextBindingState
@@ -85,27 +87,155 @@ function normalizeRiskLevel(queryPlan = {}) {
   return 'low'
 }
 
-function shouldEnableCriticForRisk(queryPlan = {}, options = {}) {
-  const riskLevel = normalizeRiskLevel(queryPlan)
-  if (riskLevel === 'high' || riskLevel === 'critical') return true
-  return options?.criticEnabled === true || queryPlan?.routing?.critic_enabled === true
+function normalizePlannerModelTier(queryPlan = {}) {
+  const rawTier = queryPlan?.routing?.planner_model_tier
+  const normalized = String(rawTier || '').trim().toLowerCase()
+  if (normalized === 'rule') return 'rule'
+  if (normalized === 'small') return 'small'
+  if (normalized === 'medium') return 'medium'
+  if (normalized === 'frontier') return 'frontier'
+  return 'medium'
 }
 
-function applyCriticRouting(queryPlan = {}, criticEnabled = false) {
-  if (!criticEnabled || !queryPlan || typeof queryPlan !== 'object' || Array.isArray(queryPlan)) {
+function normalizeComplexityScore(queryPlan = {}) {
+  const raw = Number(queryPlan?.routing?.complexity_score)
+  if (!Number.isFinite(raw)) return 5
+  return Math.max(0, Math.min(10, Math.round(raw)))
+}
+
+export function resolveCriticRoutingPolicy(queryPlan = {}, options = {}) {
+  const riskLevel = normalizeRiskLevel(queryPlan)
+  const requestedPlannerModelTier = normalizePlannerModelTier(queryPlan)
+  const frontierEmulated = requestedPlannerModelTier === 'frontier'
+  const effectivePlannerModelTier = frontierEmulated ? 'medium' : requestedPlannerModelTier
+  const complexityScore = normalizeComplexityScore(queryPlan)
+  const explicitCriticEnabled = options?.criticEnabled === true || queryPlan?.routing?.critic_enabled === true
+  const criticEnabled = explicitCriticEnabled || riskLevel === 'high' || riskLevel === 'critical'
+
+  let criticMode = 'off'
+  if (criticEnabled) {
+    if (riskLevel === 'critical' || options?.forceCriticSync === true) {
+      criticMode = 'sync'
+    } else {
+      criticMode = 'async'
+    }
+  }
+
+  return {
+    critic_enabled: criticEnabled,
+    critic_mode: criticMode,
+    risk_level: riskLevel,
+    complexity_score: complexityScore,
+    requested_planner_model_tier: requestedPlannerModelTier,
+    effective_planner_model_tier: effectivePlannerModelTier,
+    frontier_emulated: frontierEmulated
+  }
+}
+
+function applyCriticRouting(queryPlan = {}, criticRouting = {}) {
+  if (!queryPlan || typeof queryPlan !== 'object' || Array.isArray(queryPlan)) {
     return queryPlan
   }
 
   const existingRouting = queryPlan?.routing && typeof queryPlan.routing === 'object'
     ? queryPlan.routing
     : {}
+  const shouldMutateRouting = criticRouting?.critic_enabled === true || criticRouting?.frontier_emulated === true
+  if (!shouldMutateRouting) return queryPlan
 
   return {
     ...queryPlan,
     routing: {
       ...existingRouting,
-      critic_enabled: true
+      critic_enabled: criticRouting?.critic_enabled === true,
+      planner_model_tier: criticRouting?.effective_planner_model_tier || existingRouting.planner_model_tier || 'medium'
     }
+  }
+}
+
+function toStringList(value) {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((item) => String(item || '').trim())
+    .filter(Boolean)
+}
+
+export function evaluateSyncCriticGate({
+  queryPlan = {},
+  criticRouting = {}
+} = {}) {
+  if (criticRouting?.critic_mode !== 'sync') {
+    return {
+      pass: true,
+      error_code: null,
+      reasons: [],
+      fix_hint: null,
+      confidence: null
+    }
+  }
+
+  const uncertainty = queryPlan?.uncertainty && typeof queryPlan.uncertainty === 'object'
+    ? queryPlan.uncertainty
+    : {}
+  const clarification = uncertainty?.clarification && typeof uncertainty.clarification === 'object'
+    ? uncertainty.clarification
+    : {}
+  const riskLevel = normalizeRiskLevel(queryPlan)
+  let plannerConfidence = Number(uncertainty?.planner_confidence)
+  if (!Number.isFinite(plannerConfidence)) {
+    const legacyScore = Number(queryPlan?.confidence?.score)
+    if (Number.isFinite(legacyScore)) {
+      if (legacyScore >= 0 && legacyScore <= 1) {
+        plannerConfidence = legacyScore
+      } else if (legacyScore >= 0 && legacyScore <= 10) {
+        plannerConfidence = legacyScore / 10
+      }
+    }
+  }
+  if (!Number.isFinite(plannerConfidence)) {
+    const confidenceLevel = String(queryPlan?.confidence?.level || '').trim().toLowerCase()
+    if (confidenceLevel === 'high') plannerConfidence = 0.85
+    else if (confidenceLevel === 'medium') plannerConfidence = 0.65
+    else if (confidenceLevel === 'low') plannerConfidence = 0.45
+    else if (confidenceLevel === 'critical') plannerConfidence = 0.35
+  }
+  if (Number.isFinite(plannerConfidence)) {
+    plannerConfidence = Math.max(0, Math.min(1, plannerConfidence))
+  }
+  const clarificationRequired = String(queryPlan?.query_type || '').trim().toLowerCase() === 'clarification_needed'
+    || clarification?.required === true
+    || queryPlan?.clarification_required === true
+    || String(queryPlan?.clarification_question || '').trim().length > 0
+
+  const reasons = []
+  if (clarificationRequired) {
+    reasons.push('clarification_required')
+  }
+  if (riskLevel === 'critical' && Number.isFinite(plannerConfidence) && plannerConfidence < 0.7) {
+    reasons.push('critical_low_confidence')
+  }
+  if (riskLevel === 'critical' && !Number.isFinite(plannerConfidence)) {
+    reasons.push('critical_confidence_missing')
+  }
+
+  if (reasons.length === 0) {
+    return {
+      pass: true,
+      error_code: null,
+      reasons: [],
+      fix_hint: null,
+      confidence: Number.isFinite(plannerConfidence) ? plannerConfidence : null
+    }
+  }
+
+  const clarificationQuestion = String(clarification?.question || queryPlan?.clarification_question || '').trim()
+  const errorCode = clarificationRequired ? 'clarification_needed' : 'dsl_execution_blocked'
+  return {
+    pass: false,
+    error_code: errorCode,
+    reasons,
+    fix_hint: clarificationQuestion || '当前请求风险较高，请补充约束后重试。',
+    confidence: Number.isFinite(plannerConfidence) ? plannerConfidence : null
   }
 }
 
@@ -250,6 +380,129 @@ async function buildContextClarificationResult({
   }
 }
 
+async function buildCriticBlockedResult({
+  report = {},
+  requestId = '',
+  userQuestion = '',
+  queryPlan = {},
+  criticRouting = {},
+  criticDecision = {},
+  contextDecision = {}
+} = {}) {
+  const errorCode = String(criticDecision?.error_code || 'dsl_execution_blocked')
+  const clarificationMode = errorCode === 'clarification_needed'
+  const blockQuestion = String(criticDecision?.fix_hint || '').trim()
+    || (clarificationMode
+      ? '该请求存在高风险歧义，请确认分析范围后重试。'
+      : '该请求触发高风险审查，已阻断执行。请补充约束后重试。')
+  const queryType = clarificationMode
+    ? 'clarification_needed'
+    : normalizeQueryType(queryPlan)
+
+  await report.reportStage?.('critic_sync_blocked', {
+    error_code: errorCode,
+    reasons: toStringList(criticDecision?.reasons),
+    critic_mode: 'sync',
+    frontier_emulated: criticRouting?.frontier_emulated === true
+  })
+  await report.reportText?.(blockQuestion)
+  await report.reportProgress?.(1, { stage: 'completed', mode: clarificationMode ? 'clarification_needed' : 'dsl_execution_blocked' })
+
+  return {
+    success: clarificationMode,
+    request_id: requestId,
+    query: userQuestion,
+    query_plan: {
+      ...(queryPlan || {}),
+      query_type: queryType,
+      clarification_required: clarificationMode,
+      clarification_question: clarificationMode ? blockQuestion : null
+    },
+    answer: blockQuestion,
+    results: {
+      mode: clarificationMode ? 'clarification_needed' : 'dsl_execution_blocked',
+      pois: [],
+      boundary: null,
+      spatial_clusters: { hotspots: [] },
+      vernacular_regions: [],
+      fuzzy_regions: [],
+      stats: {
+        query_type: queryType,
+        critic_mode: 'sync',
+        critic_enabled: true,
+        critic_pass: false,
+        critic_reasons: toStringList(criticDecision?.reasons),
+        critic_fix_suggestions: [blockQuestion],
+        critic_confidence: Number.isFinite(Number(criticDecision?.confidence))
+          ? Number(criticDecision.confidence)
+          : null,
+        frontier_emulated: criticRouting?.frontier_emulated === true,
+        routing_complexity_score: Number.isFinite(Number(criticRouting?.complexity_score))
+          ? Number(criticRouting.complexity_score)
+          : null,
+        context_binding_degraded: contextDecision?.context_binding_degraded === true
+      }
+    },
+    diagnostics: {
+      engine: 'critic_sync_guard',
+      request_id: requestId,
+      error_code: errorCode,
+      critic: {
+        ...criticDecision,
+        critic_mode: 'sync'
+      },
+      routing: criticRouting,
+      context_binding: contextDecision
+    }
+  }
+}
+
+function normalizeCriticSummary(finalResults = {}) {
+  const stats = finalResults?.stats && typeof finalResults.stats === 'object'
+    ? finalResults.stats
+    : {}
+  const criticPass = typeof stats.critic_pass === 'boolean' ? stats.critic_pass : true
+  const criticReasons = toStringList(stats.critic_reasons)
+  const criticFixSuggestions = toStringList(stats.critic_fix_suggestions)
+  const criticConfidenceRaw = Number(stats.critic_confidence)
+  const criticConfidence = Number.isFinite(criticConfidenceRaw)
+    ? Math.max(0, Math.min(1, criticConfidenceRaw))
+    : null
+
+  return {
+    critic_pass: criticPass,
+    reasons: criticReasons,
+    fix_suggestions: criticFixSuggestions,
+    confidence: criticConfidence
+  }
+}
+
+function recordAsyncCriticAudit({
+  requestId = '',
+  queryType = 'unknown',
+  criticRouting = {},
+  criticSummary = {},
+  mode = 'sync'
+} = {}) {
+  return recordOpsAuditEvent({
+    type: 'critic_async_review',
+    trace_id: requestId,
+    request_id: requestId,
+    query_type: String(queryType || 'unknown'),
+    mode: String(mode || 'sync'),
+    critic_mode: 'async',
+    critic_pass: criticSummary?.critic_pass !== false,
+    reasons: toStringList(criticSummary?.reasons),
+    fix_suggestions: toStringList(criticSummary?.fix_suggestions),
+    confidence: Number.isFinite(Number(criticSummary?.confidence)) ? Number(criticSummary.confidence) : null,
+    risk_level: String(criticRouting?.risk_level || 'unknown'),
+    complexity_score: Number.isFinite(Number(criticRouting?.complexity_score)) ? Number(criticRouting.complexity_score) : null,
+    frontier_emulated: criticRouting?.frontier_emulated === true,
+    planner_model_tier: String(criticRouting?.effective_planner_model_tier || 'medium'),
+    requested_planner_model_tier: String(criticRouting?.requested_planner_model_tier || 'medium')
+  })
+}
+
 function isSpatialDslQueryPlan(queryPlan = {}) {
   return String(queryPlan?.dsl_version || '').trim().toLowerCase() === 'spatial_query_v1'
     && queryPlan?.task
@@ -271,6 +524,25 @@ function toExecutableQueryPlan(queryPlan = {}) {
     latency_budget_ms: queryPlan?.constraints?.latency_budget_ms,
     operators: Array.isArray(queryPlan?.operators) ? queryPlan.operators : []
   }
+}
+
+export function shouldGenerateWriterText(queryPlan = {}, options = {}) {
+  const normalizedPlan = queryPlan && typeof queryPlan === 'object' ? queryPlan : {}
+  const normalizedOptions = options && typeof options === 'object' ? options : {}
+
+  if (normalizedOptions.disable_writer === true || normalizedOptions.disableWriter === true) {
+    return false
+  }
+  if (normalizedOptions.force_writer === true || normalizedOptions.forceWriter === true) {
+    return true
+  }
+  if (normalizedPlan?.need_text_answer === false) {
+    return false
+  }
+  if (normalizedPlan?.output_contract?.include_writer_text === false) {
+    return false
+  }
+  return true
 }
 
 const LEGACY_VISUAL_MODEL_ALIASES = new Map([
@@ -1571,17 +1843,10 @@ function normalizeStreamingHints(options = {}, queryPlan = {}) {
     || {}
   )
 
-  const prefetchOnFields = Array.isArray(candidate.prefetch_on_fields)
-    ? candidate.prefetch_on_fields
-      .map((field) => String(field || '').trim())
-      .filter(Boolean)
-    : []
-
-  return {
-    ...candidate,
-    allow_prefetch: candidate.allow_prefetch === true,
-    prefetch_on_fields: prefetchOnFields
-  }
+  return resolvePrefetchRolloutPolicy({
+    streamingHints: candidate,
+    queryType: normalizeQueryType(queryPlan)
+  })
 }
 
 function extractPlannerParserEvents(plannerOutput = {}) {
@@ -1592,9 +1857,11 @@ function extractPlannerParserEvents(plannerOutput = {}) {
 function recordPrefetchObservability(prefetchSummary = {}, { requestId = '', queryType = 'unknown', mode = 'sync' } = {}) {
   const normalizedQueryType = String(queryType || 'unknown')
   const normalizedMode = String(mode || 'sync')
+  const prefetchPolicySource = String(prefetchSummary?.prefetch_policy_source || 'unknown')
   const labels = {
     query_type: normalizedQueryType,
-    mode: normalizedMode
+    mode: normalizedMode,
+    prefetch_policy_source: prefetchPolicySource
   }
 
   if (prefetchSummary?.prefetch_attempted === true) {
@@ -1809,7 +2076,63 @@ export async function executeSpatialPlanWithFallback({
     throw new Error('queryPlan is required')
   }
 
-  const validation = assertValidSpatialPlan(queryPlan, {
+  const criticRouting = resolveCriticRoutingPolicy(queryPlan, options)
+  const routedQueryPlan = applyCriticRouting(queryPlan, criticRouting)
+  const routedQueryType = normalizeQueryType(routedQueryPlan)
+
+  telemetry.recordKpiEvent('critic_mode_selected', 1, {
+    trace_id: requestId,
+    query_type: routedQueryType,
+    critic_mode: String(criticRouting.critic_mode || 'off'),
+    risk_level: String(criticRouting.risk_level || 'low')
+  })
+  telemetry.recordKpiEvent('routing_complexity_score', Number(criticRouting.complexity_score || 0), {
+    trace_id: requestId,
+    query_type: routedQueryType,
+    critic_mode: String(criticRouting.critic_mode || 'off')
+  })
+  if (criticRouting.frontier_emulated === true) {
+    telemetry.incrementCounter('frontier_emulated_total', {
+      query_type: routedQueryType,
+      mode: String(options?.mode || 'execute')
+    })
+    telemetry.recordKpiEvent('frontier_emulated', 1, {
+      trace_id: requestId,
+      query_type: routedQueryType,
+      requested_tier: String(criticRouting.requested_planner_model_tier || 'frontier'),
+      effective_tier: String(criticRouting.effective_planner_model_tier || 'medium')
+    })
+    telemetry.logStructured('warn', 'frontier_tier_emulated', {
+      trace_id: requestId,
+      query_type: routedQueryType,
+      requested_tier: criticRouting.requested_planner_model_tier,
+      effective_tier: criticRouting.effective_planner_model_tier,
+      note: 'frontier is currently emulated by medium due local model ceiling'
+    })
+  }
+
+  const preValidationCriticDecision = evaluateSyncCriticGate({
+    queryPlan: routedQueryPlan,
+    criticRouting
+  })
+  if (preValidationCriticDecision.pass !== true) {
+    const blockingError = new Error(preValidationCriticDecision.fix_hint || 'Execution blocked by critic')
+    blockingError.code = String(preValidationCriticDecision.error_code || 'dsl_execution_blocked')
+    blockingError.diagnostics = {
+      error_code: blockingError.code,
+      details: toStringList(preValidationCriticDecision.reasons).map((reason) => ({
+        rule_id: 'CRITIC_SYNC_BLOCK',
+        path: 'routing.critic_mode',
+        message: reason
+      })),
+      fix_hint: preValidationCriticDecision.fix_hint || null,
+      critic_mode: 'sync',
+      query_type: routedQueryType
+    }
+    throw blockingError
+  }
+
+  const validation = assertValidSpatialPlan(routedQueryPlan, {
     requestId,
     spatialContext,
     options
@@ -1819,11 +2142,10 @@ export async function executeSpatialPlanWithFallback({
       mode: String(options?.mode || 'execute')
     })
   }
-  const normalizedInputPlan = isSpatialDslQueryPlan(queryPlan)
-    ? (validation?.normalized_dsl || queryPlan)
-    : queryPlan
+  const normalizedInputPlan = isSpatialDslQueryPlan(routedQueryPlan)
+    ? (validation?.normalized_dsl || routedQueryPlan)
+    : routedQueryPlan
   const executableQueryPlan = toExecutableQueryPlan(normalizedInputPlan)
-
   const report = {
     reportStage: reporter.reportStage || (async () => {}),
     reportProgress: reporter.reportProgress || (async () => {}),
@@ -1860,6 +2182,9 @@ export async function executeSpatialPlanWithFallback({
       compute_mode: resolveComputeMode(normalized, migrationDecision),
       fallback_reasons: normalized?._fallback_reasons || [],
       migration: migrationDecision,
+      critic_mode: criticRouting.critic_mode,
+      frontier_emulated: criticRouting.frontier_emulated === true,
+      routing_complexity_score: criticRouting.complexity_score,
       dsl_validation: validation?.diagnostics || null
     }
   }
@@ -2197,8 +2522,55 @@ export async function runNarrativeSpatialJob(payload = {}, reporter = {}) {
 
   const enforced = resolveSourcePolicy(queryPlan, spatialContext, options)
   queryPlan = enforced.queryPlan
-  const criticEnabled = shouldEnableCriticForRisk(queryPlan, options)
-  queryPlan = applyCriticRouting(queryPlan, criticEnabled)
+  const criticRouting = resolveCriticRoutingPolicy(queryPlan, options)
+  queryPlan = applyCriticRouting(queryPlan, criticRouting)
+  const routingQueryType = normalizeQueryType(queryPlan)
+
+  telemetry.incrementCounter('critic_mode_total', {
+    critic_mode: String(criticRouting.critic_mode || 'off'),
+    query_type: routingQueryType,
+    mode: String(options?.mode || 'sync')
+  })
+  telemetry.recordKpiEvent('critic_mode_selected', 1, {
+    trace_id: requestId,
+    query_type: routingQueryType,
+    critic_mode: String(criticRouting.critic_mode || 'off'),
+    risk_level: String(criticRouting.risk_level || 'low')
+  })
+  telemetry.recordKpiEvent('routing_complexity_score', Number(criticRouting.complexity_score || 0), {
+    trace_id: requestId,
+    query_type: routingQueryType,
+    critic_mode: String(criticRouting.critic_mode || 'off')
+  })
+
+  if (criticRouting.frontier_emulated === true) {
+    telemetry.incrementCounter('frontier_emulated_total', {
+      query_type: routingQueryType,
+      mode: String(options?.mode || 'sync')
+    })
+    telemetry.recordKpiEvent('frontier_emulated', 1, {
+      trace_id: requestId,
+      query_type: routingQueryType,
+      requested_tier: String(criticRouting.requested_planner_model_tier || 'frontier'),
+      effective_tier: String(criticRouting.effective_planner_model_tier || 'medium')
+    })
+    telemetry.logStructured('warn', 'frontier_tier_emulated', {
+      trace_id: requestId,
+      query_type: routingQueryType,
+      requested_tier: criticRouting.requested_planner_model_tier,
+      effective_tier: criticRouting.effective_planner_model_tier,
+      note: 'frontier is currently emulated by medium due local model ceiling'
+    })
+  }
+
+  await report.reportStage('critic_routing', {
+    critic_mode: criticRouting.critic_mode,
+    critic_enabled: criticRouting.critic_enabled === true,
+    risk_level: criticRouting.risk_level,
+    complexity_score: criticRouting.complexity_score,
+    planner_model_tier: criticRouting.effective_planner_model_tier,
+    frontier_emulated: criticRouting.frontier_emulated === true
+  })
 
   const sessionId = String(options?.sessionId || options?.session_id || requestId).trim() || requestId
   const contextBinding = normalizeContextBindingValue(options, queryPlan)
@@ -2250,12 +2622,44 @@ export async function runNarrativeSpatialJob(payload = {}, reporter = {}) {
   }
 
   queryPlan = applyRefreshedContextScope(queryPlan, spatialContext, contextDecision)
+  const preValidationCriticDecision = evaluateSyncCriticGate({
+    queryPlan,
+    criticRouting
+  })
+  if (preValidationCriticDecision.pass !== true) {
+    telemetry.incrementCounter('critic_sync_block_total', {
+      query_type: routingQueryType,
+      error_code: String(preValidationCriticDecision.error_code || 'dsl_execution_blocked'),
+      mode: String(options?.mode || 'sync')
+    })
+    telemetry.recordKpiEvent('critic_sync_block', 1, {
+      trace_id: requestId,
+      query_type: routingQueryType,
+      error_code: String(preValidationCriticDecision.error_code || 'dsl_execution_blocked'),
+      critic_mode: 'sync'
+    })
+
+    return buildCriticBlockedResult({
+      report,
+      requestId,
+      userQuestion,
+      queryPlan,
+      criticRouting,
+      criticDecision: preValidationCriticDecision,
+      contextDecision
+    })
+  }
+
   const streamingHints = normalizeStreamingHints(options, queryPlan)
 
   let effectiveOptions = {
     ...options,
     sessionId,
-    criticEnabled,
+    criticEnabled: criticRouting.critic_enabled === true,
+    criticMode: criticRouting.critic_mode,
+    frontierEmulated: criticRouting.frontier_emulated === true,
+    routingComplexityScore: criticRouting.complexity_score,
+    plannerModelTier: criticRouting.effective_planner_model_tier,
     selectedCategories: enforced.policy.selected_categories,
     context_binding: Object.keys(contextBinding).length > 0 ? contextBinding : (options?.context_binding || null),
     context_binding_degraded: contextDecision?.context_binding_degraded === true,
@@ -2343,6 +2747,34 @@ export async function runNarrativeSpatialJob(payload = {}, reporter = {}) {
 
   if (isSpatialDslQueryPlan(queryPlan)) {
     queryPlan = toExecutableQueryPlan(validation?.normalized_dsl || queryPlan)
+  }
+
+  const syncCriticDecision = evaluateSyncCriticGate({
+    queryPlan,
+    criticRouting
+  })
+  if (syncCriticDecision.pass !== true) {
+    telemetry.incrementCounter('critic_sync_block_total', {
+      query_type: normalizedQueryType,
+      error_code: String(syncCriticDecision.error_code || 'dsl_execution_blocked'),
+      mode: String(effectiveOptions?.mode || 'sync')
+    })
+    telemetry.recordKpiEvent('critic_sync_block', 1, {
+      trace_id: requestId,
+      query_type: normalizedQueryType,
+      error_code: String(syncCriticDecision.error_code || 'dsl_execution_blocked'),
+      critic_mode: 'sync'
+    })
+
+    return buildCriticBlockedResult({
+      report,
+      requestId,
+      userQuestion,
+      queryPlan,
+      criticRouting,
+      criticDecision: syncCriticDecision,
+      contextDecision
+    })
   }
 
   if (
@@ -2550,7 +2982,10 @@ export async function runNarrativeSpatialJob(payload = {}, reporter = {}) {
   }
   normalizedExecutor.results.query_executed = queryPlan
 
-  await report.reportStage('writer')
+  const writerEnabled = shouldGenerateWriterText(queryPlan, effectiveOptions)
+  await report.reportStage('writer', {
+    enabled: writerEnabled
+  })
 
   let answer = ''
   let textBuffer = ''
@@ -2568,40 +3003,46 @@ export async function runNarrativeSpatialJob(payload = {}, reporter = {}) {
     }
   }
 
-  try {
-    for await (const chunk of generateAnswer(userQuestion, normalizedExecutor, writerRuntimeOptions)) {
-      answer += chunk
-      textBuffer += chunk
+  if (!writerEnabled) {
+    await report.reportStage('writer_skipped', {
+      reason: 'need_text_answer_false'
+    })
+  } else {
+    try {
+      for await (const chunk of generateAnswer(userQuestion, normalizedExecutor, writerRuntimeOptions)) {
+        answer += chunk
+        textBuffer += chunk
 
-      if (textBuffer.length >= 12) {
-        await report.reportText(textBuffer)
-        textBuffer = ''
+        if (textBuffer.length >= 12) {
+          await report.reportText(textBuffer)
+          textBuffer = ''
+        }
       }
+
+      if (textBuffer.length > 0) {
+        await report.reportText(textBuffer)
+      }
+    } catch (err) {
+      console.warn(`[SpatialJobRunner] Writer failed, fallback to quick reply: ${err.message}`)
+      await report.reportStage('writer_fallback_error', {
+        reason: 'writer_error',
+        message: String(err?.message || 'unknown')
+      })
+      writerFallbackUsed = true
+      writerFallbackReason = `writer_error: ${String(err?.message || 'unknown')}`
+      answer = buildQuickReply(normalizedExecutor)
+      await report.reportText(answer)
     }
 
-    if (textBuffer.length > 0) {
-      await report.reportText(textBuffer)
+    if (!String(answer || '').trim()) {
+      await report.reportStage('writer_fallback_empty', {
+        reason: 'empty_writer_output'
+      })
+      writerFallbackUsed = true
+      writerFallbackReason = 'empty_writer_output'
+      answer = buildQuickReply(normalizedExecutor)
+      await report.reportText(answer)
     }
-  } catch (err) {
-    console.warn(`[SpatialJobRunner] Writer failed, fallback to quick reply: ${err.message}`)
-    await report.reportStage('writer_fallback_error', {
-      reason: 'writer_error',
-      message: String(err?.message || 'unknown')
-    })
-    writerFallbackUsed = true
-    writerFallbackReason = `writer_error: ${String(err?.message || 'unknown')}`
-    answer = buildQuickReply(normalizedExecutor)
-    await report.reportText(answer)
-  }
-
-  if (!String(answer || '').trim()) {
-    await report.reportStage('writer_fallback_empty', {
-      reason: 'empty_writer_output'
-    })
-    writerFallbackUsed = true
-    writerFallbackReason = 'empty_writer_output'
-    answer = buildQuickReply(normalizedExecutor)
-    await report.reportText(answer)
   }
 
   const finalResults = normalizedExecutor?.results || {}
@@ -2643,18 +3084,62 @@ export async function runNarrativeSpatialJob(payload = {}, reporter = {}) {
   if (Array.isArray(prefetchSummary?.prefetch_error_codes) && prefetchSummary.prefetch_error_codes.length > 0) {
     prefetchStats.prefetch_error_codes = prefetchSummary.prefetch_error_codes.slice(0, 5)
   }
+  const criticSummary = normalizeCriticSummary(finalResults)
+  const criticStats = {
+    critic_mode: criticRouting.critic_mode,
+    critic_enabled: criticRouting.critic_enabled === true,
+    critic_pass: criticSummary.critic_pass !== false,
+    critic_reasons: criticSummary.reasons,
+    critic_fix_suggestions: criticSummary.fix_suggestions,
+    critic_confidence: Number.isFinite(Number(criticSummary.confidence))
+      ? Number(criticSummary.confidence)
+      : null,
+    routing_complexity_score: criticRouting.complexity_score,
+    planner_model_tier: criticRouting.effective_planner_model_tier,
+    frontier_emulated: criticRouting.frontier_emulated === true
+  }
 
   finalResults.stats = {
     ...baseStats,
     ...vectorStats,
     ...contextStats,
     ...prefetchStats,
+    ...criticStats,
     token_usage: pipelineTokenUsage,
     planner_token_usage: plannerTokenUsage,
     writer_token_usage: writerTokenUsage,
     pipeline_stage_checklist: pipelineStageChecklist,
     writer_fallback_used: writerFallbackUsed,
     writer_fallback_reason: writerFallbackReason || null
+  }
+
+  if (criticRouting.critic_mode === 'async') {
+    recordAsyncCriticAudit({
+      requestId,
+      queryType: normalizedQueryType,
+      criticRouting,
+      criticSummary,
+      mode: String(effectiveOptions?.mode || 'sync')
+    })
+    telemetry.incrementCounter('critic_async_review_total', {
+      query_type: normalizedQueryType,
+      pass: String(criticSummary.critic_pass !== false),
+      mode: String(effectiveOptions?.mode || 'sync')
+    })
+    telemetry.recordKpiEvent('critic_async_review', 1, {
+      trace_id: requestId,
+      query_type: normalizedQueryType,
+      critic_mode: 'async',
+      pass: String(criticSummary.critic_pass !== false)
+    })
+    if (criticSummary.critic_pass === false) {
+      telemetry.logStructured('warn', 'critic_async_review_flagged', {
+        trace_id: requestId,
+        query_type: normalizedQueryType,
+        reasons: criticSummary.reasons,
+        fix_suggestions: criticSummary.fix_suggestions
+      })
+    }
   }
 
   await report.reportStage('pipeline_stage_checklist', {
@@ -2710,6 +3195,12 @@ export async function runNarrativeSpatialJob(payload = {}, reporter = {}) {
       vector_retrieval: vectorRetrievalMeta,
       context_binding: contextDecision,
       prefetch: prefetchSummary,
+      critic: {
+        ...criticSummary,
+        critic_mode: criticRouting.critic_mode,
+        critic_enabled: criticRouting.critic_enabled === true,
+        frontier_emulated: criticRouting.frontier_emulated === true
+      },
       cache_hit: Boolean(normalizedExecutor?.results?.stats?.cache_hit),
       pipeline_stage_checklist: pipelineStageChecklist,
       dsl_validation: validation?.diagnostics || null

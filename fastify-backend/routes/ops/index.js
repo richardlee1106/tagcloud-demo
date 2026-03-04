@@ -3,6 +3,7 @@
 } from '../../services/queue.js'
 import * as queryCache from '../../services/queryCache.js'
 import telemetry from '../../services/telemetry.js'
+import { listOpsAuditEvents } from '../../services/opsAuditStore.js'
 import { getOperatorTimingRows } from '../../services/database.js'
 
 function parseWindow(rawWindow) {
@@ -123,6 +124,37 @@ async function opsRoutes(fastify) {
         cache: cacheStats
       }
     }
+  })
+
+  fastify.get('/audit', async (request) => {
+    const limit = Number.parseInt(request.query?.limit || '100', 10)
+    const type = String(request.query?.type || '').trim()
+    const traceId = String(request.query?.trace_id || request.query?.traceId || '').trim()
+    const queryType = String(request.query?.query_type || '').trim()
+
+    const events = listOpsAuditEvents({
+      limit,
+      type,
+      traceId,
+      queryType
+    })
+
+    return {
+      generated_at: new Date().toISOString(),
+      total: events.length,
+      filters: {
+        limit: Number.isFinite(limit) ? limit : 100,
+        type: type || null,
+        trace_id: traceId || null,
+        query_type: queryType || null
+      },
+      events
+    }
+  })
+
+  fastify.get('/complexity-calibration', async (request) => {
+    const window = parseWindow(request.query?.window || '14d')
+    return telemetry.getComplexityCalibrationReport({ window })
   })
 
   fastify.get('/operator-hotspots', async (request) => {

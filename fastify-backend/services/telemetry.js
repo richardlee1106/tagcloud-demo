@@ -481,6 +481,174 @@ export function getKpiReport({ window = '7d', nowTs = Date.now() } = {}) {
   }
 }
 
+function average(values = []) {
+  const list = Array.isArray(values) ? values.filter(Number.isFinite) : []
+  if (!list.length) return null
+  return list.reduce((sum, value) => sum + value, 0) / list.length
+}
+
+function clampComplexityScore(value, fallback = 5) {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return fallback
+  return Math.max(0, Math.min(10, Math.round(numeric)))
+}
+
+export function getComplexityCalibrationReport({ window = '14d', nowTs = Date.now() } = {}) {
+  const windowMs = parseWindowToMs(window)
+  const fromTs = nowTs - windowMs
+  const filtered = kpiEvents.filter((event) => event.ts >= fromTs && event.ts < nowTs)
+
+  const byQueryType = new Map()
+  const ensureQueryTypeBucket = (queryType) => {
+    const key = String(queryType || 'unknown')
+    if (!byQueryType.has(key)) {
+      byQueryType.set(key, {
+        query_type: key,
+        complexity_scores: [],
+        latency_samples: [],
+        failure_count: 0,
+        critic_review_count: 0,
+        critic_hit_count: 0,
+        critic_mode_counts: {
+          off: 0,
+          async: 0,
+          sync: 0
+        }
+      })
+    }
+    return byQueryType.get(key)
+  }
+
+  filtered.forEach((event) => {
+    const queryType = String(event?.labels?.query_type || 'unknown')
+    const bucket = ensureQueryTypeBucket(queryType)
+    const type = String(event?.type || '')
+    const value = Number(event?.value)
+
+    if (type === 'routing_complexity_score' && Number.isFinite(value)) {
+      bucket.complexity_scores.push(value)
+      return
+    }
+    if (type === 'end_to_end_latency_ms' && Number.isFinite(value)) {
+      bucket.latency_samples.push(value)
+      return
+    }
+    if (type === 'sse_event_error') {
+      bucket.failure_count += 1
+      return
+    }
+    if (type === 'critic_async_review') {
+      bucket.critic_review_count += 1
+      if (String(event?.labels?.pass || '').trim().toLowerCase() === 'false') {
+        bucket.critic_hit_count += 1
+      }
+      return
+    }
+    if (type === 'critic_sync_block') {
+      bucket.critic_review_count += 1
+      bucket.critic_hit_count += 1
+      return
+    }
+    if (type === 'critic_mode_selected') {
+      const mode = String(event?.labels?.critic_mode || '').trim().toLowerCase()
+      if (mode === 'async' || mode === 'sync' || mode === 'off') {
+        bucket.critic_mode_counts[mode] += 1
+      }
+    }
+  })
+
+  const thresholds = {
+    raise: {
+      p95_latency_ms: 8000,
+      failure_rate: 0.08,
+      critic_hit_rate: 0.2
+    },
+    lower: {
+      p95_latency_ms: 2500,
+      failure_rate: 0.02,
+      critic_hit_rate: 0.05
+    }
+  }
+
+  const rows = [...byQueryType.values()]
+    .map((bucket) => {
+      const currentComplexity = clampComplexityScore(
+        average(bucket.complexity_scores),
+        bucket.complexity_scores.length > 0 ? clampComplexityScore(bucket.complexity_scores[0], 5) : 5
+      )
+      const sampleCount = Math.max(
+        bucket.latency_samples.length,
+        bucket.complexity_scores.length,
+        bucket.failure_count,
+        bucket.critic_review_count
+      )
+      const p95Latency = percentile(bucket.latency_samples, 95)
+      const failureRate = sampleCount > 0 ? bucket.failure_count / sampleCount : 0
+      const criticHitRate = sampleCount > 0 ? bucket.critic_hit_count / sampleCount : 0
+      const reasons = []
+
+      const shouldRaise = (
+        (Number.isFinite(p95Latency) && p95Latency >= thresholds.raise.p95_latency_ms)
+        || failureRate >= thresholds.raise.failure_rate
+        || criticHitRate >= thresholds.raise.critic_hit_rate
+      )
+      const shouldLower = (
+        Number.isFinite(p95Latency)
+        && p95Latency <= thresholds.lower.p95_latency_ms
+        && failureRate <= thresholds.lower.failure_rate
+        && criticHitRate <= thresholds.lower.critic_hit_rate
+      )
+
+      let recommendation = 'keep'
+      let suggestedComplexity = currentComplexity
+
+      if (shouldRaise) {
+        recommendation = 'raise'
+        suggestedComplexity = Math.min(10, currentComplexity + 1)
+        if (Number.isFinite(p95Latency) && p95Latency >= thresholds.raise.p95_latency_ms) reasons.push('high_p95_latency')
+        if (failureRate >= thresholds.raise.failure_rate) reasons.push('high_failure_rate')
+        if (criticHitRate >= thresholds.raise.critic_hit_rate) reasons.push('high_critic_hit_rate')
+      } else if (shouldLower) {
+        recommendation = 'lower'
+        suggestedComplexity = Math.max(0, currentComplexity - 1)
+        reasons.push('stable_low_latency_low_failure')
+      }
+
+      return {
+        query_type: bucket.query_type,
+        recommendation,
+        current_complexity_score: currentComplexity,
+        suggested_complexity_score: suggestedComplexity,
+        delta: suggestedComplexity - currentComplexity,
+        reasons,
+        metrics: {
+          sample_count: sampleCount,
+          p95_latency_ms: p95Latency,
+          failure_rate: failureRate,
+          critic_hit_rate: criticHitRate,
+          critic_mode_counts: bucket.critic_mode_counts
+        }
+      }
+    })
+    .sort((a, b) => {
+      if (Math.abs(b.delta) !== Math.abs(a.delta)) {
+        return Math.abs(b.delta) - Math.abs(a.delta)
+      }
+      return String(a.query_type).localeCompare(String(b.query_type))
+    })
+
+  return {
+    generated_at: new Date(nowTs).toISOString(),
+    window,
+    thresholds,
+    summary: {
+      query_types: rows.length,
+      adjusted_query_types: rows.filter((item) => item.delta !== 0).length
+    },
+    by_query_type: rows
+  }
+}
+
 export function getOperatorHotspots({ window = '7d', minCallCount = 200, minTimeShare = 0.1, topK = 2 } = {}) {
   const windowMs = parseWindowToMs(window)
   const cutoff = Date.now() - windowMs
@@ -572,6 +740,14 @@ export function renderPrometheusMetrics() {
   return `${lines.join('\n')}\n`
 }
 
+export function resetTelemetryForTests() {
+  counterStore.clear()
+  gaugeStore.clear()
+  histogramStore.clear()
+  kpiEvents.splice(0, kpiEvents.length)
+  operatorSamples.splice(0, operatorSamples.length)
+}
+
 export default {
   incrementCounter,
   setGauge,
@@ -581,7 +757,9 @@ export default {
   recordOperatorTimings,
   logStructured,
   getKpiReport,
+  getComplexityCalibrationReport,
   getOperatorHotspots,
   collectRuntimeStats,
-  renderPrometheusMetrics
+  renderPrometheusMetrics,
+  resetTelemetryForTests
 }

@@ -6,6 +6,14 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any, Dict, List
 
+_DEFAULT_CRITIC_THRESHOLD = 0.45
+_ISSUE_FIX_SUGGESTIONS = {
+    "boundary_quality_low": "提升边界质量评分，检查边界抽样与形态学平滑参数。",
+    "coverage_low": "提高覆盖率，补充边缘 POI 或放宽候选检索范围。",
+    "anchor_confidence_low": "增强语义锚点可信度，补充高置信地标或别名。",
+    "confidence_quality_mismatch": "校准置信度权重，避免高置信低质量不一致。"
+}
+
 
 def _to_float(value: Any) -> float | None:
     try:
@@ -20,6 +28,23 @@ def _clamp01(value: float) -> float:
     if value > 1.0:
         return 1.0
     return float(value)
+
+
+def _build_critic_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
+    avg_score = _clamp01(_to_float(summary.get("avg_score")) or 0.0)
+    low_score_count = int(summary.get("low_score_count") or 0)
+    issue_counts = summary.get("issue_counts") if isinstance(summary.get("issue_counts"), dict) else {}
+    ranked_issues = sorted(issue_counts.items(), key=lambda item: (-int(item[1]), str(item[0])))
+    reasons = [str(issue) for issue, count in ranked_issues if int(count) > 0][:5]
+    fix_suggestions = [_ISSUE_FIX_SUGGESTIONS.get(reason, f"检查问题：{reason}") for reason in reasons][:5]
+
+    critic_pass = bool(avg_score >= _DEFAULT_CRITIC_THRESHOLD and low_score_count == 0)
+    return {
+        "critic_pass": critic_pass,
+        "reasons": reasons,
+        "fix_suggestions": fix_suggestions,
+        "confidence": round(avg_score, 4),
+    }
 
 
 def validate_cluster_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
@@ -80,17 +105,19 @@ def validate_cluster_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
 def validate_cluster_entries(cluster_entries: List[Dict[str, Any]]) -> Dict[str, Any]:
     """批量执行自校验并输出汇总指标。"""
     if not cluster_entries:
+        empty_summary = {
+            "model": "self_validation_v1",
+            "avg_score": 0.0,
+            "min_score": 0.0,
+            "max_score": 0.0,
+            "low_score_count": 0,
+            "issue_counts": {},
+        }
         return {
             "cluster_scores": {},
             "cluster_reports": [],
-            "summary": {
-                "model": "self_validation_v1",
-                "avg_score": 0.0,
-                "min_score": 0.0,
-                "max_score": 0.0,
-                "low_score_count": 0,
-                "issue_counts": {},
-            },
+            "summary": empty_summary,
+            "critic": _build_critic_summary(empty_summary),
         }
 
     cluster_scores: Dict[int, float] = {}
@@ -120,16 +147,18 @@ def validate_cluster_entries(cluster_entries: List[Dict[str, Any]]) -> Dict[str,
     min_score = round(min(scores), 4) if scores else 0.0
     max_score = round(max(scores), 4) if scores else 0.0
 
+    summary = {
+        "model": "self_validation_v1",
+        "avg_score": avg_score,
+        "min_score": min_score,
+        "max_score": max_score,
+        "low_score_count": sum(1 for score in scores if score < 0.45),
+        "issue_counts": dict(issue_counter),
+    }
+
     return {
         "cluster_scores": cluster_scores,
         "cluster_reports": cluster_reports,
-        "summary": {
-            "model": "self_validation_v1",
-            "avg_score": avg_score,
-            "min_score": min_score,
-            "max_score": max_score,
-            "low_score_count": sum(1 for score in scores if score < 0.45),
-            "issue_counts": dict(issue_counter),
-        },
+        "summary": summary,
+        "critic": _build_critic_summary(summary),
     }
-

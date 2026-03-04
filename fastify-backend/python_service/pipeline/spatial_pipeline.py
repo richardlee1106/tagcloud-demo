@@ -5254,6 +5254,19 @@ class SpatialPipeline:
         )
 
         self_validation_summary = (self_validation_result.get("summary") or {}).copy()
+        critic_summary = (self_validation_result.get("critic") or {}).copy()
+        critic_reasons = [
+            str(reason).strip()
+            for reason in (critic_summary.get("reasons") or [])
+            if str(reason).strip()
+        ]
+        critic_fix_suggestions = [
+            str(suggestion).strip()
+            for suggestion in (critic_summary.get("fix_suggestions") or [])
+            if str(suggestion).strip()
+        ]
+        critic_pass = bool(critic_summary.get("critic_pass", True))
+        critic_confidence = _clamp01(_to_float(critic_summary.get("confidence")) or 0.0)
         skg_summary = (skg_result.get("summary") or {}).copy()
         skg_graph = (skg_result.get("graph") or {}).copy()
 
@@ -5347,6 +5360,10 @@ class SpatialPipeline:
                 "overview_medium_confidence": float(vlm_overview_medium.get("confidence") or 0.0),
                 "avg_self_validation_confidence": float(self_validation_summary.get("avg_score", 0.0)),
                 "self_validation_model": self_validation_summary.get("model"),
+                "critic_pass": bool(critic_pass),
+                "critic_reasons": critic_reasons,
+                "critic_fix_suggestions": critic_fix_suggestions,
+                "critic_confidence": float(critic_confidence),
                 "avg_skg_consistency_score": float(skg_summary.get("avg_score", 0.0)),
                 "skg_model": skg_graph.get("model"),
                 "skg_node_count": int(skg_graph.get("node_count", 0)),
@@ -5515,6 +5532,12 @@ class SpatialPipeline:
                     "self_validation_enabled": self_validation_enabled,
                     "skg_enabled": skg_enabled,
                     "self_validation_model": self_validation_summary.get("model"),
+                    "critic": {
+                        "critic_pass": bool(critic_pass),
+                        "reasons": critic_reasons,
+                        "fix_suggestions": critic_fix_suggestions,
+                        "confidence": float(critic_confidence),
+                    },
                     "skg_model": skg_graph.get("model"),
                     "skg_node_count": int(skg_graph.get("node_count", 0)),
                     "skg_edge_count": int(skg_graph.get("edge_count", 0)),

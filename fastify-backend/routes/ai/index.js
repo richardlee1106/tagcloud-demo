@@ -34,6 +34,10 @@ const DSL_VALIDATION_ERROR_CODES = new Set([
   'dsl_semantic_invalid',
   'dsl_policy_invalid'
 ])
+const CRITIC_BLOCK_ERROR_CODES = new Set([
+  'clarification_needed',
+  'dsl_execution_blocked'
+])
 
 function dslValidationStageFromErrorCode(errorCode = '') {
   const code = String(errorCode || '').trim().toLowerCase()
@@ -601,7 +605,8 @@ async function aiRoutes(fastify) {
             telemetry.observeHistogram('end_to_end_latency_ms', endToEndLatency, { mode: 'async' })
             telemetry.recordKpiEvent('end_to_end_latency_ms', endToEndLatency, {
               mode: 'async',
-              trace_id: traceId
+              trace_id: traceId,
+              query_type: inferredQueryType || 'unknown'
             })
             telemetry.logStructured('info', 'ai_chat_complete', {
               trace_id: traceId,
@@ -643,14 +648,16 @@ async function aiRoutes(fastify) {
             telemetry.recordKpiEvent('sse_event_error', 1, {
               mode: 'async',
               reason: 'job_failed',
-              trace_id: traceId
+              trace_id: traceId,
+              query_type: inferredQueryType || 'unknown'
             })
             const failedLatency = Date.now() - requestStartedAt
             telemetry.observeHistogram('end_to_end_latency_ms', failedLatency, { mode: 'async', status: 'failed' })
             telemetry.recordKpiEvent('end_to_end_latency_ms', failedLatency, {
               mode: 'async',
               status: 'failed',
-              trace_id: traceId
+              trace_id: traceId,
+              query_type: inferredQueryType || 'unknown'
             })
             telemetry.logStructured('error', 'ai_chat_failed', {
               trace_id: traceId,
@@ -690,14 +697,16 @@ async function aiRoutes(fastify) {
             telemetry.recordKpiEvent('sse_event_error', 1, {
               mode: 'async',
               reason: 'event_exception',
-              trace_id: traceId
+              trace_id: traceId,
+              query_type: inferredQueryType || 'unknown'
             })
             const failedLatency = Date.now() - requestStartedAt
             telemetry.observeHistogram('end_to_end_latency_ms', failedLatency, { mode: 'async', status: 'failed' })
             telemetry.recordKpiEvent('end_to_end_latency_ms', failedLatency, {
               mode: 'async',
               status: 'failed',
-              trace_id: traceId
+              trace_id: traceId,
+              query_type: inferredQueryType || 'unknown'
             })
             telemetry.logStructured('error', 'ai_chat_stream_event_exception', {
               trace_id: traceId,
@@ -791,7 +800,8 @@ async function aiRoutes(fastify) {
       telemetry.observeHistogram('end_to_end_latency_ms', endToEndLatency, { mode: 'sync' })
       telemetry.recordKpiEvent('end_to_end_latency_ms', endToEndLatency, {
         mode: 'sync',
-        trace_id: traceId
+        trace_id: traceId,
+        query_type: inferredQueryType || 'unknown'
       })
       telemetry.logStructured('info', 'ai_chat_complete', {
         trace_id: traceId,
@@ -827,14 +837,16 @@ async function aiRoutes(fastify) {
       telemetry.recordKpiEvent('sse_event_error', 1, {
         mode: decision.mode,
         reason: 'pipeline_error',
-        trace_id: traceId
+        trace_id: traceId,
+        query_type: inferredQueryType || 'unknown'
       })
       const failedLatency = Date.now() - requestStartedAt
       telemetry.observeHistogram('end_to_end_latency_ms', failedLatency, { mode: decision.mode, status: 'failed' })
       telemetry.recordKpiEvent('end_to_end_latency_ms', failedLatency, {
         mode: decision.mode,
         status: 'failed',
-        trace_id: traceId
+        trace_id: traceId,
+        query_type: inferredQueryType || 'unknown'
       })
       telemetry.logStructured('error', 'ai_chat_failed', {
         trace_id: traceId,
@@ -899,6 +911,18 @@ async function aiRoutes(fastify) {
           error_code: errorCode,
           details: Array.isArray(err?.diagnostics?.details) ? err.diagnostics.details : [],
           fix_hint: err?.diagnostics?.fix_hint || null
+        })
+      }
+      if (CRITIC_BLOCK_ERROR_CODES.has(errorCode)) {
+        telemetry.incrementCounter('critic_sync_block_total', {
+          mode: 'execute',
+          error_code: errorCode
+        })
+        return reply.status(400).send({
+          error: 'Execution blocked by critic',
+          error_code: errorCode,
+          details: Array.isArray(err?.diagnostics?.details) ? err.diagnostics.details : [],
+          fix_hint: err?.diagnostics?.fix_hint || err?.message || null
         })
       }
       return reply.status(500).send({ error: err.message })
