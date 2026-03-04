@@ -1,6 +1,6 @@
-﻿/**
- * Jobs 闃熷垪鏈嶅姟銆?
- * 鏀寔 BullMQ锛圧edis锛変笌鍐呭瓨闄嶇骇妯″紡銆?
+/**
+ * Jobs 队列服务。
+ * 支持 BullMQ（Redis）与内存降级模式。
  */
 import { EventEmitter } from 'events'
 import { randomUUID } from 'crypto'
@@ -60,7 +60,7 @@ export function buildQueueFailurePayload(errorLike) {
 /**
  */
 /**
- * 鏋勫缓 Redis 杩炴帴鍙傛暟銆?
+ * 构建 Redis 连接参数。
  */
 function getRedisConfig() {
   if (process.env.REDIS_URL) {
@@ -82,7 +82,7 @@ function getRedisConfig() {
 /**
  */
 /**
- * 鍒涘缓鎴栨洿鏂颁换鍔″揩鐓с€?
+ * 创建或更新任务快照。
  */
 function touchSnapshot(jobId, patch = {}) {
   const current = jobSnapshots.get(jobId) || {
@@ -113,7 +113,7 @@ function touchSnapshot(jobId, patch = {}) {
 /**
  */
 /**
- * 杩藉姞浠诲姟浜嬩欢骞堕┍鍔ㄧ姸鎬佹満鏇存柊銆?
+ * 追加任务事件并驱动状态机更新。
  */
 function appendEvent(jobId, type, payload = {}) {
   const event = {
@@ -175,7 +175,7 @@ function appendEvent(jobId, type, payload = {}) {
 /**
  */
 /**
- * 涓婃姤杩涘害锛氬唴瀛樹簨浠跺繀鍐欙紝BullMQ 杩涘害灏藉姏鍐欍€?
+ * 上报进度：内存事件必写，BullMQ 进度尽力写。
  */
 async function emitProgress(jobId, eventType, payload, bullJob) {
   appendEvent(jobId, eventType, payload)
@@ -192,7 +192,7 @@ async function emitProgress(jobId, eventType, payload, bullJob) {
 /**
  */
 /**
- * 鐢熸垚鏍囧噯 reporter 鎺ュ彛銆?
+ * 生成标准 reporter 接口。
  */
 function createReporter(jobId, bullJob = null) {
   return {
@@ -214,7 +214,7 @@ function createReporter(jobId, bullJob = null) {
 /**
  */
 /**
- * 鎵ц浠诲姟澶勭悊鍣紝缁熶竴缁存姢瀹屾垚/澶辫触鐘舵€併€?
+ * 执行任务处理器，统一维护完成/失败状态。
  */
 async function runProcessor(processor, jobId, payload, bullJob = null) {
   touchSnapshot(jobId, {
@@ -268,7 +268,7 @@ async function runProcessor(processor, jobId, payload, bullJob = null) {
 /**
  */
 /**
- * 鍐呭瓨闃熷垪娑堣垂鍣紙Redis 涓嶅彲鐢ㄦ椂鍚敤锛夈€?
+ * 内存队列消费者（Redis 不可用时启用）。
  */
 async function drainMemoryQueue() {
   if (memoryDraining || !memoryProcessor) {
@@ -292,7 +292,7 @@ async function drainMemoryQueue() {
 /**
  */
 /**
- * 鐩戝惉 BullMQ 浜嬩欢骞舵槧灏勫埌鍐呴儴浜嬩欢鎬荤嚎銆?
+ * 监听 BullMQ 事件并映射到内部事件总线。
  */
 function attachQueueEventListeners() {
   if (!queueEvents) {
@@ -365,8 +365,8 @@ function attachQueueEventListeners() {
 /**
  */
 /**
- * 鍒濆鍖栭槦鍒楁湇鍔°€?
- * 浼樺厛 BullMQ锛屽け璐ヨ嚜鍔ㄩ檷绾у唴瀛樻ā寮忋€?
+ * 初始化队列服务。
+ * 优先 BullMQ，失败自动降级内存模式。
  */
 export async function initQueueServices() {
   if (initialized) {
@@ -403,7 +403,7 @@ export async function initQueueServices() {
         try {
           await redisConnection.quit()
         } catch {
-                    // 怨乇战锥蔚拇要螅影顺
+          // 忽略断开连接的错误，避免噪音
         }
       }
       redisConnection = null
@@ -418,7 +418,7 @@ export async function initQueueServices() {
 /**
  */
 /**
- * 褰撳墠鏄惁涓?BullMQ 妯″紡銆?
+ * 当前是否为 BullMQ 模式。
  */
 export function isBullQueueEnabled() {
   return !!queue
@@ -427,16 +427,16 @@ export function isBullQueueEnabled() {
 /**
  */
 /**
- * 杩斿洖褰撳墠闃熷垪妯″紡鏍囪瘑銆?
+ * 返回当前队列模式标识。
  */
 export function getQueueMode() {
   return queue ? 'bullmq' : 'memory'
 }
 
 /**
- * 缁熻褰撳墠鍐呭瓨蹇収涓殑浠诲姟鐘舵€佸垎甯冿紝渚夸簬缁熶竴鐩戞帶闃熷垪鍋ュ悍銆?
+/**
+ * 统计当前内存快照中的任务状态分布，便于统一监控队列健康。
  */
-function buildSnapshotStatusStats() {
   const stats = {
     total: jobSnapshots.size,
     queued: 0,
@@ -476,7 +476,7 @@ function buildSnapshotStatusStats() {
 }
 
 /**
- * 值证斐Ｊ毙叭?
+ * 解析健康阈值。
  */
 function parseHealthThreshold(rawValue, fallback) {
   const parsed = Number(rawValue)
@@ -487,9 +487,9 @@ function parseHealthThreshold(rawValue, fallback) {
 }
 
 /**
- * 瑙勮寖鍖栧憡璀﹀璞★紝渚夸簬 API 涓庤剼鏈粺涓€瑙ｆ瀽銆?
+/**
+ * 规范化告警对象，便于 API 与脚本统一解析。
  */
-function createQueueAlert(code, severity, message, extra = {}) {
   return {
     code,
     severity,
@@ -499,9 +499,9 @@ function createQueueAlert(code, severity, message, extra = {}) {
 }
 
 /**
- * 鎻愪緵闃熷垪鍋ュ悍蹇収锛氭ā寮忋€佺Н鍘嬨€佸け璐ユ暟銆侀槇鍊间笌鍛婅銆?
- * - Jobs 鍋ュ悍鎺ュ彛鐩存帴娑堣垂璇ョ粨鏋勩€?
- * - 鍙戝竷鍓嶆紨缁冭剼鏈篃鍙鐢ㄨ缁撴瀯鍋氭柇瑷€銆?
+ * 提供队列健康快照：模式、积压、失败数、阈值与告警。
+ * - Jobs 健康接口直接消费该结构。
+ * - 发布前演练脚本也可复用该结构做断言。
  */
 export async function getQueueHealthSnapshot(options = {}) {
   if (!initialized) {
@@ -583,7 +583,7 @@ export async function getQueueHealthSnapshot(options = {}) {
     alerts.push(createQueueAlert(
       'bullmq_stats_unavailable',
       'error',
-      `BullMQ 缁熻璇诲彇澶辫触: ${bullmq.error}`
+      `BullMQ 统计读取失败: ${bullmq.error}`
     ))
   }
 
@@ -591,7 +591,7 @@ export async function getQueueHealthSnapshot(options = {}) {
     alerts.push(createQueueAlert(
       'queue_backlog_high',
       'warning',
-      '谢压殉预值',
+      '队列积压超过阈值',
       { value: backlog, threshold: thresholds.backlog_warn }
     ))
   }
@@ -600,7 +600,7 @@ export async function getQueueHealthSnapshot(options = {}) {
     alerts.push(createQueueAlert(
       'queue_failed_high',
       'warning',
-      '失殉预值',
+      '任务失败数超过阈值',
       { value: failed, threshold: thresholds.failed_warn }
     ))
   }
@@ -624,7 +624,7 @@ export async function getQueueHealthSnapshot(options = {}) {
 }
 
 /**
- * 鎻愪氦绌洪棿浠诲姟銆?
+ * 提交空间任务。
  */
 export async function enqueueSpatialJob(payload, options = {}) {
   if (!initialized) {
@@ -665,9 +665,9 @@ export async function enqueueSpatialJob(payload, options = {}) {
 }
 
 /**
- */
 /**
- * 娉ㄥ唽浠诲姟澶勭悊鍣ㄣ€?
+/**
+ * 注册任务处理器。
  */
 export async function registerSpatialJobProcessor(processor, options = {}) {
   if (!initialized) {
@@ -709,7 +709,7 @@ export async function registerSpatialJobProcessor(processor, options = {}) {
 /**
  */
 /**
- * 鑾峰彇浠诲姟蹇収锛堝惈鐘舵€佸拰杩涘害锛夈€?
+ * 获取任务快照（含状态和进度）。
  */
 export async function getJobSnapshot(jobId) {
   const snapshot = jobSnapshots.get(jobId)
@@ -751,9 +751,9 @@ export async function getJobSnapshot(jobId) {
 }
 
 /**
- */
 /**
- * 鑾峰彇浠诲姟缁撴灉銆?
+/**
+ * 获取任务结果。
  */
 export async function getJobResult(jobId) {
   const snapshot = await getJobSnapshot(jobId)
@@ -767,7 +767,7 @@ export async function getJobResult(jobId) {
 /**
  */
 /**
- * 绛夊緟浠诲姟缁撴潫锛坰ync 璺敱浣跨敤锛夈€?
+ * 等待任务结束（sync 路由使用）。
  */
 export async function awaitJobCompletion(jobId, options = {}) {
   const timeoutMs = options.timeoutMs ?? 120_000
@@ -851,7 +851,7 @@ export function subscribeJobEvents(jobId, handler, options = {}) {
 /**
  */
 /**
- * 鍏抽棴闃熷垪鏈嶅姟璧勬簮銆?
+ * 关闭队列服务资源。?
  */
 export async function closeQueueServices() {
   if (worker) {

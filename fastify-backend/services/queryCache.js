@@ -633,7 +633,7 @@ export function getCacheHealthSnapshot(options = {}) {
   }
 }
 
-setInterval(() => {
+const cacheMaintenanceTimer = setInterval(() => {
   cleanupExpiredCache()
   const memBytes = estimateMemoryBytes()
   if (memBytes > CACHE_CONFIG.maxMemoryBytes) {
@@ -649,6 +649,10 @@ setInterval(() => {
     }
   }
 }, 2 * 60 * 1000)
+
+if (typeof cacheMaintenanceTimer.unref === 'function') {
+  cacheMaintenanceTimer.unref()
+}
 
 export default {
   generateQueryFingerprint,

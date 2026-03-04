@@ -1,6 +1,6 @@
 /**
- * 缂傚倸鍊搁崐椋庣矆娓氣偓瀵敻顢楅埀顒勨€旈崘顔藉癄濠㈠厜鏅滈惄顖炵嵁閹邦厽鍎熼柨婵嗗缁侇偊姊洪懡銈呅㈡繛璇х畳閵囨劙宕橀鍡欑◤闂侀潧鐗嗛ˇ顖滅棯瑜旈弻宥夊传閸曨偀鍋撻崨濠冨弿閻忕偘鍕樻禍婊堟煏韫囧ň鍋撳畷鍥︽偅缂傚倷娴囨ご鎼佸箲閸パ屽殨濞寸姴顑呮儫闂侀潧锛忛崨顔兼珰闂傚倸鍊风欢姘焽閼姐倗绀婇柛鈩冪⊕閸嬪倸顭跨捄鐑樻拱妞ゎ偅娲橀幈銊ヮ渻缂佹ɑ顔刡 Runner闂傚倸鍊烽悞锔锯偓绗涘懐鐭欓柟娆¤娲、姗€濮€閻橀潧濮?
- * 缂傚倸鍊搁崐鎼佸磹閻戣姤鍤勯柛顐ｆ礀缁愭鈧箍鍎卞ú銊╁础濮樿埖鍊甸柣銏㈡暩閵嗗﹪鏌涚€ｎ偅宕岀€规洜鍏橀、姗€鎮欓悧鍫濈厱濠德板€楁慨鐑藉磻濞戞◤娲敇閻愬灚娈惧┑顔筋焾濞夋盯鐛姀鈥茬箚妞ゆ牗绮犻崕鐘绘煕鐎ｎ亷韬慨濠冩そ濡啫鈽夊▎妯活棤婵犵數鍋炲娆徝洪銏犵畾闁告劦鍠楅崑鍕煕韫囨洖甯跺ù?gRPC 闂傚倷娴囧畷鍨叏瀹曞洦顐介柕鍫濇处椤洟鏌￠崶銉ョ仾闁稿鏅涢埞鎴︽偐鐎圭姴顥濋弶鈺傜箖缁绘稒娼忛崜褍鍩岄梺纭咁嚋缁辨洜鍒掗崼銉ョ劦妞ゆ帒瀚埛鎺戙€掑顒佹悙濞存粍鍔欓弻娑氣偓锝庡亝鐏忕數绱掓潏銊ョ瑨闁宠棄顦埢搴ㄥ箣濠靛啯瀚涢梻鍌欑閹碱偄螞濞嗘挸绀夐柡宥庡亞閻瑥顭跨捄渚剱闁稿海鍠栭弻宥夊Ψ閵婏妇褰у┑鐐叉噷閸ㄨ櫣鎹㈠☉娆愮秶闁告挆鍚锋垹绱撴笟鍥ф灈婵炲鍏樺畷姘跺箳濡も偓鎯熼梺瀹犳〃缁€渚€宕甸幋婵冩斀闁绘顕滃銉╂煙閸愯尙绠荤€殿喗鐓￠獮鏍ㄦ媴閸︻厼骞嶉梺璇插缁嬫帡鏁嬫繝娈垮枛閸婂潡寮?
+ * 空间任务运行器 (Spatial Job Runner)
+ * 职责：协调规划、数据检索、分析反馈。
  */
 import { randomUUID } from 'crypto'
 
@@ -12,18 +12,29 @@ import { resolveSourcePolicy } from './sourcePolicy.js'
 import * as queryCache from './queryCache.js'
 import telemetry from './telemetry.js'
 import { insertOperatorTimingEvents } from './database.js'
-import { callLLM } from './llm.js'
+import { callLLM, generateEmbedding } from './llm.js'
 import { buildFailureDiagnostics } from './errorDiagnostics.js'
+import { assertValidSpatialPlan } from './dslValidator.js'
+import { isVectorDBAvailable, parallelHybridSearch } from './vectordb.js'
 import {
   classifyGeoRelevance,
   IRRELEVANT_FRIENDLY_REPLY
 } from './relevanceGate.js'
 
-// MVP 闂傚倸鍊烽悞锕傚箖閸洖纾块梺顒€绉寸粻瑙勩亜閹板爼妾柛瀣ф櫅铻栭柨婵嗘噹閺嗘瑧绱掗埀顒勫幢濞戞瑧鍘遍梺鏂ユ櫅閸犳岸鎮炴禒瀣厪闁割偒鍓涢悾鍨叏婵犲偆鐓肩€规洘锕㈡俊姝岊槻妞わ絾妞藉娲焻閻愯尪瀚板褌鍗抽弻鏇㈠幢濡ゅ﹤鍓冲┑鈥冲级閸旀洟鍩為幋鐘亾閿濆簼娴风悮婵嬫⒑绾懎顥嶉柟娲讳簽瀵板﹪宕稿Δ鈧弸浣肝旈敐鍛殲闁绘挻娲樼换娑㈠幢濡浚浜幃姗€鏁撻悩宕囧幗濠德板€撻悞锔句焊閿旂瓔娈介柣鎰綑閻忓瓨銇勯姀锛勬噰闁诡喒鍓濋幆鏃堟晲鎼存繄闂繝鐢靛Х閺佹悂宕戦悙宸劷婵炲棙鎼╅弫鍕煕閵夈垺娅呴柛銊︾箞閺屾洘绻涢悙顒佺彅闂佸憡鍨规慨鐢垫崲濠靛洨绡€闁稿本渚楀Λ銈呪攽閻愯尙澧曢柣鏍с偢瀵鈽夊Ο閿嬬€婚棅顐㈡处閹告挳宕戦幘璇查唶闁哄洨鍋熼崝?
+// MVP 异步分流规则。
 const ASYNC_RULES = {
   maxSyncCandidates: 8000,
   maxSyncAreaKm2WithRefine: 20
 }
+
+const VECTOR_SUPPORTED_QUERY_TYPES = new Set([
+  'poi_search',
+  'area_analysis',
+  'fuzzy_regions',
+  'vernacular_region',
+  'graph_reasoning',
+  'region_comparison'
+])
 
 // Lazy-load legacy Node executor only when fallback is required.
 // This keeps gateway startup lean when Python is the primary compute path.
@@ -54,6 +65,29 @@ const ADVANCED_QUERY_TYPES = new Set([
 function normalizeQueryType(queryPlan = {}) {
   const rawType = queryPlan?.query_type || queryPlan?.queryType || 'poi_search'
   return String(rawType).trim().toLowerCase() || 'poi_search'
+}
+
+function isSpatialDslQueryPlan(queryPlan = {}) {
+  return String(queryPlan?.dsl_version || '').trim().toLowerCase() === 'spatial_query_v1'
+    && queryPlan?.task
+    && queryPlan?.scope
+}
+
+function toExecutableQueryPlan(queryPlan = {}) {
+  if (!isSpatialDslQueryPlan(queryPlan)) {
+    return queryPlan
+  }
+
+  return {
+    ...queryPlan,
+    query_type: queryPlan?.task?.query_type || 'poi_search',
+    categories: Array.isArray(queryPlan?.entities?.categories) ? queryPlan.entities.categories : [],
+    semantic_query: queryPlan?.entities?.semantic_query || '',
+    region_ids: Array.isArray(queryPlan?.scope?.region_ids) ? queryPlan.scope.region_ids : [],
+    need_text_answer: queryPlan?.task?.need_text_answer !== false,
+    latency_budget_ms: queryPlan?.constraints?.latency_budget_ms,
+    operators: Array.isArray(queryPlan?.operators) ? queryPlan.operators : []
+  }
 }
 
 const LEGACY_VISUAL_MODEL_ALIASES = new Map([
@@ -87,7 +121,8 @@ export function normalizeVisualModelName(modelName, { fallback = 'qwen3.5-4b' } 
 }
 
 
-// 缂傚倸鍊搁崐鎼佸磹閹间礁纾圭憸鐗堝笒缁犱即鏌熼梻瀵稿妽闁稿鍊濋弻鏇熺箾閻愵剚鐝旂紓浣插亾闁割偀鎳囬崑鎾荤嵁閸喖濮庡┑鈽嗗亝缁嬫挾鍒掓繝姘婵°倓鑳堕崢鍨繆閻愬樊鍎忛悗娑掓櫊閹偟鎹勯妸褏锛滈梺閫炲苯澧€垫澘瀚伴獮鍥敇閻斿摜褰ㄩ梺璇查閸樻粓宕戦幘缁樼厱闁哄洢鍔嬬花鐣岀磼鏉堛劌鍝烘慨濠呮缁瑧鎹勯妸褜鍞剁紓鍌欑椤︿即骞愰幎鐣屽祦闁告劑鍓弮鍫濈妞ゅ繐妫寸槐鍙変繆閻愵亜鈧牠骞愭ィ鍐ㄧ；婵炴垯鍨归悿楣冩煕濞戞﹫鍔熺紒鐘插⒔缁辨捇宕奸姀鐘橆剟鏌涜箛鎾剁劯闁哄苯绉归幊锟犲Χ閸涱厺绮梺杞扮閻楁捇寮诲澶婄厸濞达絽鎲″▓鍫曟⒑閸涘鐒藉┑顕€顥撳Σ鎰板箻鐠囪尙锛滃┑鐐村灦閻熴儳鍠婂澶嬧拺閻庣櫢闄勫妯讳繆閸ф鐓冪憸婊堝礈濞戙垹鏋侀柟闂撮檷閳ь兛鐒︾换婵嬪炊閵娿儳妯侀梻浣告啞濞诧箓宕归幏宀€绠?
+// 为缓存创建结果副本，防止后续内存对象被意外修改。
+
 function cloneForCache(payload) {
   if (!payload) return payload
 
@@ -98,7 +133,7 @@ function cloneForCache(payload) {
   }
 }
 
-// 濠电姷鏁搁崑娑㈩敋椤撶喐鍙忛柟缁㈠枛缁犵娀骞栫划瑙勵潐闁肩増瀵ч妵鍕疀閹炬惌妫ら梺娲诲幗閻熲晠寮诲☉銏犵疀妞ゆ牗姘ㄥВ銏ゆ⒑閸濆嫭顥欓柛妤佸▕瀵鏁嶉崟顏呭媰闁荤姴娲﹁ぐ鍐╂叏閵堝拋娓婚柕鍫濇缁€鍐┿亜閵娿儳澧﹂柟顕呭櫍瀹曟粏顦抽悗姘哺閺屻倗鍠婇崡鐐插箣闂佺顑嗛幑鍥箖濠婂牊瀵犲璺哄珐閺囩儐娓婚柕鍫濇婢ь剛绱掗鑲┬х€殿喖鐤囩粻娑㈠即閻樼绱抽梻浣侯焾閺堫剛绮欓幒鏂剧剨妞ゆ挶鍨洪悡鐔煎箳閹惰棄绀夐柟杈剧畱閺嬩胶鈧箍鍎卞ú锝呪柦椤忓牊鐓曢柟鐐殔閹虫劕鐣垫担鍦瘈闁汇垽娼ф禒锕傛煙閸涘﹥鍊愭鐐诧躬楠炲洭顢欓挊澶夌病婵＄偑鍊栭崝鎴﹀磹閺嶎偀鍋撳顓炲摵婵﹥妞藉畷褰掝敋閸涱厼澹嬫繝鐢靛Л閸嬫捇鏌熺紒銏犳灍闁绘挾鍠栭弻宥嗘姜閹峰苯鍘￠梺鍦櫕婵炩偓闁诡喕绮欓、娑橆潩閻撳孩顔嶉梻浣告贡閹虫挾鈧凹鍣ｉ崺鈧い鎺嗗亾婵犫偓鏉堛劍鍙忓瀣捣娑撳秹鏌″搴″箺闁?
+// 判断是否应使用空间查询结果缓存。
 function shouldUseSpatialResultCache(queryPlan = {}, options = {}) {
   if (options?.skipCache || options?.forceRefresh) return false
 
@@ -209,19 +244,122 @@ function buildMinimalNodeFallbackEnvelope(queryPlan = {}, fallbackReasons = []) 
 }
 
 /**
- */
-/**
- * 闂傚倷娴囬褍霉閻戣棄绠犻柟鎯у殺閸ヮ剦鏁嶉柣鎰皺閻撴垿妫呴銏″缂佸鍨垮鍛婄瑹閳ь剟寮婚埄鍐ㄧ窞閹兼番鍨婚妴濠囨⒑閸︻厽娅曢柛鐘崇墪椤曪綁宕奸弴鐔封偓濠氭煕閳╁喚娈旀い顐邯閹鎲撮崟顒傤槰闂佺粯鎼换婵嗩嚕椤愩埄鍚嬮柛娑卞灡濞堟洟姊洪崨濠冨闁稿海鍏橀崺锟犲磼濞戞ê浼?NaN 濠电姷鏁搁崑鐔妓夐幇鏉跨；闁归偊鍘介崣蹇涙煟閵忕姵鍟為柛瀣€块幃妤呮晲鎼粹剝鐏堥柣鐔哥懕缁犳捇鐛弽銊︾秶闁告挆鍕还闂備浇妗ㄧ欢姘辩不閺嶎厼绠栭悷娆忓閻熺懓鈹戦悩鎻掝伀闁挎稓鍠栧鐑樺濞嗘垵鍩屽銈庡弮閺€杈ㄧ┍?
+ * 将值转换为数字类型，如果无法转换则使用回退值。
  */
 function toNumeric(value, fallback = 0) {
   const num = Number(value)
   return Number.isFinite(num) ? num : fallback
 }
 
+function normalizeTokenUsage(usage) {
+  if (!usage || typeof usage !== 'object') return null
+
+  const prompt = Math.max(0, Math.round(toNumeric(usage.prompt_tokens, 0)))
+  const completion = Math.max(0, Math.round(toNumeric(usage.completion_tokens, 0)))
+  const explicitTotal = Math.max(0, Math.round(toNumeric(usage.total_tokens, 0)))
+  const total = explicitTotal > 0 ? explicitTotal : (prompt + completion)
+
+  if (prompt === 0 && completion === 0 && total === 0) return null
+
+  return {
+    prompt_tokens: prompt,
+    completion_tokens: completion,
+    total_tokens: total
+  }
+}
+
+function buildTokenUsageSummary(plannerUsage = null, writerUsage = null) {
+  const planner = normalizeTokenUsage(plannerUsage)
+  const writer = normalizeTokenUsage(writerUsage)
+  const totalTokens = (planner?.total_tokens || 0) + (writer?.total_tokens || 0)
+
+  if (!planner && !writer && totalTokens <= 0) {
+    return null
+  }
+
+  return {
+    planner,
+    writer,
+    total_tokens: totalTokens
+  }
+}
+
+function normalizeShortText(value, maxLen = 120) {
+  const text = String(value || '').trim()
+  if (!text) return ''
+  return text.length > maxLen ? `${text.slice(0, maxLen)}...` : text
+}
+
+function normalizeTextArray(value, { limit = 12, maxLen = 64 } = {}) {
+  if (!Array.isArray(value)) return []
+  const normalized = []
+  for (const item of value) {
+    const text = normalizeShortText(item, maxLen)
+    if (!text) continue
+    if (!normalized.includes(text)) normalized.push(text)
+    if (normalized.length >= limit) break
+  }
+  return normalized
+}
+
+function buildPipelineStageChecklist(stats = {}, writerMeta = {}) {
+  const normalizedStats = stats && typeof stats === 'object' ? stats : {}
+  const ocrTexts = normalizeTextArray(normalizedStats.vlm_extracted_texts, { limit: 6, maxLen: 40 })
+  const ocrEnabled = normalizedStats.ocr_enabled === true
+  const overviewEnabled = normalizedStats.overview_enabled === true
+  const overviewMediumEnabled = normalizedStats.overview_medium_enabled === true
+  const visualReviewEnabled = String(normalizedStats.visual_review_mode || '').toLowerCase() !== 'disabled'
+    && Boolean(normalizedStats.visual_review_model)
+  const reasoningEnabled = normalizedStats.reasoning_enabled === true
+  const writerFallbackUsed = writerMeta.used_fallback === true
+  const writerOutputReady = writerMeta.output_ready === true
+  const writerStatus = writerFallbackUsed
+    ? (writerOutputReady ? 'WARN' : 'FAIL')
+    : 'PASS'
+
+  return [
+    {
+      key: 'ocr',
+      label: 'OCR 文本提取',
+      ok: ocrEnabled,
+      model: normalizedStats.ocr_model || null,
+      extracted_count: ocrTexts.length,
+      extracted_texts: ocrTexts
+    },
+    {
+      key: 'overview_light_vlm',
+      label: '轻量 VLM 总览',
+      ok: overviewEnabled,
+      model: normalizedStats.overview_model || null,
+      summary: normalizeShortText(normalizedStats.overview_light_summary || '')
+    },
+    {
+      key: 'overview_medium_vlm',
+      label: '中级 VLM 视觉评审',
+      ok: overviewMediumEnabled || visualReviewEnabled,
+      model: normalizedStats.overview_medium_model || normalizedStats.visual_review_model || null,
+      summary: normalizeShortText(normalizedStats.overview_medium_summary || '')
+    },
+    {
+      key: 'reasoning',
+      label: '推理模型',
+      ok: reasoningEnabled,
+      model: normalizedStats.reasoning_model || null,
+      mode: reasoningEnabled ? 'enabled' : 'disabled'
+    },
+    {
+      key: 'writer',
+      label: 'Writer 结果整合',
+      ok: writerStatus !== 'FAIL',
+      status: writerStatus,
+      fallback_used: writerFallbackUsed,
+      fallback_reason: writerMeta.fallback_reason || null
+    }
+  ]
+}
+
 /**
- */
-/**
- * 闂傚倷娴囬褏鎹㈤幇顔藉床闁归偊鍎靛☉妯锋闁靛繒濮烽敍娑㈡⒑閹稿海绠撴い锔诲灦閺屻劑濡舵径瀣幍闂備緡鍙忕粻鎴︾嵁濮椻偓閺屾盯濡搁妸銉ゆ睏缂備浇椴搁幐濠氬箯閸涙潙浼犻柛鏇ㄥ墰閳ь剝娅ｇ槐鎾存媴鐟欏嫧鎷归梺鐟版啞婵炲﹪鎮?{lon, lat}闂?
+ * 标准化点坐标，支持数组 [lon, lat] 或对象 {lon, lat}。
  */
 function normalizePoint(input) {
   if (!input) return null
@@ -245,9 +383,7 @@ function normalizePoint(input) {
 }
 
 /**
- */
-/**
- * Haversine 闂傚倸鍊峰ù鍥х暦閻㈢纾绘繛鎴欏灩閻ゎ噣鏌℃径瀣劸闁绘帊绮欓弻鐔封枔閸喗鐏嶉悗瑙勬礀椤︽壆鎹㈠┑瀣棃婵炴垶鑹鹃埛鍫ユ⒑鐠囨彃顒㈤柣鎿勭節瀵濡搁妷銏☆潔濠碘槅鍨甸褎鏅堕ˇ鎾绘⒒閸屾瑧鍔嶉悗绗涘懐鐭欓柟娆¤娲、姗€濮€閻橀潧濮?
+ * 计算两点间的球面距离 (Haversine 公式)。
  */
 function haversineKm(lat1, lon1, lat2, lon2) {
   const R = 6371
@@ -262,9 +398,7 @@ function haversineKm(lat1, lon1, lat2, lon2) {
 }
 
 /**
- */
-/**
- * 濠电姷鏁搁崑鐐差焽濞嗘挸瑙﹂悗锝庡亞閻濆爼鏌涢埄鍐姇闁?viewport 闂傚倸鍊搁崐鎼佸磹閹间焦鍋嬮柛鏇ㄥ灠閸ㄥ倿鏌￠崟顐ょ畾闁告瑩绠栧缁樻媴閻熼偊鍤嬬紓浣割儐閸ㄧ敻鈥﹂崶顑濈兘骞庨懞銉у弰闂婎偄娲﹂幐鍓х不婵犳碍鐓涘ù锝呮憸鏍￠悗鍨緲鐎氭澘鐣烽悡搴僵妞ゆ垵鐏濋ˉ?
+ * 计算 Viewport 覆盖的近似面积。
  */
 function viewportAreaKm2(viewport) {
   if (!Array.isArray(viewport) || viewport.length < 4) {
@@ -290,9 +424,7 @@ function viewportAreaKm2(viewport) {
 }
 
 /**
- */
-/**
- * 濠电姷鏁搁崑鐐差焽濞嗘挸瑙﹂悗锝庡亞閻濆爼鏌涢埄鍐姇闁?polygon 闂傚倸鍊搁崐鎼佸磹閹间焦鍋嬮柛鏇ㄥ灠閸ㄥ倿鏌￠崟顐ょ畾闁告瑩绠栧缁樻媴閻熼偊鍤嬬紓浣割儐閸ㄧ敻鈥﹂崶顑濈兘骞庨懞銉у弰闂婎偄娲﹂幐鍓х不婵犳碍鐓涘ù锝呮憸鏍￠悗鍨緲鐎氼剟鍩ユ径濠庢僵濡插本鐗楀暩濠电姷鏁搁崑娑㈩敋椤撶喐鍙忛柟缁㈠枛缁犵娀鏌熼悧鍫熺凡闁哄绶氶弻鏇㈠醇濠靛浂妫ゅ銈傛櫆閻擄繝鐛弽顐㈠灊闁稿繐顦禍鍓р偓瑙勬礀濞茬娀宕戦幘鍓佺＜婵☆垵鍋愰鏇犵磽閸屾氨澧㈠┑顔惧厴钘濋柨鏇炲€归悡鏇㈡煏婵炲灝鈧鎯屽▎鎴斿亾濞堝灝娅橀柛鎾跺枛閵嗕礁螣鐞涒剝鏁犻梺璇″瀻閸屾凹妫?
+ * 计算多边形边界的地理面积。
  */
 function polygonAreaKm2(boundary) {
   if (!Array.isArray(boundary) || boundary.length < 3) {
@@ -328,9 +460,7 @@ function polygonAreaKm2(boundary) {
 }
 
 /**
- */
-/**
- * 濠?spatialContext 闂傚倸鍊风粈浣革耿鏉堚晛鍨濇い鏍仜缁€澶愭煛閸ゅ爼顣﹀Ч妤呮⒑閹肩偛鍔撮柛鎾寸懅缁鏁愭径瀣幐閻庡箍鍎辩换鎺楁偩鏉堚斁鍋撳▓鍨珝妞ゃ儲鎸惧Σ鎰板箳濡や礁浜归梺褰掝暒閻掞箓鎮鹃悜鑺モ拺缂備焦蓱閹牏绱掓潏銊︾妤犵偛绻橀幃鈺冩嫚瀹割喗缍傞梻渚€娼ч悧鍡椢涘▎鎾澄ラ柛鎰典簽绾捐棄霉閿濆懎顥忔俊顖氱墦閺屾盯鈥﹂幋婵嗏拫闂佺硶鏂侀崑?
+ * 从空间上下文中推算出面积（平方公里）。
  */
 function deriveSpatialAreaKm2(spatialContext = {}) {
   if (!spatialContext || typeof spatialContext !== 'object') {
@@ -356,9 +486,7 @@ function deriveSpatialAreaKm2(spatialContext = {}) {
 }
 
 /**
- */
-/**
- * 婵犵數濮烽。钘壩ｉ崨鏉戠；闁逞屽墴閺屾稓鈧綆鍋呭畷宀勬煛瀹€瀣？濞寸媴濡囬幏鐘诲箵閹烘埈娼ュ┑鐘殿暯閳ь剙鍟跨痪褔鏌熼鐓庘偓鎼佹偩閻戣棄唯闁冲搫鍊瑰▍鍡涙⒑閸忛棿鑸柛搴㈠▕閹箖骞庨懞銉㈡嫼闁哄鍋炴竟鍡浰囬敃鍌涚厽婵°倐鍋撶紒缁橈耿瀹曟椽鎮欓崫鍕敤濡炪倖鎸鹃崯鍧楀箯婵犳碍鐓熼幖杈剧稻閺嗏晜銇勯鐐靛ⅵ妞ゃ垺鐟︾换婵嬪炊閵娧冨箰濠电姰鍨煎▔娑㈡嚐椤栫偛鍑犻柛宀€鍋為悡?
+ * 检查是否具有有效的空间范围信息。
  */
 function hasSpatialContext(spatialContext = {}) {
   if (!spatialContext || typeof spatialContext !== 'object') {
@@ -375,7 +503,7 @@ function hasSpatialContext(spatialContext = {}) {
 /**
  */
 /**
- * 闂傚倸鍊风粈渚€宕ョ€ｎ喖纾块柟鎯版鎼村﹪鏌ら懝鎵牚濞存粌缍婇弻娑㈠Ψ閵忊剝鐝曢梺鍝ュТ濡繈寮诲☉銏犵労闁告劗鍋撻悾鍓佺磽閸屾氨校闁瑰憡鎮傞崺銉﹀緞閹邦剛顔撻梺鍛婂姂閸斿瞼绮婚崷顓犵＝濞达綀顫夐妵婵堢磼閻樺磭澧垫鐐插暙閳诲酣骞橀弶鎴濆闂備礁鎲＄缓鍧楀磿閹跺壙鍥敊閻ｅ瞼顔?Planner 濠电姷鏁搁崑鐘诲箵椤忓棗绶ら柛鎾楀啫鐏婇梺鍓插亖閸ㄨ櫣鈧艾顭烽弻锝夊棘閹稿骸鏆堢紓鍌氱Т濞差參寮诲☉妯锋闁告鍋涚粻褰掓偠濮樺崬校缂佺粯鐩獮瀣倷閺夋垹顣查梻浣瑰濞测晝寰婄捄銊ュ灊妞ゆ挶鍨瑰婵嬫煛婢跺鐏︽い銉︾箞濮婃椽骞栭悙鎻掑闂佺瀵掗崳锝呯暦?
+ * 通过输入解析坐标点特征，支持经纬度对象或经纬度数组。
  */
 
 function getViewportCenter(spatialContext = {}) {
@@ -394,10 +522,297 @@ function getViewportCenter(spatialContext = {}) {
   return null
 }
 
+function resolveVectorSemanticQuery(queryPlan = {}, userQuestion = '') {
+  const semanticFromPlan = String(queryPlan?.semantic_query || '').trim()
+  if (semanticFromPlan) return semanticFromPlan
+
+  const categories = Array.isArray(queryPlan?.categories)
+    ? queryPlan.categories.map((item) => String(item || '').trim()).filter(Boolean)
+    : []
+  if (categories.length > 0) return categories.join(' ')
+
+  return String(userQuestion || '').trim()
+}
+
+function resolveVectorAnchorPoint(queryPlan = {}, spatialContext = {}) {
+  const planAnchor = normalizePoint(queryPlan?.anchor)
+  if (planAnchor) return planAnchor
+
+  const contextCenter = normalizePoint(spatialContext?.center)
+  if (contextCenter) return contextCenter
+
+  const viewportCenter = getViewportCenter(spatialContext)
+  return normalizePoint(viewportCenter)
+}
+
+function resolveVectorRadiusMeters(queryPlan = {}, spatialContext = {}) {
+  const planRadius = toNumeric(queryPlan?.radius_m, NaN)
+  if (Number.isFinite(planRadius) && planRadius > 0) {
+    return Math.max(300, Math.min(15000, Math.round(planRadius)))
+  }
+
+  const contextRadius = toNumeric(spatialContext?.radius, NaN)
+  if (Number.isFinite(contextRadius) && contextRadius > 0) {
+    return Math.max(300, Math.min(15000, Math.round(contextRadius)))
+  }
+
+  return 3000
+}
+
+function toVectorCategoryText(poi = {}, keys = []) {
+  for (const key of keys) {
+    const direct = poi?.[key]
+    if (typeof direct === 'string' && direct.trim()) return direct.trim()
+    const nested = poi?.properties?.[key]
+    if (typeof nested === 'string' && nested.trim()) return nested.trim()
+  }
+  return ''
+}
+
+function normalizeVectorCandidate(poi = {}, index = 0) {
+  const lon = toNumeric(
+    poi?.lon ?? poi?.lng ?? poi?.longitude ?? poi?.properties?.lon ?? poi?.properties?.lng,
+    NaN
+  )
+  const lat = toNumeric(
+    poi?.lat ?? poi?.latitude ?? poi?.properties?.lat ?? poi?.properties?.latitude,
+    NaN
+  )
+  if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null
+
+  const id = poi?.id ?? poi?.poi_id ?? `vector_${index + 1}`
+  const name = normalizeShortText(
+    poi?.name || poi?.properties?.name || poi?.properties?.['名称'] || `POI-${index + 1}`,
+    160
+  )
+  const address = normalizeShortText(
+    poi?.address || poi?.properties?.address || poi?.properties?.['地址'] || '',
+    240
+  )
+
+  const categorySmall = toVectorCategoryText(poi, [
+    'category_small',
+    'categorySmall',
+    '小类',
+    'category',
+    'type'
+  ])
+  const categoryMid = toVectorCategoryText(poi, [
+    'category_mid',
+    'categoryMid',
+    '中类',
+    'category'
+  ])
+  const categoryBig = toVectorCategoryText(poi, [
+    'category_big',
+    'categoryBig',
+    '大类'
+  ])
+  const type = toVectorCategoryText(poi, ['type', 'category']) || categorySmall || categoryMid || categoryBig
+
+  const semanticScore = toNumeric(poi?.semantic_score, 0)
+  const hybridScore = toNumeric(poi?.hybrid_score, 0)
+  const distanceMeters = toNumeric(poi?.distance_m ?? poi?.distance, NaN)
+
+  return {
+    id,
+    name,
+    address,
+    type,
+    category_big: categoryBig,
+    category_mid: categoryMid,
+    category_small: categorySmall,
+    lon,
+    lat,
+    distance_m: Number.isFinite(distanceMeters) ? distanceMeters : null,
+    semantic_score: Number.isFinite(semanticScore) ? semanticScore : 0,
+    hybrid_score: Number.isFinite(hybridScore) ? hybridScore : 0,
+    properties: {
+      id,
+      name,
+      address,
+      type,
+      category_big: categoryBig,
+      category_mid: categoryMid,
+      category_small: categorySmall
+    },
+    geometry: {
+      type: 'Point',
+      coordinates: [lon, lat]
+    }
+  }
+}
+
+function buildVectorRetrievalMeta(partial = {}) {
+  return {
+    attempted: partial?.attempted === true,
+    used: partial?.used === true,
+    reason: String(partial?.reason || '').trim() || null,
+    semantic_query: partial?.semantic_query ? String(partial.semantic_query).slice(0, 120) : null,
+    candidate_count: Math.max(0, Math.round(toNumeric(partial?.candidate_count, 0))),
+    py_data_source: partial?.py_data_source || null
+  }
+}
+
+async function prepareVectorCandidates({
+  queryPlan = {},
+  spatialContext = {},
+  userQuestion = '',
+  options = {},
+  reportStage = async () => {}
+} = {}) {
+  const queryType = normalizeQueryType(queryPlan)
+  if (!VECTOR_SUPPORTED_QUERY_TYPES.has(queryType)) {
+    return {
+      candidates: [],
+      meta: buildVectorRetrievalMeta({
+        attempted: false,
+        used: false,
+        reason: `query_type_unsupported:${queryType}`,
+        py_data_source: 'python'
+      })
+    }
+  }
+
+  const semanticQuery = resolveVectorSemanticQuery(queryPlan, userQuestion)
+  if (!semanticQuery || semanticQuery.length < 2) {
+    return {
+      candidates: [],
+      meta: buildVectorRetrievalMeta({
+        attempted: false,
+        used: false,
+        reason: 'semantic_query_empty',
+        py_data_source: 'python'
+      })
+    }
+  }
+
+  const anchor = resolveVectorAnchorPoint(queryPlan, spatialContext)
+  if (!anchor) {
+    return {
+      candidates: [],
+      meta: buildVectorRetrievalMeta({
+        attempted: false,
+        used: false,
+        reason: 'anchor_missing',
+        semantic_query: semanticQuery,
+        py_data_source: 'python'
+      })
+    }
+  }
+
+  if (!isVectorDBAvailable()) {
+    return {
+      candidates: [],
+      meta: buildVectorRetrievalMeta({
+        attempted: false,
+        used: false,
+        reason: 'vector_db_unavailable',
+        semantic_query: semanticQuery,
+        py_data_source: 'python'
+      })
+    }
+  }
+
+  const radius = resolveVectorRadiusMeters(queryPlan, spatialContext)
+  const desiredTopK = Math.round(toNumeric(options?.limit, 600))
+  const topK = Math.max(60, Math.min(1200, desiredTopK))
+  const categories = Array.isArray(queryPlan?.categories) ? queryPlan.categories.slice(0, 30) : []
+
+  await reportStage('vector_retrieval_start', {
+    query_type: queryType,
+    semantic_query: normalizeShortText(semanticQuery, 80),
+    anchor,
+    radius_m: radius,
+    top_k: topK
+  })
+
+  try {
+    const embedding = await generateEmbedding(semanticQuery)
+    if (!Array.isArray(embedding) || embedding.length === 0) {
+      await reportStage('vector_retrieval_skip', {
+        reason: 'embedding_unavailable',
+        query_type: queryType
+      })
+      return {
+        candidates: [],
+        meta: buildVectorRetrievalMeta({
+          attempted: true,
+          used: false,
+          reason: 'embedding_unavailable',
+          semantic_query: semanticQuery,
+          py_data_source: 'python'
+        })
+      }
+    }
+
+    const vectorResults = await parallelHybridSearch({
+      queryEmbedding: embedding,
+      anchor,
+      radius,
+      topK,
+      categories
+    })
+
+    const normalizedCandidates = Array.isArray(vectorResults)
+      ? vectorResults.map((item, index) => normalizeVectorCandidate(item, index)).filter(Boolean)
+      : []
+
+    const dedupedCandidates = []
+    const dedupe = new Set()
+    for (const candidate of normalizedCandidates) {
+      const key = `${candidate.id}|${candidate.lon.toFixed(6)}|${candidate.lat.toFixed(6)}`
+      if (dedupe.has(key)) continue
+      dedupe.add(key)
+      dedupedCandidates.push(candidate)
+      if (dedupedCandidates.length >= 1500) break
+    }
+
+    const used = dedupedCandidates.length > 0
+    const reason = used ? 'ok' : 'vector_result_empty'
+    const pyDataSource = used ? 'hybrid' : 'python'
+
+    await reportStage('vector_retrieval_done', {
+      query_type: queryType,
+      candidate_count: dedupedCandidates.length,
+      used,
+      py_data_source: pyDataSource
+    })
+
+    return {
+      candidates: dedupedCandidates,
+      meta: buildVectorRetrievalMeta({
+        attempted: true,
+        used,
+        reason,
+        semantic_query: semanticQuery,
+        candidate_count: dedupedCandidates.length,
+        py_data_source: pyDataSource
+      })
+    }
+  } catch (err) {
+    const errorReason = String(err?.message || 'vector_retrieval_error').slice(0, 140)
+    await reportStage('vector_retrieval_error', {
+      reason: errorReason,
+      query_type: queryType
+    })
+    return {
+      candidates: [],
+      meta: buildVectorRetrievalMeta({
+        attempted: true,
+        used: false,
+        reason: errorReason,
+        semantic_query: semanticQuery,
+        py_data_source: 'python'
+      })
+    }
+  }
+}
+
 /**
  */
 /**
- * 婵犵數濮烽。钘壩ｉ崨鏉戠；闁逞屽墴閺屾稓鈧綆鍋呯亸鎵磼缂佹娲寸€殿喖鐖奸獮瀣敇閻愭彃顥撻梻鍌欑窔濞艰崵寰婃禒瀣婵犲﹤鐗嗙粻顖炴倵閿濆骸鏋熼柡鍜佸墴閺屾盯寮撮妸銉ョ濠殿噯绲介悧鎾愁潖濞差亜宸濆┑鐘插暊閹峰姊洪崫銉バｆ繛鑼枎閻ｅ嘲螖閳ь剟锝炲鍫濈劦妞ゆ巻鍋撴い鏇稻缁傛帞鈧綆浜為崐鐐差渻閵堝懐绠扮紒澶嬫尦瀵偉銇愰幒鎾嫼闂佸湱顭堝ù鐑藉煡婢跺绠鹃柛蹇曗拡閸旀Ωzy/vernacular/濠电姴鐥夐弶搴撳亾閺囥垹纾圭憸鐗堝坊閳ь剨绠撳畷鍫曞煛閸曨倣锟犳⒑缁夊棗瀚峰▓鏃傗偓鐟版啞缁诲牓寮婚敃鈧灒濞撴凹鍨辨晥闂備胶顭堥敃銉︾箾婵犲洤钃熼柕濞垮劗濡插牊鎱ㄥΔ鈧Λ娆掑€撮梻?
+ * 提交空间查询任务到内部队列，支持同步/异步模式切换。
  */
 function detectHeavyFeatureFlags(options = {}, queryPlan = {}) {
   const wantsFuzzy =
@@ -421,9 +836,7 @@ function detectHeavyFeatureFlags(options = {}, queryPlan = {}) {
 }
 
 /**
- */
-/**
- * 闂?messages 濠电姷鏁搁崑鐐哄垂閸洖绠归柍鍝勬噹閸屻劑鏌﹀Ο渚Ф闁逞屽墯鐢€崇暦婵傜鍗抽柣鎰礋閺囥垺鐓欓柣鎾虫捣閹界姷绱掔拠鎻掝伃妞ゃ垺妫冮弻鍡楊吋閸℃瑥骞?user 闂傚倸鍊风粈浣革耿鏉堚晛鍨濇い鏍仜缁€澶嬬箾閸℃绨挎繛鎴欏灩闁卞洭鏌￠崶鈺佲偓?
+ * 提取最后一条用户消息。
  */
 export function extractLastUserMessage(messages = []) {
   const last = messages.filter((item) => item?.role === 'user').pop()
@@ -433,8 +846,8 @@ export function extractLastUserMessage(messages = []) {
 /**
  */
 /**
- * 闂?闂傚倸鍊搁崐鐑芥倿閿曚降浜归柛鎰典簽閻捇鏌熺紒銏犳灈闁搞劌鍊块獮鏍垝閻熸壆鍘柣鐔哥懃鐎氼厽鍒婇幘顔界叄闊洦鍑瑰鎰版煙閸欏鍊愭慨濠勫劋鐎电厧鈻庨幋鐘仭闂備胶顭堢€垫帡宕归崼鏇炴槬闁?
- * 闂傚倷绀侀幖顐λ囬锕€鐤炬繝濠傜墕閽冪喖鏌曟繛鍨壄?mode + reasons + metrics闂傚倸鍊烽悞锔锯偓绗涘懐鐭欓柟瀵稿仧闂勫嫰鏌￠崘銊モ偓濠氭儗濮樿埖鐓犻柛婵勫劜閺嗏晜銇勯埡鍌滃弨妤犵偞鐗曡彁妞ゆ垼娉曠粈鍌炴⒑閸︻厼鍔嬫い銊ユ閹繝宕掑锝嗘杸闂佺粯鍔樼亸娆忣潩閵娾晜鐓?
+ * 判断传入的计划是否符合 Spatial DSL 标准格式。
+ */
  */
 /**
  * Detect greeting-only messages to avoid unnecessary spatial compute + long LLM latency.
@@ -702,9 +1115,7 @@ export function decideExecutionMode({
 }
 
 /**
- */
-/**
- * 闂傚倸鍊风粈渚€骞栭锔绘晞闁告侗鍨崑鎾愁潩椤愩垹绁梺绯曟杹閸?gRPC 闂傚倷娴囧畷鍨叏閺夋嚚娲敇閵忕姷鍝楅梻渚囧墮缁夌敻宕曢幋锔界厽婵°倐鍋撻柣妤€锕ラ崚濠囧箻椤旂晫鍘甸梺缁樺姦閸撴瑩銆傞幎鑺ョ厱?
+ * 为 gRPC 序列化候选点。
  */
 function serializeCandidatesForGrpc(options = {}, poiFeatures = [], migrationDecision = null) {
   // In python data-source mode, keep candidates empty so Python reads from PostGIS directly.
@@ -787,6 +1198,9 @@ function buildGrpcRequest({ requestId, queryPlan, spatialContext, options, migra
         sourcePolicy: options?.sourcePolicy,
         selectedCategories: options?.selectedCategories,
         regions: Array.isArray(options?.regions) ? options.regions : [],
+        context_binding: options?.context_binding || queryPlan?.context_binding || null,
+        revision: options?.revision || queryPlan?.revision || null,
+        streaming_hints: options?.streaming_hints || queryPlan?.streaming_hints || null,
         limit: options?.limit,
         maxFetchLimit: options?.maxFetchLimit,
         clusterMaxHdbscanPoints: options?.clusterMaxHdbscanPoints,
@@ -805,7 +1219,7 @@ function buildGrpcRequest({ requestId, queryPlan, spatialContext, options, migra
 /**
  */
 /**
- * 闂傚倷娴囬褏鎹㈤幇顔藉床闁归偊鍎靛☉銏犵睄闁稿本绮庨悾鑸电節閵忥絽鐓愰柛鏃€娲滈幉鎾晝閸屾稑鈧爼鏌ｉ幇顓犮偞闁稿鎹囬幃銏☆槹鎼粹€崇瑩闂備浇顕х€涒晠顢欓弽顓炵獥闁哄稁鍋呭畷鏌ユ煙閻戞ê鐏嶉柡?executor 缂傚倸鍊搁崐鎼佸磹閻戣姤鍊块柨鏇炲€哥粻鏉库攽閻樺磭顣查柛濠呮硾椤法鎹勯搹瑙勬婵炲瓨绮岀紞濠囧蓟閻旂厧浼犻柛鏇ㄥ帨閵堝棎浜滈煫鍥ㄧ◥閹查箖鏌＄仦鍓ф创鐎殿喕绮欐俊姝岊槻闁愁亞鏁诲?
+ * 将结果信封标准化为前端可识别的 GeoJSON 增强格式。
  */
 function buildGraphAnalysisFromReasoning(graphReasoning = null) {
   if (!graphReasoning || typeof graphReasoning !== 'object') return null
@@ -919,11 +1333,11 @@ function resolveComputeMode(executorEnvelope, migrationDecision) {
 /**
  */
 /**
- * 缂傚倸鍊搁崐椋庣矆娓氣偓瀵敻顢楅埀顒勨€旈崘顔藉癄濠㈠厜鏅滅粙鎾诲箲閸曨垰惟闁挎洍鍋撴い搴㈢洴濮婃椽骞愭惔锝傛闁诲孩鍑归崳锝咁嚕閹剁瓔鏁嗛柛灞剧矌閿涙粌鈹戦悙鏉戠仸闁荤啙鍕珷闂侇剙绉甸悡娑㈡煕閳╁厾顏呮叏瀹ュ鐓?
+ * 1) 首先尝试从 L1/L2 缓存中通过 WKT 和提示词哈希进行匹配；
  * 1) 濠电姷鏁搁崑鐐差焽濞嗘挸瑙﹂悗锝庡枟閺咁亪姊?Python gRPC
- * 2) 闂備浇顕х€涒晠顢欓弽顓炵獥闁哄稁鍘肩壕褰掓煙闂傚鍔嶉柛瀣樀閺屾盯顢曢敐鍡欘槬缂備緡鍋勭粔褰掑箖瑜版帗鎯為柣鐔告緲婵¤櫣绱撴担鎻掍壕闂侀€炲苯澧存慨濠勭帛缁楃喖宕惰缁噣姊?Node executor
+ * 2) 缓存失效后，调用 Python 微服务进行流式计算，并监听进度上报。
  */
-function runShadowPythonCompute({ requestId, queryPlan, spatialContext, options, poiFeatures, migrationDecision }) {
+ */
   // Shadow run is best-effort and must never break the primary request.
   computeSpatialStream(
     buildGrpcRequest({
@@ -1087,8 +1501,8 @@ async function executeLegacyNodeExecutor(queryPlan, poiFeatures, options, report
 }
 
 /**
- * Narrative 濠电姷鏁搁崑娑㈩敋椤撶喐鍙忓Δ锝呭枤閺佸鎲告惔銊ョ疄闁靛ň鏅滈崑鍕煕濠靛嫬鍔楅柡瀣墱缁辨捇宕掑▎鎴濆闂佹寧宀搁弻宥夋煥鐎ｎ偒妫冮梺璇″枦濞夋盯鍩ユ径濞㈢喖宕归鍛磾闂傚倷鐒﹂幃鍫曞磹濠靛洨顩查悹杞拌閸ゆ洘銇勯幇鍫曟闁搞倕顑嗛妵鍕箣閿濆棭妫勬繛?
- * 闂傚倸鍊风粈渚€骞夐敓鐘冲仭妞ゆ牜鍋涢崹鍌炴煟閵忋倖浜ょ紓?sync 闂傚倷娴囧畷鍨叏瀹曞洦濯伴柨鏇炲€搁崹鍌炴煙閹増顥夐柡瀣╃窔濮婃椽顢楅埀顒傜矓閻㈢纾块幖娣妽閸婂灚绻涢幋鐑嗕痪妞ゅ繐鎳庣欢鐐碘偓骞垮劚椤︿即宕戦敐澶嬪€甸柨婵嗙凹缁ㄥ鏌￠崱娆忔灈闁哄备鍓濋幏鍛存濞戞帒浜炬繝闈涱儏閺嬩胶鈧箍鍎卞ú锝呪柦椤忓牊鐓犳繛鏉戭儐濞呭洦淇婇幓鎺旂婵﹥妞藉畷銊︾節閸曨剙娅ч梻浣规偠閸斿酣寮繝姘櫜?worker 婵犵數濮烽弫鎼佸磻閻愬搫鍨傞柣銏犳啞閸嬪鏌熼悧鍫熺凡闁搞劌鍊块弻娑樼暆閳ь剟宕戝☉婊呯?
+ * Narrative 模式下的空间计算执行器，负责协调检索、分析和渲染阶段。
+ * 支持 Python 主路（同步）与 Node 回退路径，确保服务的高可用性。
  */
 /**
  * Execute a pre-built queryPlan through Python-primary policy with Node fallback.
@@ -1106,6 +1520,21 @@ export async function executeSpatialPlanWithFallback({
     throw new Error('queryPlan is required')
   }
 
+  const validation = assertValidSpatialPlan(queryPlan, {
+    requestId,
+    spatialContext,
+    options
+  })
+  if (validation?.diagnostics?.dsl_schema_degraded === true) {
+    telemetry.incrementCounter('dsl_schema_degraded_total', {
+      mode: String(options?.mode || 'execute')
+    })
+  }
+  const normalizedInputPlan = isSpatialDslQueryPlan(queryPlan)
+    ? (validation?.normalized_dsl || queryPlan)
+    : queryPlan
+  const executableQueryPlan = toExecutableQueryPlan(normalizedInputPlan)
+
   const report = {
     reportStage: reporter.reportStage || (async () => {}),
     reportProgress: reporter.reportProgress || (async () => {}),
@@ -1115,7 +1544,7 @@ export async function executeSpatialPlanWithFallback({
 
   const migrationDecision = resolveSpatialMigrationDecision({
     requestId,
-    queryPlan,
+    queryPlan: executableQueryPlan,
     options
   })
 
@@ -1126,7 +1555,7 @@ export async function executeSpatialPlanWithFallback({
 
   const envelope = await computeSpatialWithFallback({
     requestId,
-    queryPlan,
+    queryPlan: executableQueryPlan,
     spatialContext,
     options,
     poiFeatures,
@@ -1141,14 +1570,15 @@ export async function executeSpatialPlanWithFallback({
     diagnostics: {
       compute_mode: resolveComputeMode(normalized, migrationDecision),
       fallback_reasons: normalized?._fallback_reasons || [],
-      migration: migrationDecision
+      migration: migrationDecision,
+      dsl_validation: validation?.diagnostics || null
     }
   }
 }
 
-export async function runNarrativeSpatialJob(payload, reporter = {}) {
-  // reporter 闂傚倸鍊烽懗鍫曗€﹂崼銏″床闁割偁鍎辩粈澶愭煙鏉堝墽鐣辩痪鎯ф健閺岀喓绱掗姀鐘崇亪缂備讲鍋撻柛灞绢嚔瑜版帗鏅查柛銉㈡櫆閹叉﹢姊洪崫銉ユ瀻闁硅櫕鍔楀Σ鎰板箳閺傜偓鍕冮梺鍏间航閸庢煡宕曢幘缁樷拺婵懓娲ら埀顒佹礈閳ь剚鐭崡鎶界嵁閸愩劎鏆﹂柛銉ｅ妽濞堟澘顪冮妶鍡樼叆濠⒀傜矙钘濇い鏃傛櫕缁犻箖鏌熼崜褜妫庡瑙勶耿閺屾洟宕堕…鎴犲姺闂佸吋妞芥禍鍫曘€佸Δ浣瑰闁告縿鍎抽悰顔界節濞堝灝鏋熼柨鏇樺灮濞戠數绮欏▎鍓у姺濠殿喗顭堥崺鏍磻閿濆鍊甸柨婵嗙凹缁ㄥ鏌￠崱娆忔灈闁哄备鍓濋幏鍛存濞戞帒浜炬繝闈涙閺嗭箓鏌ｉ幋锝呅撻柛濠勭帛娣囧﹪顢涘┑鍡楁優閻熸粎澧楅悡鈥愁潖?
-  const report = {
+/**
+ * 处理叙事（Narrative）长任务，通过 SSE 或 WebSocket 上报详细的执行足迹。
+ */
     reportStage: reporter.reportStage || (async () => {}),
     reportProgress: reporter.reportProgress || (async () => {}),
     reportPartial: reporter.reportPartial || (async () => {}),
@@ -1156,7 +1586,8 @@ export async function runNarrativeSpatialJob(payload, reporter = {}) {
   }
 
   const messages = Array.isArray(payload?.messages) ? payload.messages : []
-  const poiFeatures = Array.isArray(payload?.poiFeatures) ? payload.poiFeatures : []
+  const inputPoiFeatures = Array.isArray(payload?.poiFeatures) ? payload.poiFeatures : []
+  let effectivePoiFeatures = inputPoiFeatures
   const spatialContext = payload?.spatialContext || payload?.options?.spatialContext || {}
   const options = payload?.options || {}
   const requestId = payload?.request_id || randomUUID()
@@ -1301,7 +1732,7 @@ export async function runNarrativeSpatialJob(payload, reporter = {}) {
 
   const relevance = await classifyGeoRelevance(userQuestion, {
     hasSelectedArea: hasSpatialContext(spatialContext),
-    poiCount: poiFeatures.length
+    poiCount: effectivePoiFeatures.length
   })
 
   if (!relevance.isGeoRelated) {
@@ -1365,8 +1796,9 @@ export async function runNarrativeSpatialJob(payload, reporter = {}) {
   try {
     plannerOutput = await parseIntent(userQuestion, {
       hasSelectedArea: hasSpatialContext(spatialContext),
-      poiCount: poiFeatures.length,
-      viewportCenter: getViewportCenter(spatialContext)
+      poiCount: effectivePoiFeatures.length,
+      viewportCenter: getViewportCenter(spatialContext),
+      selectedCategories: Array.isArray(options?.selectedCategories) ? options.selectedCategories : []
     })
 
     queryPlan = plannerOutput?.queryPlan
@@ -1462,7 +1894,7 @@ export async function runNarrativeSpatialJob(payload, reporter = {}) {
   const enforced = resolveSourcePolicy(queryPlan, spatialContext, options)
   queryPlan = enforced.queryPlan
 
-  const effectiveOptions = {
+  let effectiveOptions = {
     ...options,
     selectedCategories: enforced.policy.selected_categories,
     sourcePolicy: {
@@ -1470,11 +1902,77 @@ export async function runNarrativeSpatialJob(payload, reporter = {}) {
       ...enforced.policy
     }
   }
+  let vectorRetrievalMeta = buildVectorRetrievalMeta({
+    attempted: false,
+    used: false,
+    reason: 'not_started',
+    py_data_source: String(effectiveOptions?.pyDataSource || 'python').toLowerCase()
+  })
+
+  const validation = assertValidSpatialPlan(queryPlan, {
+    requestId,
+    userQuestion,
+    spatialContext,
+    options: effectiveOptions
+  })
+  if (validation?.diagnostics?.dsl_schema_degraded === true) {
+    telemetry.incrementCounter('dsl_schema_degraded_total', {
+      mode: String(effectiveOptions?.mode || 'sync')
+    })
+  }
+
+  await report.reportStage('dsl_validated', {
+    stage: validation?.stage || 'unknown',
+    legacy_mode: validation?.diagnostics?.legacy_mode === true,
+    dsl_schema_degraded: validation?.diagnostics?.dsl_schema_degraded === true
+  })
+
+  if (isSpatialDslQueryPlan(queryPlan)) {
+    queryPlan = toExecutableQueryPlan(validation?.normalized_dsl || queryPlan)
+  }
+
+  effectiveOptions = {
+    ...effectiveOptions,
+    dsl_validation: validation?.diagnostics || null
+  }
+
+  const vectorPrepared = await prepareVectorCandidates({
+    queryPlan,
+    spatialContext,
+    userQuestion,
+    options: effectiveOptions,
+    reportStage: report.reportStage
+  })
+  vectorRetrievalMeta = vectorPrepared?.meta || vectorRetrievalMeta
+  if (Array.isArray(vectorPrepared?.candidates) && vectorPrepared.candidates.length > 0) {
+    effectivePoiFeatures = vectorPrepared.candidates
+    effectiveOptions = {
+      ...effectiveOptions,
+      pyDataSource: 'hybrid',
+      vectorRetrieval: vectorRetrievalMeta,
+      sourcePolicy: {
+        ...(effectiveOptions.sourcePolicy || {}),
+        vector_used: true,
+        vector_candidate_count: vectorPrepared.candidates.length
+      }
+    }
+  } else {
+    effectiveOptions = {
+      ...effectiveOptions,
+      vectorRetrieval: vectorRetrievalMeta,
+      sourcePolicy: {
+        ...(effectiveOptions.sourcePolicy || {}),
+        vector_used: false,
+        vector_candidate_count: 0
+      }
+    }
+  }
 
   await report.reportProgress(0.12, {
     stage: 'planner_done',
     query_type: queryPlan.query_type,
     categories: queryPlan.categories || [],
+    vector_used: vectorRetrievalMeta.used === true
   })
 
   const shouldUseCache = shouldUseSpatialResultCache(queryPlan, effectiveOptions)
@@ -1557,7 +2055,7 @@ export async function runNarrativeSpatialJob(payload, reporter = {}) {
         queryPlan,
         spatialContext,
         options: effectiveOptions,
-        poiFeatures,
+        poiFeatures: effectivePoiFeatures,
         reporter: report,
         migrationDecision
       })
@@ -1584,17 +2082,23 @@ export async function runNarrativeSpatialJob(payload, reporter = {}) {
       ? normalizedExecutor.results.pois.length
       : 0
   })
-
+  // 尝试在本地 L1 缓存中查找匹配，减少外部依赖 IO。
   // 闂傚倸鍊搁崐鎼佸磹閹间礁鐤柟鎯版閺勩儵鏌″搴″季闁?3闂傚倸鍊烽悞锔锯偓绗涘懐鐭欓柟鐑橆殕閸嬨倖淇婇悙顒傚矗ter 缂傚倸鍊搁崐鎼佸磹妞嬪海鐭嗗ù锝堛€€閸嬫挸顫濋悡搴ｄ桓闁芥鍠庨埞鎴︽偐閸欏鎮欓梺缁樺姇閿曨亪寮婚敐澶婄疀妞ゆ棁濮ゅВ鍕⒑?
   await report.reportStage('writer')
 
   let answer = ''
   let textBuffer = ''
+  let writerFallbackUsed = false
+  let writerFallbackReason = null
+  let writerTokenUsage = null
 
   const writerRuntimeOptions = {
     ...effectiveOptions,
     onWriterDiagnostics: (diagnostics) => {
       report.reportStage('writer_validation', diagnostics).catch(() => {})
+    },
+    onTokenUsage: (usage) => {
+      writerTokenUsage = normalizeTokenUsage(usage)
     }
   }
 
@@ -1614,6 +2118,12 @@ export async function runNarrativeSpatialJob(payload, reporter = {}) {
     }
   } catch (err) {
     console.warn(`[SpatialJobRunner] Writer failed, fallback to quick reply: ${err.message}`)
+    await report.reportStage('writer_fallback_error', {
+      reason: 'writer_error',
+      message: String(err?.message || 'unknown')
+    })
+    writerFallbackUsed = true
+    writerFallbackReason = `writer_error: ${String(err?.message || 'unknown')}`
     answer = buildQuickReply(normalizedExecutor)
     await report.reportText(answer)
   }
@@ -1622,15 +2132,53 @@ export async function runNarrativeSpatialJob(payload, reporter = {}) {
     await report.reportStage('writer_fallback_empty', {
       reason: 'empty_writer_output'
     })
+    writerFallbackUsed = true
+    writerFallbackReason = 'empty_writer_output'
     answer = buildQuickReply(normalizedExecutor)
     await report.reportText(answer)
   }
+
+  const finalResults = normalizedExecutor?.results || {}
+  const baseStats = finalResults?.stats && typeof finalResults.stats === 'object'
+    ? { ...finalResults.stats }
+    : {}
+  const plannerTokenUsage = normalizeTokenUsage(plannerOutput?.tokenUsage)
+  const pipelineTokenUsage = buildTokenUsageSummary(plannerTokenUsage, writerTokenUsage)
+  const pipelineStageChecklist = buildPipelineStageChecklist(baseStats, {
+    used_fallback: writerFallbackUsed,
+    fallback_reason: writerFallbackReason,
+    output_ready: String(answer || '').trim().length > 0
+  })
+  const vectorStats = {
+    vector_used: vectorRetrievalMeta?.used === true,
+    vector_candidate_count: Math.max(0, Math.round(toNumeric(vectorRetrievalMeta?.candidate_count, 0))),
+    vector_retrieval_reason: vectorRetrievalMeta?.reason || null,
+    vector_retrieval_attempted: vectorRetrievalMeta?.attempted === true,
+    py_data_source: vectorRetrievalMeta?.py_data_source || baseStats.py_data_source || null
+  }
+  if (vectorStats.vector_used && !baseStats.candidate_source) {
+    vectorStats.candidate_source = 'payload'
+  }
+
+  finalResults.stats = {
+    ...baseStats,
+    ...vectorStats,
+    token_usage: pipelineTokenUsage,
+    planner_token_usage: plannerTokenUsage,
+    writer_token_usage: writerTokenUsage,
+    pipeline_stage_checklist: pipelineStageChecklist,
+    writer_fallback_used: writerFallbackUsed,
+    writer_fallback_reason: writerFallbackReason || null
+  }
+
+  await report.reportStage('pipeline_stage_checklist', {
+    items: pipelineStageChecklist
+  })
 
   await report.reportProgress(1, {
     stage: 'completed'
   })
 
-  const finalResults = normalizedExecutor?.results || {}
   const operatorTimingsMs = finalResults?.stats?.operator_timings_ms
   if (operatorTimingsMs && typeof operatorTimingsMs === 'object') {
     telemetry.recordOperatorTimings(requestId, operatorTimingsMs, {
@@ -1659,14 +2207,23 @@ export async function runNarrativeSpatialJob(payload, reporter = {}) {
     diagnostics: {
       planner: {
         confidence: plannerOutput?.confidence || plannerOutput?.queryPlan?.confidence || null,
-        fast_path: plannerOutput?.fastPath || false
+        fast_path: plannerOutput?.fastPath || false,
+        token_usage: plannerTokenUsage
+      },
+      writer: {
+        token_usage: writerTokenUsage,
+        fallback_used: writerFallbackUsed,
+        fallback_reason: writerFallbackReason || null
       },
       compute_mode: normalizedExecutor?.results?.stats?.cache_hit
         ? 'cache_hit'
         : resolveComputeMode(normalizedExecutor, migrationDecision),
       fallback_reasons: normalizedExecutor?._fallback_reasons || [],
       migration: migrationDecision,
-      cache_hit: Boolean(normalizedExecutor?.results?.stats?.cache_hit)
+      vector_retrieval: vectorRetrievalMeta,
+      cache_hit: Boolean(normalizedExecutor?.results?.stats?.cache_hit),
+      pipeline_stage_checklist: pipelineStageChecklist,
+      dsl_validation: validation?.diagnostics || null
     }
   }
 }
@@ -1674,7 +2231,7 @@ export async function runNarrativeSpatialJob(payload, reporter = {}) {
 /**
  */
 /**
- * 闂?Jobs 缂傚倸鍊搁崐鎼佸磹閻戣姤鍊块柨鏇炲€哥粻鏉库攽閻樺磭顣查柛?-> 闂?SSE 闂傚倷绀侀幖顐λ囬柆宥呯；婵炴垯鍨归悞鍨亜閹烘垵鈧悂寮告惔锝囩＜濞达絽鎽滅粔娲煛瀹€瀣瘈鐎规洜鍠栭、姗€鎮欓幇鈺佺伈闁哄矉缍佹俊姝岊槻闁宠鐗嗛埞?
+ * 叙事任务的状态与进度实时订阅与推送服务。
  */
 export function toLegacySSEPayload(jobResult) {
   const result = jobResult?.results || {}

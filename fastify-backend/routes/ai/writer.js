@@ -19,10 +19,8 @@ const WRITER_SYSTEM_PROMPT = `你是 GeoLoom 地理助手，帮用户看懂地�
 ## 语气要求
 - 像一个熟悉本地的朋友在聊天，不要像写论文
 - 用"这一带"、"周边"、"沿着…走"这样的口语化表达
-- ص˵ûĵģóԡ֡﷽㡢ֵȥ
 - 避免出现"聚类"、"密度梯度"、"功能分区"、"置信度"等学术术语
 - 如果数据中有知名地标（大学、公园、商圈、地铁站），优先提及，这些是用户的参照物
-- Ҫ¥šꡢͣڵ POIûȷ
 
 ## 硬性规则
 - 只基于证据回答，不编造 POI、数字或地名
@@ -514,24 +512,6 @@ function buildResultContext(executorResult, options = {}) {
     sections.push(ocrText)
   }
 
-  const overviewFusedSummary = String(results.stats?.overview_fused_summary || '').trim()
-  const overviewLightSummary = String(results.stats?.overview_light_summary || '').trim()
-  const overviewMediumSummary = String(results.stats?.overview_medium_summary || '').trim()
-  if (overviewFusedSummary || overviewLightSummary || overviewMediumSummary) {
-    let overviewText = '🗺️ **地图全局语义观察 (VLM总览)**:\n'
-    if (overviewFusedSummary) {
-      overviewText += `- 融合总览: ${overviewFusedSummary}\n`
-    } else {
-      if (overviewMediumSummary) {
-        overviewText += `- 中级VLM总览: ${overviewMediumSummary}\n`
-      }
-      if (overviewLightSummary) {
-        overviewText += `- 轻量VLM总览: ${overviewLightSummary}\n`
-      }
-    }
-    sections.push(overviewText)
-  }
-
   // 5.6 空间推理（Phase 4A 双模型并行上下文）
   const anchorLandmarks = Array.isArray(results.stats?.vlm_anchor_landmarks)
     ? results.stats.vlm_anchor_landmarks
@@ -673,6 +653,7 @@ export async function* generateAnswer(userQuestion, executorResult, options = {}
     let streamedOutput = ''
     
     // 过滤 <think> 标签的状态机
+    // 策略：在 think 标签内的内容直接丢弃，不累积
     let inThinkTag = false
     let pendingContent = ''
     
@@ -697,27 +678,69 @@ export async function* generateAnswer(userQuestion, executorResult, options = {}
           let content = parsed.choices?.[0]?.delta?.content || ''
           
           if (content) {
-            // 处理 <think> 标签
             pendingContent += content
             
-            // 检查是否进入/退出 think 标签
-            if (pendingContent.includes('<think>')) {
-              inThinkTag = true
-              pendingContent = pendingContent.replace(/<think>/g, '')
+            // 循环处理可能存在多个 think 标签的情况
+            let safety = 0
+            while (safety++ < 20) {
+              if (!inThinkTag) {
+                // 当前在 think 外部
+                const openIdx = pendingContent.indexOf('<think>')
+                if (openIdx === -1) {
+                  // 没有 <think>，全部输出
+                  break
+                }
+                // 输出 <think> 之前的内容
+                const beforeThink = pendingContent.slice(0, openIdx)
+                if (beforeThink) {
+                  yield beforeThink
+                  streamedOutput += beforeThink
+                  totalTokens += beforeThink.length
+                }
+                // 进入 think 状态，丢弃 <think> 标签
+                inThinkTag = true
+                pendingContent = pendingContent.slice(openIdx + 7) // 7 = '<think>'.length
+              } else {
+                // 当前在 think 内部
+                const closeIdx = pendingContent.indexOf('</think>')
+                if (closeIdx === -1) {
+                  // 还没看到闭合标签，保留末尾可能是 '</think>' 前缀的部分
+                  const THINK_CLOSE = '</think>'
+                  let keepTail = 0
+                  for (let prefixLen = Math.min(pendingContent.length, THINK_CLOSE.length - 1); prefixLen >= 1; prefixLen--) {
+                    if (pendingContent.endsWith(THINK_CLOSE.slice(0, prefixLen))) {
+                      keepTail = prefixLen
+                      break
+                    }
+                  }
+                  pendingContent = keepTail > 0 ? pendingContent.slice(-keepTail) : ''
+                  break
+                }
+                // 找到闭合标签，丢弃 think 内容和闭合标签
+                inThinkTag = false
+                pendingContent = pendingContent.slice(closeIdx + 8) // 8 = '</think>'.length
+              }
             }
             
-            if (pendingContent.includes('</think>')) {
-              inThinkTag = false
-              // 移除 think 标签及其内容
-              pendingContent = pendingContent.replace(/[\s\S]*?<\/think>/g, '')
-            }
-            
-            // 如果不在 think 标签内，输出内容
+            // 输出 think 外部的剩余内容
+            // 注意：保留可能是 '<think>' 不完整前缀的末尾，避免跨 chunk 标签被截断
             if (!inThinkTag && pendingContent) {
-              yield pendingContent
-              streamedOutput += pendingContent
-              totalTokens += pendingContent.length
-              pendingContent = ''
+              const THINK_OPEN = '<think>'
+              let holdBack = 0
+              // 检查 pendingContent 末尾是否可能是 '<think>' 的前缀（如 '<', '<t', '<th', '<thi', '<thin', '<think'）
+              for (let prefixLen = Math.min(pendingContent.length, THINK_OPEN.length - 1); prefixLen >= 1; prefixLen--) {
+                if (pendingContent.endsWith(THINK_OPEN.slice(0, prefixLen))) {
+                  holdBack = prefixLen
+                  break
+                }
+              }
+              const outputPart = holdBack > 0 ? pendingContent.slice(0, -holdBack) : pendingContent
+              if (outputPart) {
+                yield outputPart
+                streamedOutput += outputPart
+                totalTokens += outputPart.length
+              }
+              pendingContent = holdBack > 0 ? pendingContent.slice(-holdBack) : ''
             }
           }
         } catch {
@@ -766,6 +789,9 @@ export async function* generateAnswer(userQuestion, executorResult, options = {}
       total_tokens: estimatedPromptTokens + estimatedCompletionTokens
     }
     
+    if (totalTokens === 0) {
+      console.warn(`[Writer] ⚠️ 输出为空！inThinkTag=${inThinkTag}, pendingContent.length=${pendingContent.length}, 可能模型整体输出被 <think> 包裹`)
+    }
     console.log(`[Writer] 完成 (${duration}ms, ~${totalTokens} chars, est. ${tokenUsage.total_tokens} tokens)`)
     
     // 通过 options.onTokenUsage 回调传递 token 统计
@@ -806,7 +832,7 @@ export function buildQuickReply(executorResult) {
   const { results } = executorResult
   
   if (!results) {
-    return 'Ǹѯг⣬Ժԡ'
+    return '抱歉，查询出错了，请稍后再试。'
   }
   
   if (results.error) {
@@ -997,7 +1023,7 @@ export function detectHallucinations(writerOutput, executorResult) {
     } else {
       // 可能是幻觉，但也可能是通用描述词
       // 排除一些常见的非 POI 词
-      const commonWords = ['', '', '', '㳡', 'ҵ', '', 'ͨ']
+      const commonWords = ['区域', '分析', '建议', '活动', '业态', '分布', '交通']
       if (!commonWords.some(w => mentionLower.includes(w))) {
         result.hallucinations.push(mention)
       }

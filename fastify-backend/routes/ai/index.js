@@ -29,6 +29,19 @@ const SSE_CAPABILITIES = Object.freeze([
   'template_learning',
   'l2_cache'
 ])
+const DSL_VALIDATION_ERROR_CODES = new Set([
+  'dsl_schema_invalid',
+  'dsl_semantic_invalid',
+  'dsl_policy_invalid'
+])
+
+function dslValidationStageFromErrorCode(errorCode = '') {
+  const code = String(errorCode || '').trim().toLowerCase()
+  if (code === 'dsl_schema_invalid') return 'schema'
+  if (code === 'dsl_semantic_invalid') return 'semantic'
+  if (code === 'dsl_policy_invalid') return 'policy'
+  return 'unknown'
+}
 
 const ragSessions = new Map()
 const RAG_SESSION_MAX = parseInt(process.env.RAG_SESSION_MAX || '200', 10)
@@ -182,12 +195,35 @@ function buildSseErrorPayload(errorMessage, failureDiagnostics) {
     message: String(errorMessage || 'Pipeline failed'),
     error_code: failureDiagnostics?.error_code || null,
     error_signature: failureDiagnostics?.error_signature || null,
+    details: Array.isArray(failureDiagnostics?.details) ? failureDiagnostics.details : null,
+    fix_hint: failureDiagnostics?.fix_hint || null,
     failure_diagnostics: failureDiagnostics || null
   }
 }
 
+function recordDslValidationFailureTelemetry(failureDiagnostics, mode, traceId) {
+  const errorCode = String(failureDiagnostics?.error_code || '').trim()
+  if (!DSL_VALIDATION_ERROR_CODES.has(errorCode)) return
+
+  const stage = dslValidationStageFromErrorCode(errorCode)
+  telemetry.incrementCounter(`${errorCode}_total`, { mode: String(mode || 'unknown') })
+  telemetry.incrementCounter('dsl_validation_total', {
+    result: 'fail',
+    stage,
+    mode: String(mode || 'unknown')
+  })
+  telemetry.recordKpiEvent(errorCode, 1, {
+    mode: String(mode || 'unknown'),
+    trace_id: String(traceId || ''),
+    stage
+  })
+}
+
 function logSessionStage(session, stage, payload = {}) {
   if (!session?.log) return
+  if (String(stage || '') === 'pipeline_stage_checklist' && Array.isArray(payload?.items)) {
+    session.log('Pipeline', 'StageChecklist', payload.items)
+  }
   session.log('Pipeline', 'Stage', {
     stage: String(stage || ''),
     payload: summarizeForRagLog(payload)
@@ -205,6 +241,18 @@ function applyResultToSession(session, legacyPayload, fullResult = null) {
 
   if (fullResult?.diagnostics) {
     session.log?.('Pipeline', 'Diagnostics', summarizeForRagLog(fullResult.diagnostics))
+  }
+
+  const mergedStats = fullResult?.results?.stats && typeof fullResult.results.stats === 'object'
+    ? fullResult.results.stats
+    : (legacyPayload?.stats && typeof legacyPayload.stats === 'object' ? legacyPayload.stats : {})
+  session.ingestExecutionStats?.(mergedStats, fullResult?.diagnostics || {})
+
+  const stageChecklist = Array.isArray(fullResult?.diagnostics?.pipeline_stage_checklist)
+    ? fullResult.diagnostics.pipeline_stage_checklist
+    : (Array.isArray(legacyPayload?.stats?.pipeline_stage_checklist) ? legacyPayload.stats.pipeline_stage_checklist : [])
+  if (stageChecklist.length > 0) {
+    session.log?.('Pipeline', 'StageChecklist', summarizeForRagLog(stageChecklist))
   }
 
   if (typeof fullResult?.answer === 'string') {
@@ -568,6 +616,7 @@ async function aiRoutes(fastify) {
 
             recordPipelineFailure(session, 'async', asyncError.message, failureDiagnostics)
             writeSSEEvent(reply, 'error', buildSseErrorPayload(asyncError.message, failureDiagnostics), sseMeta)
+            recordDslValidationFailureTelemetry(failureDiagnostics, 'async', traceId)
             telemetry.incrementCounter('ai_chat_failures_total', { mode: 'async', reason: 'job_failed' })
             telemetry.recordKpiEvent('sse_event_error', 1, {
               mode: 'async',
@@ -613,6 +662,7 @@ async function aiRoutes(fastify) {
 
             recordPipelineFailure(session, 'async', wrappedEventError.message, failureDiagnostics)
             writeSSEEvent(reply, 'error', buildSseErrorPayload(wrappedEventError.message, failureDiagnostics), sseMeta)
+            recordDslValidationFailureTelemetry(failureDiagnostics, 'async', traceId)
             telemetry.incrementCounter('ai_chat_failures_total', { mode: 'async', reason: 'event_exception' })
             telemetry.recordKpiEvent('sse_event_error', 1, {
               mode: 'async',
@@ -748,6 +798,7 @@ async function aiRoutes(fastify) {
 
       recordPipelineFailure(session, decision.mode, syncError.message, failureDiagnostics)
       writeSSEEvent(reply, 'error', buildSseErrorPayload(syncError.message, failureDiagnostics), sseMeta)
+      recordDslValidationFailureTelemetry(failureDiagnostics, decision.mode, traceId)
       telemetry.incrementCounter('ai_chat_failures_total', { mode: decision.mode, reason: 'pipeline_error' })
       telemetry.recordKpiEvent('sse_event_error', 1, {
         mode: decision.mode,
@@ -811,6 +862,21 @@ async function aiRoutes(fastify) {
         requestId: request.body?.request_id
       })
     } catch (err) {
+      const errorCode = String(err?.code || err?.diagnostics?.error_code || '').trim()
+      if (DSL_VALIDATION_ERROR_CODES.has(errorCode)) {
+        telemetry.incrementCounter(`${errorCode}_total`, { mode: 'execute' })
+        telemetry.incrementCounter('dsl_validation_total', {
+          result: 'fail',
+          stage: dslValidationStageFromErrorCode(errorCode),
+          mode: 'execute'
+        })
+        return reply.status(400).send({
+          error: 'DSL validation failed',
+          error_code: errorCode,
+          details: Array.isArray(err?.diagnostics?.details) ? err.diagnostics.details : [],
+          fix_hint: err?.diagnostics?.fix_hint || null
+        })
+      }
       return reply.status(500).send({ error: err.message })
     }
   })

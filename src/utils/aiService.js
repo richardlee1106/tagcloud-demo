@@ -206,6 +206,7 @@ export async function sendChatMessageStream(messages, onChunk, options = {}, poi
   let buffer = ''
   let currentEvent = null // 跟踪当前 SSE 事件类型
   let lastModelTimingSignature = null
+  let hasTextOutput = false
 
   while (true) {
     const { done, value } = await reader.read()
@@ -296,6 +297,14 @@ export async function sendChatMessageStream(messages, onChunk, options = {}, poi
                 console.error('[AI Meta Handler Error]', metaErr)
               }
             }
+            if (eventType === 'refined_result') {
+              const answerText = typeof payload?.answer === 'string' ? payload.answer : ''
+              if (!hasTextOutput && answerText.trim()) {
+                fullContent += answerText
+                hasTextOutput = true
+                onChunk(answerText)
+              }
+            }
             if (eventType === 'error') {
               const backendErrorMessage = payload?.message || '空间分析失败'
               throw new Error(String(backendErrorMessage))
@@ -312,6 +321,7 @@ export async function sendChatMessageStream(messages, onChunk, options = {}, poi
           if (parsed.content !== undefined) {
              const delta = parsed.content
              fullContent += delta
+             hasTextOutput = true
              onChunk(delta)
              continue
           }
@@ -322,6 +332,7 @@ export async function sendChatMessageStream(messages, onChunk, options = {}, poi
           
           if (delta) {
              fullContent += delta
+             hasTextOutput = true
              onChunk(delta)
           } else if (parsed.error) {
              console.error('[AI Stream Error]', parsed.error)

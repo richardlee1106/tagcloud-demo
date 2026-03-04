@@ -25,6 +25,13 @@ export function classifySpatialError(message = '') {
     .replace(/^Spatial compute service unavailable:\s*/i, '')
     .trim()
 
+  if (/^dsl_(schema|semantic|policy)_invalid$/i.test(normalized)) {
+    return {
+      error_class: 'dsl_validation',
+      error_code: normalized.toLowerCase()
+    }
+  }
+
   const modelParallelMatch = normalized.match(/model_parallel_failed:[^:\s]+:[^\s]+(?:[:][^\s]+)*/i)
   if (modelParallelMatch) {
     return {
@@ -51,6 +58,15 @@ export function classifySpatialError(message = '') {
 export function buildRootCauseHint(errorCode = '') {
   const code = toText(errorCode)
 
+  if (code === 'dsl_schema_invalid') {
+    return 'Planner DSL failed JSON schema validation; inspect details/path and fix_hint.'
+  }
+  if (code === 'dsl_semantic_invalid') {
+    return 'Planner DSL failed semantic validation; inspect violated rule_id and fix_hint.'
+  }
+  if (code === 'dsl_policy_invalid') {
+    return 'Planner DSL failed policy validation; align budget/risk policy with constraints.'
+  }
   if (code.includes('vlm_anchor_response_invalid')) {
     return 'VLM returned non-JSON or schema-mismatched anchor payload.'
   }
@@ -182,6 +198,8 @@ export function buildFailureDiagnostics({
   const diagnosticsCode = toText(err?.diagnostics?.error_code || '')
   const grpcCode = toText(grpcContext?.error_code || '')
   const errorCode = providedCode || diagnosticsCode || grpcCode || classified.error_code
+  const details = Array.isArray(err?.diagnostics?.details) ? err.diagnostics.details : []
+  const diagnosticsFixHint = toText(err?.diagnostics?.fix_hint || '')
 
   const mergedGrpcContext = {
     ...(grpcContext && typeof grpcContext === 'object' ? grpcContext : {}),
@@ -215,7 +233,9 @@ export function buildFailureDiagnostics({
     error_class: classified.error_class,
     error_code: errorCode,
     error_message: toText(err.message),
-    root_cause_hint: buildRootCauseHint(errorCode),
+    root_cause_hint: diagnosticsFixHint || buildRootCauseHint(errorCode),
+    fix_hint: diagnosticsFixHint || null,
+    details,
     error_signature: errorSignature,
     model_context: digestModelOptions(options || {}),
     spatial_context_digest: digestSpatialContext(spatialContext || {}),

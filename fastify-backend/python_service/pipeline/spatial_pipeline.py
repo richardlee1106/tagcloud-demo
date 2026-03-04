@@ -79,6 +79,7 @@ _VISUAL_MODEL_ALIAS_MAP: Dict[str, str] = {
 _SOFT_VLM_FAILURE_CODES: set[str] = {
     "visual_snapshot_missing",
     "vlm_anchor_response_invalid",
+    "budget_exceeded",
 }
 
 _SOFT_VLM_FAILURE_PREFIXES: Tuple[str, ...] = (
@@ -1883,7 +1884,7 @@ def _build_water_semantic_mask_geometry(
 
 _ECOLOGY_CONTEXT_KEYWORDS: Tuple[str, ...] = (
     "生态",
-    "??",
+    "名称",
     "绿地",
     "湖泊",
     "水域",
@@ -2968,6 +2969,50 @@ def _run_parallel_model_inference(
                 future.cancel()
             timing["parallel_wall_ms"] = round((time.perf_counter() - started) * 1000.0, 3)
             error_code = "model_parallel_failed:budget_exceeded"
+            if allow_vlm_remote_failure:
+                timeout_debug = {**_redacted_preview("model_parallel_budget_exceeded"), "parse_stage": "budget_guard"}
+                degraded_ocr_payload = {
+                    "success": False,
+                    "mode": "map_anchor_v2",
+                    "model": ocr_model_name,
+                    "anchors": [],
+                    "aliases": [],
+                    "extracted_texts": [],
+                    "error": "budget_exceeded",
+                    "debug": timeout_debug,
+                }
+                degraded_llm_payload = {
+                    "success": False,
+                    "mode": "reasoning_prior_v1",
+                    "model": reasoning_model_name,
+                    "priors": [],
+                    "error": "budget_exceeded",
+                    "debug": timeout_debug,
+                } if reasoning_enabled else {}
+                return {
+                    "ocr": degraded_ocr_payload,
+                    "vlm": degraded_ocr_payload,
+                    "overview_light": {
+                        "success": False,
+                        "mode": "map_overview_v1",
+                        "model": overview_model_name,
+                        "summary": "",
+                        "error": "budget_exceeded",
+                        "debug": timeout_debug,
+                    },
+                    "overview_medium": {
+                        "success": False,
+                        "mode": "map_overview_v1",
+                        "model": visual_model_name,
+                        "summary": "",
+                        "error": "budget_exceeded",
+                        "debug": timeout_debug,
+                    },
+                    "llm": degraded_llm_payload,
+                    "timing": timing,
+                    "degraded": True,
+                    "degrade_reason": "budget_exceeded",
+                }
             err = RuntimeError(error_code)
             err.parallel_error_context = _build_parallel_error_context(
                 error_code,
@@ -3279,6 +3324,37 @@ class SpatialPipeline:
             or hints_options.get("source_policy")
             or {}
         )
+        dsl_context_binding = (
+            hints_options.get("context_binding")
+            if isinstance(hints_options.get("context_binding"), dict)
+            else {}
+        )
+        dsl_revision = (
+            hints_options.get("revision")
+            if isinstance(hints_options.get("revision"), dict)
+            else {}
+        )
+        dsl_streaming_hints = (
+            hints_options.get("streaming_hints")
+            if isinstance(hints_options.get("streaming_hints"), dict)
+            else {}
+        )
+        revision_mode = str(dsl_revision.get("mode") or "rebuild").strip().lower()
+        if revision_mode not in {"rebuild", "patch"}:
+            revision_mode = "rebuild"
+        dsl_patch_ops = dsl_revision.get("patch_ops") if isinstance(dsl_revision.get("patch_ops"), list) else []
+        dsl_context_binding_present = bool(dsl_context_binding)
+        context_binding_degraded = not (
+            isinstance(dsl_context_binding.get("client_view_id"), str)
+            and str(dsl_context_binding.get("client_view_id")).strip()
+            and dsl_context_binding.get("event_seq") is not None
+        )
+        streaming_allow_prefetch = bool(dsl_streaming_hints.get("allow_prefetch", False))
+        streaming_prefetch_on_fields = (
+            [str(field).strip() for field in dsl_streaming_hints.get("prefetch_on_fields", []) if str(field).strip()]
+            if isinstance(dsl_streaming_hints.get("prefetch_on_fields"), list)
+            else []
+        )
         vlm_anchor_texts = _normalize_anchor_list(request.get("vlm_extracted_texts") or [])
         vlm_anchor_texts = _normalize_anchor_list(
             vlm_anchor_texts + _normalize_anchor_list(hints.get("vlm_extracted_texts") or [])
@@ -3294,8 +3370,8 @@ class SpatialPipeline:
             default_value=False,
         )
 
-        # [Phase4] ????? VLM ?????visual_perception ????
-        # VLM ?? model_parallel ?????????????????????
+        # [Phase4] 融合感知：利用 VLM 抽取的 visual_perception 属性
+        # VLM 解析 model_parallel 同步执行
         visual_review_enabled = False
         visual_remote_enabled = False
         self_validation_enabled = force_composite_v5 or _option_enabled(
@@ -3446,7 +3522,7 @@ class SpatialPipeline:
         semantic_anchor_hints = _normalize_anchor_list(semantic_anchor_hints)
 
         spatial_constraint_polygon = _build_spatial_constraint_polygon(spatial_context)
-        # ????????????????????????????
+        # 如果没有任何检索结果且强制回退关闭，则提前终止
         if need_graph_reasoning and query_type == "graph_reasoning":
             terms = []
 
@@ -3559,7 +3635,7 @@ class SpatialPipeline:
         graph_distance_threshold_m = float(hints_options.get("graphDistanceThresholdM") or 280.0)
 
         max_fetch_limit = _resolve_limit(hints_options.get("maxFetchLimit"), default_value=50000, max_value=500000)
-        # [Phase1] ? area/graph ???????????????????????
+        # [Phase1] 基于 area/graph 获取基础空间锚点
         _default_limit = 20000 if query_type == "area_analysis" else 8000
         fetch_limit = _resolve_limit(hints_options.get("limit"), default_value=_default_limit, max_value=max_fetch_limit)
         print(
@@ -3574,7 +3650,7 @@ class SpatialPipeline:
             fetch_limit = min(fetch_limit, max(600, graph_max_nodes * 3))
 
         # 注释说明
-        # [Phase1] area/graph ???????????? POI ?????????
+        # [Phase1] area/graph 锚点获取：将 POI 特征投影到空间平面
         db_order_by_distance = query_type not in {"area_analysis", "graph_reasoning"}
 
         yield {
@@ -4192,7 +4268,7 @@ class SpatialPipeline:
         coords: List[Tuple[float, float]] = [
             (float(poi["lon"]), float(poi["lat"])) for poi in pois if poi.get("lon") is not None and poi.get("lat") is not None
         ]
-        # ????????????????????????????
+        # 更新流式输出进度，防止长时间挂起导致前端超时
         if len(coords) >= 3:
             # 采样预览边界
             preview_coords = _sample_coordinates(coords, 3000)
@@ -4374,7 +4450,7 @@ class SpatialPipeline:
         }
 
         # ──────────────────────────────────────────────────────────────────
-        # Composite V5: ???????????
+        # Composite V5: 路网块级边界合并策略
         # 当启用 composite_v5 时，走全新的地块 union 边界生成链路，
         # 替代传统的 alpha-shape / 凸包边界。
         # ──────────────────────────────────────────────────────────────────
@@ -4471,7 +4547,7 @@ class SpatialPipeline:
                     )
                     v5_in_memory_join_summary["used"] = True
 
-                # V5 ???????
+                # V5 主链阶段：执行空间交集
                 v5_districts = block_assembler.assemble_block_boundaries(
                     cluster_labels=labels,
                     pois=pois,
@@ -4482,7 +4558,7 @@ class SpatialPipeline:
                 )
                 print(f"[PIPELINE_V5] generated {len(v5_districts)} districts", flush=True, file=sys.stderr)
 
-                # ? V5 ????? cluster_entries ??????????????
+                # 对 V5 链中的 cluster_entries 进行空间关系过滤
                 for district in v5_districts:
                     d_pois = district.pois
                     d_coords = [(float(p["lon"]), float(p["lat"])) for p in d_pois if p.get("lon") and p.get("lat")]
@@ -4603,7 +4679,7 @@ class SpatialPipeline:
                     boundary_quality = {"quality_score": 0.85 if "road_block" in boundary_method else 0.65, "method": "v5_block"}
 
                     # V5 片区的置信度构建
-                    # ?? V5 ??????????? method_confidence ???????
+                    # 计算 V5 置信度：调用 method_confidence 权重矩阵
                     layer_bundle = {"outer": {}, "transition": {"confidence": district.name_confidence}, "core": {}}
                     boundary_conf = _build_boundary_confidence(
                         layer_bundle=layer_bundle,
@@ -4614,7 +4690,7 @@ class SpatialPipeline:
                         semantic_anchor_confidence=district.name_confidence if district.name_source != "fallback" else None,
                         niche_consistency_score=None,
                     )
-                    # ???? V5 ?????????????
+                    # 生成 V5 多级可视化边界层级
                     boundary_conf["explain"]["model"] = "composite_v5"
 
                     vitality_score = _calc_vitality_score(
@@ -4684,7 +4760,7 @@ class SpatialPipeline:
         # 传统 (V1-V4) 边界构建链路
         # ──────────────────────────────────────────────────────────────────
         if not cluster_entries:
-            # ????? V1-V4 ???????????????
+            # 兼容旧版本 V1-V4 算子产生的冗余数据提取
             for cluster_id, indices in grouped_indices.items():
                 cluster_points_list = [coords[idx] for idx in indices]
                 cluster_pois = [pois[idx] for idx in indices]
@@ -5322,6 +5398,13 @@ class SpatialPipeline:
                 "model_timing_ms": model_timing_ms,
                 "reasoning_enabled": bool(reasoning_enabled),
                 "reasoning_model": reasoning_model_name if reasoning_enabled else None,
+                "dsl_context_binding_present": bool(dsl_context_binding_present),
+                "context_binding_degraded": bool(context_binding_degraded),
+                "revision_mode": revision_mode,
+                "dsl_revision_base_trace_id": dsl_revision.get("base_trace_id"),
+                "dsl_patch_ops_count": int(len(dsl_patch_ops)),
+                "dsl_streaming_allow_prefetch": bool(streaming_allow_prefetch),
+                "dsl_streaming_prefetch_on_fields": streaming_prefetch_on_fields,
                 "operator_timings_ms": snapshot_operator_timings(),
             },
         }
@@ -5388,6 +5471,23 @@ class SpatialPipeline:
                     "reasoning_model": reasoning_model_name if reasoning_enabled else None,
                     "model_budget_ms": int(model_budget_ms),
                     "model_timing_ms": model_timing_ms,
+                    "revision_mode": revision_mode,
+                    "context_binding_degraded": bool(context_binding_degraded),
+                    "streaming_allow_prefetch": bool(streaming_allow_prefetch),
+                    "streaming_prefetch_on_fields": streaming_prefetch_on_fields,
+                    "dsl_meta": {
+                        "context_binding": dsl_context_binding,
+                        "revision": {
+                            **dsl_revision,
+                            "mode": revision_mode,
+                        },
+                        "streaming_hints": {
+                            **dsl_streaming_hints,
+                            "allow_prefetch": bool(streaming_allow_prefetch),
+                            "prefetch_on_fields": streaming_prefetch_on_fields,
+                        },
+                        "context_binding_degraded": bool(context_binding_degraded),
+                    },
                     "self_validation_enabled": self_validation_enabled,
                     "skg_enabled": skg_enabled,
                     "self_validation_model": self_validation_summary.get("model"),

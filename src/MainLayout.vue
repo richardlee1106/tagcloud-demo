@@ -151,7 +151,7 @@
           <div class="splitter-line"></div>
         </div>
         
-        <!-- 绉诲姩绔?AI 闈㈡澘閬僵灞傦紙鐐瑰嚮鏀惰捣锛?-->
+        <!-- 移动端 AI 面板遮罩层（点击收起） -->
         <div v-if="aiExpanded" class="mobile-ai-mask mobile-only-block" @click="aiExpanded = false"></div>
 
         <!-- 签 (贫兀AI 展时) -->
@@ -162,7 +162,7 @@
                'mobile-hidden': true,
                'panel-hidden': aiExpanded // AI 展开时隐藏标签云
              }">
-          <!-- 绉诲姩绔娊灞夋彁鎷夋墜鏌?-->
+          <!-- 移动端抽屉提拉手柄 -->
           <div class="mobile-drawer-handle mobile-only-block" @click="isTagDrawerExpanded = !isTagDrawerExpanded">
             <div class="handle-bar"></div>
           </div>
@@ -222,7 +222,7 @@
           <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
         </svg>
       </div>
-      <span class="ai-fab-text">GeoAI鍔╂墜</span>
+      <span class="ai-fab-text">GeoAI 助手</span>
       <div class="ai-fab-badge" v-if="selectedFeatures.length > 0">{{ selectedFeatures.length }}</div>
     </div>
   </div>
@@ -246,8 +246,7 @@ const router = useRouter();
 // 多选区管理
 const { regions, getRegionsContext } = useRegions();
 
-// 缁勪欢寮曠敤
-// 缁勪欢寮曠敤
+// 组件引用
 const controlPanelRefMap = ref(null);
 const controlPanelRefTag = ref(null);
 const controlPanelRefMobile = ref(null);
@@ -320,16 +319,16 @@ const tagPanelStyle = computed(() => {
   };
 });
 
-// 鍒囨崲 AI 闈㈡澘
+// 切换 AI 面板
 function toggleAiPanel() {
   aiExpanded.value = !aiExpanded.value;
   
-  // 璁剧疆榛樿姣斾緥
+  // 设置默认比例
 if (aiExpanded.value) {
-  // 灞曞紑鏃讹細榛樿 Map 鍗?65%, AI 鍗?35% -> 65:35 姣斾緥
+  // 展开时：默认 Map 占 65%, AI 占 35% -> 65:35 比例
   splitPercentage1.value = 65;
 } else {
-  // 鏀惰捣鏃讹細鎭㈠ 50/50 鍒嗗竷
+  // 收起时：恢复 50/50 分布
   splitPercentage1.value = 50;
 }
   
@@ -343,13 +342,13 @@ if (aiExpanded.value) {
       handleResize();
       if (Date.now() - startTime > duration) {
         clearInterval(interval);
-        // 最后确保一
+        // 最后确保一次刷新
         handleResize();
         if (tagCloudRef.value && typeof tagCloudRef.value.resize === 'function') {
           tagCloudRef.value.resize();
         }
       }
-    }, 50); // 每 50ms 触发一
+    }, 50); // 每 50ms 触发一次
   });
 }
 
@@ -652,7 +651,7 @@ function resolveConstraintBounds(constraints, options = {}) {
 }
 
 function constraintToGeometryWKT(constraint, forBackend = false) {
-  // 统一约转为煞透说 WKT确态选筛同一询路
+  // 统一转换为标准 WKT 格式进行查询
   if (!constraint || typeof constraint !== 'object') {
     return null;
   }
@@ -694,7 +693,7 @@ function hasManualSpatialSelection() {
 }
 
 function syncLegacySpatialStateFromConstraints() {
-  // 菥涌冢医诘选时写 legacy 侄危选时盏选态
+  // 当选中区域集合变化时，同步更新旧有的空间选择状态
   const constraints = resolveRegionConstraints();
 
   if (constraints.length !== 1) {
@@ -1263,7 +1262,7 @@ function onDrag(e) {
   const x = e.clientX - rect.left;
   const totalWidth = rect.width;
   
-  // 璁＄畻鐧惧垎姣斿苟闄愬埗鑼冨洿
+  // 计算百分比并限制范围
   let newPercent = (x / totalWidth) * 100;
   newPercent = Math.max(10, Math.min(90, newPercent));
   splitPercentage1.value = newPercent;
@@ -1336,7 +1335,7 @@ const handleDataLoaded = (payload) => {
     // 构造新数据
     const newGroup = { 
       name: payload.name, 
-      category: payload.category || payload.name, // 浣跨敤 category 浣滀负鍞竴鏍囪瘑
+      category: payload.category || payload.name, // 使用 category 作为唯一标识
       features: payload.features 
     };
     
@@ -1604,7 +1603,7 @@ function handleRenderPoisToMap(pois) {
         灏忕被: poi.灏忕被 || poi.category || '',
         // 保留原始属
         ...poi.properties,
-        // 鏍囪鏉ユ簮
+        // 标记来源
         _source: 'ai_tagcloud'
       }
     };
@@ -1629,7 +1628,7 @@ function handleRenderPoisToMap(pois) {
   }
   
   ElNotification.success({ 
-    title: '娓叉煋鎴愬姛', 
+    title: '渲染成功', 
     message: `已将 ${features.length} 个 POI 渲染到地图`, 
     offset: 80 
   });
@@ -1880,7 +1879,7 @@ function handleSaveResult() {
     csvContent += `"${name}","${bigCategory}","${midCategory}","${smallCategory}",${coords[0]},${coords[1]}\n`;
   });
   
-  // 鍒涘缓骞朵笅杞芥枃浠?
+  // 创建并下载文件
   const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' }); // BOM for Excel
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
@@ -1901,7 +1900,7 @@ function handleSaveResult() {
 const handleToggleDraw = (payload) => {
   if (!mapComponent.value) return;
   
-  // 鏀寔甯冨皵鍊硷紙鏃х増鍏煎锛夊拰瀵硅薄璐熻浇
+  // 支持布尔值（旧版兼容）和对象负载
   const enabled = (typeof payload === 'object') ? payload.active : payload;
   const mode = (typeof payload === 'object') ? payload.mode : 'Polygon';
 
@@ -1909,7 +1908,7 @@ const handleToggleDraw = (payload) => {
     console.log(`[App] 开启绘制模式 ${mode}`);
     mapComponent.value.openPolygonDraw(mode);
   } else {
-    console.log('[App] 鍏抽棴缁樺埗妯″紡');
+    console.log('[App] 关闭绘制模式');
     mapComponent.value.closePolygonDraw();
   }
 };
@@ -2121,7 +2120,7 @@ function handleVectorPolygonUploaded(feature) {
     return;
   }
   
-  // 鑾峰彇澶氳竟褰㈠潗鏍?
+  // 获取多边形坐标
   const geomType = feature.geometry.type;
   let coordinates;
   
@@ -2267,7 +2266,7 @@ html, body, #app {
   scrollbar-color: rgba(99, 102, 241, 0.3) transparent;
 }
 
-/* 鍏ㄩ噺缁熶竴鐨?Mesh 娓愬彉鑳屾櫙锛屽寮烘暣浣撴劅 */
+/* 全量统一的 Mesh 渐变背景，增强整体感 */
 .app-layout {
   display: flex;
   flex-direction: column;
@@ -2317,7 +2316,7 @@ html, body, #app {
   z-index: 2001;
 }
 
-/* --- 鍏ㄦ柊缁濆瀹氫綅甯冨眬绯荤粺 --- */
+/* --- 全新绝对定位布局系统 --- */
 
 /* 锚点1：数据发现组 */
 /* 呒Right 氲?50% (幕)荽 */
@@ -2426,7 +2425,7 @@ html, body, #app {
 }
 
 .version-badge {
-  font-size: 13px; /* 瀛椾綋鍔犲ぇ */
+  font-size: 13px; /* 字体加大 */
   margin-top: 4px;
   color: #818cf8;
   font-weight: 700;
@@ -2509,7 +2508,7 @@ html, body, #app {
 /* 三列模式：地图| 标签云| AI面板 */
 .left-section.three-column {
   flex-direction: row; 
-  flex: none; /* 鐢?style 缁戝畾鐨勭櫨鍒嗘瘮鎺у埗瀹藉害 */
+  flex: none; /* 由 style 绑定的百分比控制宽度 */
 }
 
 .left-section {
@@ -2601,8 +2600,8 @@ html, body, #app {
   color: #fff;
 }
 
-/* 缁熶竴鍒嗛殧鏉℃牱寮?*/
-/* 鐜颁唬鎰熷垎闅旀潯 */
+/* 统一分隔条样式 */
+/* 现代感分隔条 */
 .splitter-inner {
   width: 14px;
   min-width: 14px;

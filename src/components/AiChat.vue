@@ -423,8 +423,14 @@ const {
   shouldRunDeepSpatialMode,
   shouldCaptureSnapshot,
   normalizeRegionsForBackend,
-  buildSpatialContext
+  buildSpatialContext,
+  buildDslMetaSkeleton
 } = useSpatialRequestBuilder();
+const DSL_META_GRAY_ENABLED = ['1', 'true', 'yes', 'on'].includes(
+  String(import.meta.env.VITE_DSL_META_ENABLED || import.meta.env.VITE_DSL_META_GRAY || 'false')
+    .trim()
+    .toLowerCase()
+);
 let statusTimer = null;
 let html2canvasModulePromise = null;
 let manualScrollTimer = null;
@@ -670,7 +676,7 @@ async function sendMessage() {
   isTyping.value = true;
   resetStreamState();
 
-  // 棰勫厛瀹氫箟 aiMessageIndex
+  // 预定义 aiMessageIndex
   let aiMessageIndex = -1;
   let requestId = `chat_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
   let requestSucceeded = false;
@@ -713,6 +719,11 @@ async function sendMessage() {
     const screenshotBase64 = shouldSnapshot
       ? await captureMapSnapshot(`${props.drawMode || 'none'}:${props.mapZoom || 0}:${poiCount}`)
       : null;
+    const dslMetaSkeleton = buildDslMetaSkeleton({
+      enabled: DSL_META_GRAY_ENABLED,
+      requestId,
+      spatialContext
+    });
 
     const options = {
       requestId,
@@ -755,7 +766,8 @@ async function sendMessage() {
       maxRegionOutputs: deepSpatialMode ? 60 : 24,
       spatialContext,
       regions: normalizedRegions,
-      analysisDepth: deepSpatialMode ? 'deep' : 'fast'
+      analysisDepth: deepSpatialMode ? 'deep' : 'fast',
+      ...(DSL_META_GRAY_ENABLED ? dslMetaSkeleton : {})
     };
 
     await sendChatMessageStream(
@@ -981,11 +993,46 @@ function formatTime(timestamp) {
 function sanitizeRenderedHtml(html) {
   if (!html) return '';
 
-  return html
+  const baseHtml = html
     .replace(/<script[\s\S]*?<\/script>/gi, '')
     .replace(/\son\w+="[^"]*"/gi, '')
     .replace(/\son\w+='[^']*'/gi, '')
     .replace(/javascript:/gi, '');
+
+  const container = document.createElement('div');
+  container.innerHTML = baseHtml;
+
+  const shouldDropColumn = (headerText) => {
+    const text = String(headerText || '').trim().toLowerCase();
+    if (!text) return false;
+    return text.includes('距离')
+      || text.includes('评分')
+      || text.includes('distance')
+      || text.includes('rating')
+      || text === 'score'
+      || text.includes('score');
+  };
+
+  container.querySelectorAll('table').forEach((table) => {
+    const headerRow = table.querySelector('thead tr') || table.querySelector('tr');
+    if (!headerRow) return;
+    const headerCells = Array.from(headerRow.children);
+    const removeIndexes = headerCells
+      .map((cell, idx) => (shouldDropColumn(cell.textContent) ? idx : -1))
+      .filter((idx) => idx >= 0)
+      .sort((a, b) => b - a);
+
+    if (removeIndexes.length === 0) return;
+
+    table.querySelectorAll('tr').forEach((row) => {
+      const cells = Array.from(row.children);
+      removeIndexes.forEach((idx) => {
+        if (cells[idx]) cells[idx].remove();
+      });
+    });
+  });
+
+  return container.innerHTML;
 }
 
 function renderMarkdown(text) {

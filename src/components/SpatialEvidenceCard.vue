@@ -275,6 +275,7 @@ watch(
   background: linear-gradient(145deg, rgba(15, 23, 42, 0.82), rgba(15, 30, 56, 0.62));
   padding: 12px;
   display: grid;
+  align-content: start;
   gap: 8px;
   animation: widget-enter 220ms ease-out;
 }
@@ -313,6 +314,7 @@ watch(
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  align-items: flex-start;
 }
 
 .template-action {
@@ -322,6 +324,9 @@ watch(
   color: #e0f2fe;
   padding: 5px 10px;
   font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
+  align-self: flex-start;
   cursor: pointer;
   transition: all 180ms ease;
 }

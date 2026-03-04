@@ -232,6 +232,40 @@ export function useSpatialRequestBuilder({
     return VISUAL_SNAPSHOT_KEYWORDS.some((kw) => normalized.includes(kw)) || normalized.length >= 28
   }
 
+  function buildDslMetaSkeleton({
+    enabled = false,
+    requestId = '',
+    spatialContext = {}
+  } = {}) {
+    if (!enabled) return {}
+
+    const viewport = Array.isArray(spatialContext?.viewport) ? spatialContext.viewport : []
+    const viewportHashSeed = viewport.length >= 4
+      ? viewport.slice(0, 4).map((value) => Number(value).toFixed(6)).join(',')
+      : 'viewport_unavailable'
+    const traceSuffix = String(requestId || 'pending').slice(-16)
+
+    return {
+      context_binding: {
+        viewport_hash: `placeholder:${viewportHashSeed}`,
+        client_view_id: `view_placeholder_${traceSuffix || '0000'}`,
+        event_seq: 0,
+        map_state_version: null,
+        captured_at_ms: Date.now(),
+        source: 'frontend_placeholder'
+      },
+      revision: {
+        mode: 'rebuild',
+        base_trace_id: null,
+        patch_ops: []
+      },
+      streaming_hints: {
+        allow_prefetch: false,
+        prefetch_on_fields: []
+      }
+    }
+  }
+
   function buildSpatialContext({
     boundaryPolygon,
     drawMode,
@@ -264,6 +298,7 @@ export function useSpatialRequestBuilder({
     hasCustomSelection,
     shouldRunDeepSpatialMode,
     shouldCaptureSnapshot,
+    buildDslMetaSkeleton,
     normalizeBoundaryForBackend,
     normalizeCenterForBackend,
     normalizeViewportForBackend,

@@ -1,8 +1,14 @@
-﻿import json
+import json
 import math
+import sys
 import threading
 import unittest
+from pathlib import Path
 from unittest.mock import patch
+
+PYTHON_SERVICE_ROOT = Path(__file__).resolve().parents[1]
+if str(PYTHON_SERVICE_ROOT) not in sys.path:
+    sys.path.insert(0, str(PYTHON_SERVICE_ROOT))
 
 from algorithms.alpha_shape import build_alpha_shape
 from algorithms.membership import compute_membership
@@ -96,17 +102,17 @@ class _V5AnchorBypassRepository(_StubRepository):
                     "id": idx + 1,
                     "name": f"store-{idx + 1}",
                     "address": f"base-{idx + 1}",
-                    "type": "娓氬灝鍩勬惔?",
+                    "type": "餐饮服务",
                     "category_big": "category",
                     "category_mid": "sub_category",
-                    "category_small": "娓氬灝鍩勬惔?",
+                    "category_small": "餐厅",
                     "rating": 4.0,
                     "lon": 114.335 + (idx % 6) * 0.00035,
                     "lat": 30.582 + (idx // 6) * 0.00035,
                     "block_id": 11,
-                    "aoi_name": "婕椂鍖哄晢鍔″尯",
-                    "aoi_type": "鍟嗗姟?",
-                    "land_type": "鍟嗕笟鏈嶅姟鐢ㄥ湴",
+                    "aoi_name": "漫时区商务区",
+                    "aoi_type": "商务办公",
+                    "land_type": "商业服务用地",
                 }
             )
         return rows
@@ -120,17 +126,17 @@ class _V5AnchorBypassRepository(_StubRepository):
                     "id": 1000 + idx + 1,
                     "name": f"hbu-teaching-{idx + 1}",
                     "address": f"hbu-{idx + 1}",
-                    "type": "婢堆冾劅",
-                    "category_big": "缁夋垶鏆€",
+                    "type": "大学",
+                    "category_big": "教育科研",
                     "category_mid": "education",
-                    "category_small": "婢堆冾劅",
+                    "category_small": "大学",
                     "rating": 4.2,
                     "lon": 114.318 + (idx % 4) * 0.00035,
                     "lat": 30.589 + (idx // 4) * 0.00035,
                     "block_id": 22,
-                    "aoi_name": "濠€鏍у婢堆冾劅",
+                    "aoi_name": "湖北大学校区",
                     "aoi_type": "campus",
-                    "land_type": "閺佹瑨鍋涢悽銊ユ勾",
+                    "land_type": "教育科研用地",
                 }
             )
         return rows
@@ -167,7 +173,7 @@ class _V5AnchorBypassRepository(_StubRepository):
         return [
             {
                 "aoi_id": 1,
-                "name": "濠€鏍у婢堆冾劅",
+                "name": "湖北大学校区",
                 "type": "campus",
                 "area_m2": 300000.0,
                 "geometry_geojson": _rect(114.3160, 30.5870, 114.3240, 30.5950),
@@ -178,7 +184,7 @@ class _V5AnchorBypassRepository(_StubRepository):
         return [
             {
                 "euluc_id": 1,
-                "land_type": "閺佹瑨鍋涢悽銊ユ勾",
+                "land_type": "教育科研用地",
                 "area_m2": 280000.0,
                 "geometry_geojson": _rect(114.3160, 30.5870, 114.3240, 30.5950),
             }
@@ -193,7 +199,7 @@ class _V5AnchorBypassRepository(_StubRepository):
             return list(self.base_pois)
 
         joined_terms = " ".join(terms)
-        if "濠€鏍у婢堆冾劅" in joined_terms:
+        if "湖北大学" in joined_terms:
             return list(self.anchor_pois)
 
         return list(self.base_pois + self.anchor_pois)
@@ -216,9 +222,9 @@ class _V5ForwardingRepository(_StubRepository):
                     "lon": 114.3200 + (idx % 6) * 0.0003,
                     "lat": 30.5800 + (idx // 6) * 0.0003,
                     "block_id": 10,
-                    "aoi_name": "濠€鏍у婢堆冾劅",
+                    "aoi_name": "湖北大学",
                     "aoi_type": "campus",
-                    "land_type": "閺佹瑨鍋涢悽銊ユ勾",
+                    "land_type": "教育科研用地",
                 }
             )
         super().__init__(pois=pois, roads=[], landuse=[])
@@ -237,7 +243,7 @@ class _V5ForwardingRepository(_StubRepository):
         return [
             {
                 "aoi_id": 1,
-                "name": "濠€鏍у婢堆冾劅",
+                "name": "湖北大学",
                 "type": "campus",
                 "area_m2": 200000.0,
                 "geometry_geojson": _rect(114.3180, 30.5780, 114.3240, 30.5840),
@@ -248,7 +254,7 @@ class _V5ForwardingRepository(_StubRepository):
         return [
             {
                 "euluc_id": 1,
-                "land_type": "閺佹瑨鍋涢悽銊ユ勾",
+                "land_type": "教育科研用地",
                 "area_m2": 180000.0,
                 "geometry_geojson": _rect(114.3180, 30.5780, 114.3240, 30.5840),
             }
@@ -298,7 +304,7 @@ class _V5NoSecondQueryRepository(_StubRepository):
             {
                 "aoi_id": 1,
                 "name": "test-aoi",
-                "type": "鍟嗕笟",
+                "type": "商业",
                 "area_m2": 220000.0,
                 "geometry_geojson": _rect(114.3185, 30.5785, 114.3230, 30.5830),
             }
@@ -308,7 +314,7 @@ class _V5NoSecondQueryRepository(_StubRepository):
         return [
             {
                 "euluc_id": 1,
-                "land_type": "鍟嗕笟鏈嶅姟鐢ㄥ湴",
+                "land_type": "商业服务用地",
                 "area_m2": 220000.0,
                 "geometry_geojson": _rect(114.3185, 30.5785, 114.3230, 30.5830),
             }
@@ -483,7 +489,7 @@ def _build_cluster_landuse():
     return [
         {
             "id": 1,
-            "properties": {"绫诲埆": "鍟嗕笟鐢ㄥ湴"},
+            "properties": {"类别": "商业用地"},
             "geometry_geojson": {
                 "type": "Polygon",
                 "coordinates": [
@@ -499,7 +505,7 @@ def _build_cluster_landuse():
         },
         {
             "id": 2,
-            "properties": {"绫诲埆": "灞呬綇鐢ㄥ湴"},
+            "properties": {"类别": "居住用地"},
             "geometry_geojson": {
                 "type": "Polygon",
                 "coordinates": [
@@ -515,7 +521,7 @@ def _build_cluster_landuse():
         },
         {
             "id": 3,
-            "properties": {"绫诲埆": "鍏洯缁垮湴"},
+            "properties": {"类别": "公园绿地"},
             "geometry_geojson": {
                 "type": "Polygon",
                 "coordinates": [
@@ -1537,7 +1543,7 @@ class SpatialPipelineTest(unittest.TestCase):
             options={
                 "sourcePolicy": {
                     "has_category_filter": True,
-                    "selected_categories": ["娓氬灝鍩勬惔?"],
+                    "selected_categories": ["武汉大学"],
                 },
                 "baseLayerAnchorBypass": True,
                 "baseLayerAnchorBypassPerHintLimit": 60,
@@ -1545,7 +1551,7 @@ class SpatialPipelineTest(unittest.TestCase):
                 "baseLayerAnchorBypassMinInject": 1,
             }
         )
-        request["categories"] = ["娓氬灝鍩勬惔?"]
+        request["categories"] = ["武汉大学"]
 
         hints = json.loads(request["hints"])
         hints["query_plan"] = {
@@ -2351,6 +2357,52 @@ class SpatialPipelineTest(unittest.TestCase):
         self.assertEqual(explicit, 120)
         self.assertEqual(capped, 200)
 
+    def test_pipeline_echoes_dsl_meta_observability_fields(self):
+        pipeline = SpatialPipeline(repository=_StubRepository(_build_clustered_pois()))
+        request = _build_area_request(
+            options={
+                "context_binding": {
+                    "viewport_hash": "sha1:test_viewport",
+                    "client_view_id": "view_001",
+                    "event_seq": 7,
+                    "source": "frontend_injected",
+                },
+                "revision": {
+                    "mode": "rebuild",
+                    "base_trace_id": "trace_base_001",
+                    "patch_ops": [],
+                },
+                "streaming_hints": {
+                    "allow_prefetch": True,
+                    "prefetch_on_fields": ["scope", "entities.categories"],
+                },
+            }
+        )
+
+        events = list(pipeline.run(request))
+        final_payload = next(event["payload"] for event in events if event.get("type") == "FINAL")
+        stats = (final_payload.get("results") or {}).get("stats") or {}
+        diagnostics = final_payload.get("diagnostics") or {}
+
+        self.assertEqual(stats.get("revision_mode"), "rebuild")
+        self.assertEqual(int(stats.get("dsl_patch_ops_count", -1)), 0)
+        self.assertTrue(bool(stats.get("dsl_context_binding_present")))
+        self.assertFalse(bool(stats.get("context_binding_degraded")))
+        self.assertTrue(bool(stats.get("dsl_streaming_allow_prefetch")))
+        self.assertEqual(
+            stats.get("dsl_streaming_prefetch_on_fields"),
+            ["scope", "entities.categories"],
+        )
+
+        self.assertEqual(diagnostics.get("revision_mode"), "rebuild")
+        self.assertFalse(bool(diagnostics.get("context_binding_degraded")))
+        self.assertTrue(bool(diagnostics.get("streaming_allow_prefetch")))
+        self.assertIn("dsl_meta", diagnostics)
+        self.assertEqual(
+            ((diagnostics.get("dsl_meta") or {}).get("revision") or {}).get("mode"),
+            "rebuild",
+        )
+
     def test_parallel_model_inference_collects_timing_and_payload(self):
         original_vlm = spatial_module.vlm_reviewer.extract_map_anchors
         original_llm = spatial_module.reasoning_reviewer.infer_spatial_priors
@@ -2609,7 +2661,8 @@ class SpatialPipelineTest(unittest.TestCase):
                 "visualReviewEnabled": True,
                 "reasoningEnabled": True,
                 "visualSnapshotDataUrl": "data:image/png;base64,stub",
-                "modelBudgetMs": 5000,
+                "modelBudgetMs": 20000,
+                "vlmFailureMode": "strict",
             }
         )
 

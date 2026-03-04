@@ -28,3 +28,85 @@ test('parseIntent routes question-example request via fast general_qa path', asy
   assert.equal(result.queryPlan?.query_type, 'general_qa')
   assert.equal(result.queryPlan?.intent_mode, 'llm_chat')
 })
+
+test('parseIntent injects viewport anchor for fast-path area query', async () => {
+  const result = await parseIntent(
+    '\u8bf7\u5206\u6790\u8fd9\u7247\u533a\u57df\u7684\u6559\u80b2\u8bbe\u65bd\u5206\u5e03\u3002',
+    {
+      plannerLlmEnabled: false,
+      hasSelectedArea: true,
+      viewportCenter: {
+        lon: 114.3123,
+        lat: 30.5812
+      }
+    }
+  )
+
+  assert.equal(result.fastPath, true)
+  assert.equal(result.queryPlan?.query_type, 'area_analysis')
+  assert.equal(result.queryPlan?.anchor?.type, 'viewport_center')
+  assert.equal(result.queryPlan?.anchor?.lon, 114.3123)
+  assert.equal(result.queryPlan?.anchor?.lat, 30.5812)
+})
+
+test('parseIntent uses planner LLM path and keeps non-zero token usage', async () => {
+  const result = await parseIntent(
+    '\u8bf7\u5bf9\u6bd4\u8fd9\u7247\u533a\u7684\u9910\u996e\u4e0e\u6559\u80b2\u4e1a\u6001\uff0c\u7ed9\u51fa\u53ef\u6267\u884c\u7ed3\u8bba\u3002',
+    {
+      plannerLlmEnabled: true,
+      plannerLlmCaller: async () => ({
+        queryPlan: {
+          query_type: 'area_analysis',
+          intent_mode: 'macro_overview',
+          categories: ['\u9910\u996e\u670d\u52a1'],
+          confidence: {
+            score: 8,
+            level: 'high',
+            reasons: ['llm_refined']
+          }
+        },
+        tokenUsage: {
+          prompt_tokens: 21,
+          completion_tokens: 9,
+          total_tokens: 30
+        }
+      })
+    }
+  )
+
+  assert.equal(result.fastPath, false)
+  assert.equal(result.routerUsed, true)
+  assert.equal(result.queryPlan?.query_type, 'area_analysis')
+  assert.equal(result.tokenUsage?.total_tokens, 30)
+})
+
+test('parseIntent falls back to rule plan when planner LLM errors', async () => {
+  const result = await parseIntent(
+    '\u8bf7\u5bf9\u6bd4\u8fd9\u7247\u533a\u7684\u9910\u996e\u4e0e\u6559\u80b2\u4e1a\u6001\uff0c\u7ed9\u51fa\u53ef\u6267\u884c\u7ed3\u8bba\u3002',
+    {
+      plannerLlmEnabled: true,
+      plannerLlmCaller: async () => {
+        throw new Error('mock_planner_llm_down')
+      }
+    }
+  )
+
+  assert.equal(result.fastPath, false)
+  assert.equal(result.routerUsed, false)
+  assert.equal(result.tokenUsage?.total_tokens, 0)
+  assert.equal(result.queryPlan?.query_type, 'area_analysis')
+  assert.ok(
+    (result.queryPlan?.confidence?.reasons || []).some((item) => String(item).includes('planner_llm_fallback'))
+  )
+})
+
+test('parseIntent does not use fast path for key-conclusion macro requests', async () => {
+  const result = await parseIntent(
+    '\u8bf7\u572830\u79d2\u5185\u7ed9\u6211\u8fd9\u7247\u533a\u7684\u5173\u952e\u7ed3\u8bba\uff1a\u4e3b\u5bfc\u4e1a\u6001\u3001\u6d3b\u529b\u70ed\u70b9\u3001\u673a\u4f1a\u70b9\u3002',
+    {
+      plannerLlmEnabled: false
+    }
+  )
+
+  assert.equal(result.fastPath, false)
+})

@@ -241,8 +241,8 @@ def build_cluster_boundary(
     to_surface_polygon_func: Callable[..., Polygon | None],
 ) -> Dict[str, Any]:
     """
-    ͨ alpha-shape ѡɾ߽硣
-     alpha ѡЧʱ˵͹
+    通过 alpha-shape 寻找最优边界。
+    如果 alpha 寻找失效，则使用凸包。
     """
     raw_hull = MultiPoint(cluster_points).convex_hull
     raw_hull_type = str(getattr(raw_hull, "geom_type", ""))

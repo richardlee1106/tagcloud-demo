@@ -18,6 +18,104 @@ if (!fs.existsSync(LOG_DIR)) {
   fs.mkdirSync(LOG_DIR, { recursive: true });
 }
 
+function toSafeTokenCount(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    return 0;
+  }
+  return Math.round(numeric);
+}
+
+function normalizeTokenUsageShape(usage) {
+  if (!usage || typeof usage !== 'object') {
+    return null;
+  }
+
+  const prompt = toSafeTokenCount(usage.prompt_tokens);
+  const completion = toSafeTokenCount(usage.completion_tokens);
+  const explicitTotal = toSafeTokenCount(usage.total_tokens);
+  const total = explicitTotal > 0 ? explicitTotal : (prompt + completion);
+
+  return {
+    prompt_tokens: prompt,
+    completion_tokens: completion,
+    total_tokens: total
+  };
+}
+
+function appendTextFile(filePath, content, { withBomOnCreate = false } = {}) {
+  if (withBomOnCreate) {
+    if (!fs.existsSync(filePath)) {
+      fs.writeFileSync(filePath, '\uFEFF', 'utf-8');
+    } else {
+      const stat = fs.statSync(filePath);
+      if (stat.size === 0) {
+        fs.writeFileSync(filePath, '\uFEFF', 'utf-8');
+      } else {
+        const header = Buffer.alloc(3);
+        const fd = fs.openSync(filePath, 'r');
+        try {
+          const bytesRead = fs.readSync(fd, header, 0, 3, 0);
+          const hasUtf8Bom = bytesRead === 3
+            && header[0] === 0xEF
+            && header[1] === 0xBB
+            && header[2] === 0xBF;
+          if (!hasUtf8Bom) {
+            const existing = fs.readFileSync(filePath);
+            const withBom = Buffer.concat([Buffer.from([0xEF, 0xBB, 0xBF]), existing]);
+            fs.writeFileSync(filePath, withBom);
+          }
+        } finally {
+          fs.closeSync(fd);
+        }
+      }
+    }
+  }
+
+  fs.appendFileSync(filePath, content, 'utf-8');
+}
+
+function resolvePoiName(poi = {}) {
+  const props = poi?.properties && typeof poi.properties === 'object' ? poi.properties : {};
+  return props['\u540d\u79f0'] || props.name || poi.name || '\u672a\u77e5';
+}
+
+function resolvePoiCategory(poi = {}) {
+  const props = poi?.properties && typeof poi.properties === 'object' ? poi.properties : {};
+  const candidates = [
+    props['\u5c0f\u7c7b'],
+    props['\u4e2d\u7c7b'],
+    props['\u5927\u7c7b'],
+    props.category_small,
+    props.category_mid,
+    props.category_big,
+    props.categorySmall,
+    props.categoryMid,
+    props.categoryBig,
+    poi.category_small,
+    poi.category_mid,
+    poi.category_big,
+    poi.categorySmall,
+    poi.categoryMid,
+    poi.categoryBig,
+    props.category,
+    poi.category,
+    props.type,
+    poi.type
+  ];
+
+  for (const value of candidates) {
+    const text = String(value || '').trim();
+    if (text) return text;
+  }
+
+  return '\u672a\u5206\u7c7b';
+}
+
+function resolvePoiDistance(poi = {}) {
+  return poi.distance ?? poi.distance_m ?? null;
+}
+
 /**
  * RAG 会话日志类
  * 每次对话创建一个实例，记录整个检索和生成过程
@@ -66,7 +164,7 @@ class RAGSession {
     };
     this.logs.push(entry);
     
-    // 更新摘要
+    // 更新摘要
     if (component === 'Vector' || component === 'pgvector' || component === 'Milvus') {
       this.summary.vectorCalled = true;
     }
@@ -109,7 +207,7 @@ class RAGSession {
   }
 
   /**
-   * 设置用户查询
+   * 设置用户查询
    */
   setUserQuery(query) {
     this.summary.userQuery = query;
@@ -129,10 +227,10 @@ class RAGSession {
    */
   addRetrievedPOIs(pois, source) {
     const poiSummary = pois.map(p => ({
-      name: p.properties?.['名称'] || p.name || '未知',
-      category: p.properties?.['小类'] || p.properties?.['中类'] || p.category || '未分类',
-      distance: p.distance || null,
-      score: p.score || null
+      name: resolvePoiName(p),
+      category: resolvePoiCategory(p),
+      distance: resolvePoiDistance(p),
+      score: p.score ?? p.semantic_score ?? p.hybrid_score ?? null
     }));
     
     this.retrievedPOIs.push({ source, pois: poiSummary });
@@ -146,9 +244,9 @@ class RAGSession {
   setFinalPOIs(pois) {
     this.rawFinalPOIs = pois; // 保存原始数据（含坐标）
     this.finalPOIs = pois.map(p => ({
-      name: p.properties?.['名称'] || p.name || '未知',
-      category: p.properties?.['小类'] || p.properties?.['中类'] || p.category || '未分类',
-      distance: p.distance || null
+      name: resolvePoiName(p),
+      category: resolvePoiCategory(p),
+      distance: resolvePoiDistance(p)
     }));
     this.log('Fusion', 'FinalPOIs', { count: pois.length });
   }
@@ -205,6 +303,81 @@ class RAGSession {
     return this.fuzzyRegions || [];
   }
 
+  setServiceUsage({ vectorCalled = false, postgisCalled = false } = {}) {
+    if (vectorCalled) {
+      this.summary.vectorCalled = true;
+    }
+    if (postgisCalled) {
+      this.summary.postgisCalled = true;
+    }
+  }
+
+  ingestExecutionStats(stats = {}, diagnostics = {}) {
+    const normalizedStats = stats && typeof stats === 'object' ? stats : {};
+    const normalizedDiagnostics = diagnostics && typeof diagnostics === 'object' ? diagnostics : {};
+
+    const candidateSource = String(
+      normalizedStats.candidate_source || normalizedDiagnostics.candidate_source || ''
+    ).trim().toLowerCase();
+    const roadSource = String(
+      normalizedStats.road_source || normalizedDiagnostics.road_source || ''
+    ).trim().toLowerCase();
+    const landuseSource = String(
+      normalizedStats.landuse_source || normalizedDiagnostics.landuse_source || ''
+    ).trim().toLowerCase();
+    const executorEngine = String(
+      normalizedStats.executor_engine || normalizedDiagnostics.engine || ''
+    ).trim().toLowerCase();
+    const computeMode = String(normalizedDiagnostics.compute_mode || '').trim().toLowerCase();
+    const pyDataSource = String(
+      normalizedDiagnostics?.migration?.py_data_source
+      || normalizedDiagnostics?.source_policy?.py_data_source
+      || normalizedStats.py_data_source
+      || ''
+    ).trim().toLowerCase();
+    const vectorUsedFlag =
+      normalizedStats.vector_used === true
+      || normalizedDiagnostics?.vector_retrieval?.used === true;
+
+    const postgisCalled = (
+      candidateSource === 'db'
+      || roadSource === 'db'
+      || landuseSource === 'db'
+      || pyDataSource === 'python'
+      || executorEngine.includes('python')
+      || computeMode.includes('python')
+      || computeMode.includes('cache_hit')
+    );
+    const vectorCalled = vectorUsedFlag || [candidateSource, executorEngine, pyDataSource]
+      .some((value) => value.includes('vector') || value.includes('milvus') || value.includes('pgvector'));
+
+    this.setServiceUsage({ vectorCalled, postgisCalled });
+
+    const tokenUsageRoot = normalizedStats.token_usage && typeof normalizedStats.token_usage === 'object'
+      ? normalizedStats.token_usage
+      : {};
+
+    const plannerUsage = normalizeTokenUsageShape(
+      tokenUsageRoot.planner
+      || normalizedStats.planner_token_usage
+      || normalizedDiagnostics?.planner?.token_usage
+      || null
+    );
+    const writerUsage = normalizeTokenUsageShape(
+      tokenUsageRoot.writer
+      || normalizedStats.writer_token_usage
+      || normalizedDiagnostics?.writer?.token_usage
+      || null
+    );
+
+    if (plannerUsage) {
+      this.addTokenUsage('planner', plannerUsage);
+    }
+    if (writerUsage) {
+      this.addTokenUsage('writer', writerUsage);
+    }
+  }
+
   /**
    * 添加 Token 消耗统计
    * @param {string} source - 'planner' | 'writer'
@@ -213,10 +386,10 @@ class RAGSession {
   addTokenUsage(source, usage) {
     if (!usage) return;
     
-    // 确保数值存在
-    const total = usage.total_tokens || 0;
-    const prompt = usage.prompt_tokens || 0;
-    const completion = usage.completion_tokens || 0;
+    // Ensure numeric token fields are safe to accumulate.
+    const total = toSafeTokenCount(usage.total_tokens);
+    const prompt = toSafeTokenCount(usage.prompt_tokens);
+    const completion = toSafeTokenCount(usage.completion_tokens);
     
     this.summary.tokenStats.total += total;
     
@@ -238,7 +411,7 @@ class RAGSession {
   }
 
   /**
-   * 估算 Token 消耗 (兼容旧接口，但也返回实际值)
+   * 估算 Token 消耗（兼容旧接口，但也返回实际值）
    */
   estimateTokens(contextLength) {
     // 如果有实际统计值，优先使用
@@ -285,11 +458,11 @@ class RAGSession {
     const logFile = path.join(LOG_DIR, `RAG_${dateStr}.jsonl`);
     
     // 使用 JSONL 格式（每行一个 JSON）
-    fs.appendFileSync(logFile, JSON.stringify(logContent) + '\n', 'utf-8');
+    appendTextFile(logFile, JSON.stringify(logContent) + '\n');
     
     // 同时生成人类可读的 Markdown 日志
     const mdFile = path.join(LOG_DIR, `RAG_${dateStr}.md`);
-    fs.appendFileSync(mdFile, this.generateMarkdownLog() + '\n---\n\n', 'utf-8');
+    appendTextFile(mdFile, this.generateMarkdownLog() + '\n---\n\n', { withBomOnCreate: true });
 
     console.log(`[RAG-${this.sessionId}] 日志已保存至 RAG_LOG/`);
     return logFile;
@@ -318,6 +491,9 @@ class RAGSession {
     parts.push(`Retrieved POIs: ${this.summary.totalPOIsRetrieved}`);
 
     const stats = this.summary.tokenStats || { total: 0, planner: 0, writer: 0 };
+    const retrievalMode = this.summary.vectorCalled && this.summary.postgisCalled
+      ? 'hybrid'
+      : (this.summary.vectorCalled ? 'vector_only' : (this.summary.postgisCalled ? 'postgis_only' : 'none'));
     if (stats.total > 0) {
       parts.push(`Tokens: total=${stats.total}, planner=${stats.planner}, writer=${stats.writer}`);
     } else {
@@ -364,7 +540,25 @@ class RAGSession {
       .filter((item) => item.component === 'Pipeline' && item.action === 'Stage')
       .map((item) => item.details?.stage)
       .filter(Boolean);
+    const stageChecklistEntry = [...this.logs]
+      .reverse()
+      .find((item) => item.component === 'Pipeline' && item.action === 'StageChecklist');
+    let stageChecklist = Array.isArray(stageChecklistEntry?.details) ? stageChecklistEntry.details : [];
+    if (!stageChecklist.length) {
+      const checklistStageEvent = [...this.logs]
+        .reverse()
+        .find((item) => item.component === 'Pipeline'
+          && item.action === 'Stage'
+          && item.details?.stage === 'pipeline_stage_checklist'
+          && Array.isArray(item.details?.payload?.items));
+      stageChecklist = Array.isArray(checklistStageEvent?.details?.payload?.items)
+        ? checklistStageEvent.details.payload.items
+        : [];
+    }
     const stats = this.summary.tokenStats || { total: 0, planner: 0, writer: 0 };
+    const retrievalMode = this.summary.vectorCalled && this.summary.postgisCalled
+      ? 'hybrid'
+      : (this.summary.vectorCalled ? 'vector_only' : (this.summary.postgisCalled ? 'postgis_only' : 'none'));
 
     const compactDetails = (details) => {
       if (details == null) return '';
@@ -414,6 +608,34 @@ class RAGSession {
       md += `\`\`\`json\n${JSON.stringify(failureDiagnosticsEntry.details, null, 2)}\n\`\`\`\n\n`;
     }
 
+    if (stageChecklist.length > 0) {
+      const escapeCell = (value) => String(value || '').replace(/\|/g, '\\|').replace(/\n/g, ' ');
+      md += `### Stage Checklist\n`;
+      md += `| Stage | Status | Details |\n`;
+      md += `|---|---|---|\n`;
+      stageChecklist.forEach((item) => {
+        const label = escapeCell(item?.label || item?.key || 'unknown');
+        const explicitStatus = String(item?.status || '').trim().toUpperCase();
+        const status = ['PASS', 'WARN', 'FAIL'].includes(explicitStatus)
+          ? explicitStatus
+          : (item?.ok === true ? 'PASS' : 'FAIL');
+        const details = [];
+        if (item?.model) details.push(`model=${item.model}`);
+        if (Number.isFinite(Number(item?.extracted_count))) details.push(`extracted=${Number(item.extracted_count)}`);
+        if (Array.isArray(item?.extracted_texts) && item.extracted_texts.length > 0) {
+          details.push(`texts=${item.extracted_texts.slice(0, 8).join(', ')}`);
+        }
+        if (item?.summary) {
+          const summaryText = String(item.summary);
+          details.push(`summary=${summaryText.length > 80 ? `${summaryText.slice(0, 80)}...` : summaryText}`);
+        }
+        if (item?.fallback_used === true) details.push(`fallback=${item?.fallback_reason || 'true'}`);
+        if (item?.mode) details.push(`mode=${item.mode}`);
+        md += `| ${label} | ${status} | ${escapeCell(details.join('; ') || '-')} |\n`;
+      });
+      md += '\n';
+    }
+
     md += `### Event Timeline\n`;
     md += `| Offset(ms) | Component | Action | Details |\n`;
     md += `|---:|---|---|---|\n`;
@@ -438,7 +660,8 @@ class RAGSession {
     }
 
     md += `### Stats\n`;
-    md += `- Vector used: ${this.summary.vectorCalled ? 'yes' : 'no'}\n`;
+    md += `- Retrieval mode: ${retrievalMode}\n`;
+    md += `- Vector used: ${this.summary.vectorCalled ? 'yes' : (retrievalMode === 'postgis_only' ? 'no (postgis_only)' : 'no')}\n`;
     md += `- PostGIS used: ${this.summary.postgisCalled ? 'yes' : 'no'}\n`;
     md += `- Token breakdown: total=${stats.total}, planner=${stats.planner}, writer=${stats.writer}\n`;
 
@@ -454,3 +677,4 @@ export function createRAGSession() {
 }
 
 export { RAGSession };
+
