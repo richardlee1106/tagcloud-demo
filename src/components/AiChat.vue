@@ -36,6 +36,17 @@
                <path d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
              </svg>
            </button>
+           <button
+             class="action-btn refresh-btn"
+             :class="{ active: forceRecomputeNext }"
+             @click="toggleForceRecompute"
+             :title="forceRecomputeNext ? 'Force recompute on next query (enabled)' : 'Force recompute on next query (skip cache)'"
+           >
+             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+               <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+               <polyline points="21 3 21 9 15 9" />
+             </svg>
+           </button>
            <button class="action-btn close-btn" @click="emit('close')" title="收起">
              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
                <path d="M18 6L6 18M6 6l12 12" />
@@ -120,6 +131,27 @@
             </div>
 
             <div v-if="msg.content && msg.content.trim()" class="message-text" v-html="renderMessageHtml(msg)"></div>
+
+            <div
+              v-if="msg.role === 'assistant' && getMessageCacheLabel(msg)"
+              class="message-meta-row"
+            >
+              <span class="meta-pill cache-pill" :class="{ hit: isMessageCacheHit(msg), miss: !isMessageCacheHit(msg) }">
+                {{ getMessageCacheLabel(msg) }}
+              </span>
+            </div>
+            <div
+              v-if="msg.role === 'assistant' && getMessageRiskWarnings(msg).length > 0"
+              class="message-risk-list"
+            >
+              <span
+                v-for="warning in getMessageRiskWarnings(msg)"
+                :key="`${index}-${warning.code}`"
+                class="meta-pill risk-pill"
+              >
+                {{ warning.message }}
+              </span>
+            </div>
 
             <EmbeddedTagCloud 
               v-if="msg.role === 'assistant' && !isGeneralQaMessage(msg) && msg.pois && msg.pois.length > 0"
@@ -228,6 +260,8 @@ import {
 import EmbeddedTagCloud from './EmbeddedTagCloud.vue';
 import SpatialEvidenceCard from './SpatialEvidenceCard.vue';
 import { marked } from 'marked';
+import { normalizeMarkdownForRender } from '../utils/markdownContract.js';
+import { resolveAnalysisSignals } from '../utils/analysisSignals.js';
 
 const props = defineProps({
   // 当前选中的 POI 数据
@@ -296,6 +330,7 @@ const inputText = ref('');
 const isTyping = ref(false);
 const currentStage = ref(''); // 原始 stage 名称（来自 SSE）
 const streamQueue = ref('');
+const forceRecomputeNext = ref(false);
 
 // 阶段顺序与后端实际执行顺序一致：planner → spatial → visual → fusion → writer
 const stageSteps = [
@@ -683,6 +718,30 @@ function sanitizeAssistantVisibleText(text = '') {
   return cleaned
 }
 
+
+function toggleForceRecompute() {
+  forceRecomputeNext.value = !forceRecomputeNext.value;
+}
+
+function resolveMessageSignals(message) {
+  const stats = message?.analysisStats && typeof message.analysisStats === 'object'
+    ? message.analysisStats
+    : null;
+  return resolveAnalysisSignals(stats);
+}
+
+function getMessageCacheLabel(message) {
+  return resolveMessageSignals(message).cacheLabel;
+}
+
+function isMessageCacheHit(message) {
+  return resolveMessageSignals(message).cacheHit;
+}
+
+function getMessageRiskWarnings(message) {
+  return resolveMessageSignals(message).riskWarnings;
+}
+
 async function sendMessage() {
   const text = inputText.value.trim();
   if (!text || isTyping.value) return;
@@ -724,6 +783,7 @@ async function sendMessage() {
   let aiMessageIndex = -1;
   let requestId = `chat_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
   let requestSucceeded = false;
+  let forceRecomputeRequest = false;
 
   try {
     console.log('[AiChat] Sending message with POI count:', props.poiFeatures?.length || 0);
@@ -759,6 +819,7 @@ async function sendMessage() {
     const normalizedSelectedCategories = normalizeSelectedCategories(props.selectedCategories);
     const poiCount = props.poiFeatures?.length || 0;
     const deepSpatialMode = shouldRunDeepSpatialMode(text, spatialContext, props.regions, poiCount);
+    forceRecomputeRequest = forceRecomputeNext.value === true;
     const shouldSnapshot = deepSpatialMode || shouldCaptureSnapshot(text, deepSpatialMode);
     const screenshotBase64 = shouldSnapshot
       ? await captureMapSnapshot(`${props.drawMode || 'none'}:${props.mapZoom || 0}:${poiCount}`)
@@ -777,8 +838,11 @@ async function sendMessage() {
       clientMetrics: {
         panel: 'ai-chat',
         messageCount: messages.value.length,
-        poiCount
+        poiCount,
+        forceRecompute: forceRecomputeRequest
       },
+      skipCache: forceRecomputeRequest,
+      forceRefresh: forceRecomputeRequest,
       globalAnalysis: props.globalAnalysisEnabled,
       selectedCategories: normalizedSelectedCategories,
       sourcePolicy: {
@@ -882,6 +946,9 @@ async function sendMessage() {
     highWaterStageIndex = -1;
     await nextTick();
     scrollToBottom(true, 'auto');
+    if (forceRecomputeRequest) {
+      forceRecomputeNext.value = false;
+    }
   }
 }
 
@@ -1092,7 +1159,8 @@ function sanitizeRenderedHtml(html) {
 function renderMarkdown(text) {
   if (!text) return '';
 
-  const rawHtml = marked.parse(text, {
+  const normalizedText = normalizeMarkdownForRender(text);
+  const rawHtml = marked.parse(normalizedText, {
     gfm: true,
     breaks: true
   });
@@ -1591,6 +1659,17 @@ defineExpose({
   border-color: rgba(87, 222, 175, 0.3);
 }
 
+.refresh-btn {
+  background: rgba(33, 124, 201, 0.24);
+  border-color: rgba(117, 195, 255, 0.3);
+}
+
+.refresh-btn.active {
+  background: rgba(9, 165, 120, 0.32);
+  border-color: rgba(109, 237, 186, 0.5);
+  color: #d9fff2;
+}
+
 .close-btn {
   background: rgba(38, 91, 150, 0.24);
   border-color: rgba(111, 188, 255, 0.3);
@@ -1741,6 +1820,52 @@ defineExpose({
   background: linear-gradient(150deg, rgba(11, 27, 47, 0.88), rgba(11, 34, 58, 0.74));
   border: 1px solid rgba(116, 163, 205, 0.24);
   color: #e7f0fa;
+}
+
+
+.message-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.message-risk-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.meta-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.cache-pill {
+  border: 1px solid rgba(121, 182, 232, 0.38);
+  background: rgba(16, 64, 104, 0.34);
+  color: #d7ecff;
+}
+
+.cache-pill.hit {
+  border-color: rgba(91, 220, 170, 0.45);
+  background: rgba(13, 120, 89, 0.28);
+  color: #c9ffeb;
+}
+
+.cache-pill.miss {
+  border-color: rgba(141, 194, 238, 0.34);
+  background: rgba(17, 60, 99, 0.3);
+}
+
+.risk-pill {
+  border: 1px solid rgba(251, 146, 60, 0.45);
+  background: rgba(146, 64, 14, 0.3);
+  color: #ffe7cc;
 }
 
 .message-text :deep(pre) {

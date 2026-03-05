@@ -588,6 +588,153 @@ function cloneForCache(payload) {
   }
 }
 
+function isEnvFlagEnabled(rawValue, defaultValue = false) {
+  if (rawValue === undefined || rawValue === null || rawValue === '') {
+    return defaultValue
+  }
+  const normalized = String(rawValue).trim().toLowerCase()
+  if (!normalized) return defaultValue
+  return ['1', 'true', 'yes', 'on'].includes(normalized)
+}
+
+function resolveViewportHashForCache(options = {}, spatialContext = {}) {
+  return String(
+    options?.context_binding?.viewport_hash
+    || spatialContext?.context_binding?.viewport_hash
+    || spatialContext?.viewport_hash
+    || ''
+  ).trim()
+}
+
+function resolveCacheViewportBounds(spatialContext = {}) {
+  if (!Array.isArray(spatialContext?.viewport) || spatialContext.viewport.length < 4) {
+    return null
+  }
+  const normalized = spatialContext.viewport
+    .slice(0, 4)
+    .map((value) => Number(value))
+  if (!normalized.every(Number.isFinite)) return null
+  return normalized.map((value) => Number(value.toFixed(5)))
+}
+
+function resolveCacheMapZoomBucket(options = {}, spatialContext = {}) {
+  const zoom = Number(
+    options?.mapZoom
+    ?? options?.map_zoom
+    ?? spatialContext?.map_zoom
+    ?? spatialContext?.zoom
+  )
+  if (!Number.isFinite(zoom)) return null
+  return Math.max(0, Math.round(zoom))
+}
+
+function resolveCacheDrawMode(queryPlan = {}, spatialContext = {}, options = {}) {
+  const drawMode = String(
+    options?.drawMode
+    || options?.draw_mode
+    || spatialContext?.draw_mode
+    || spatialContext?.mode
+    || queryPlan?.scope?.geometry_source
+    || ''
+  ).trim().toLowerCase()
+  return drawMode || null
+}
+
+function buildSpatialCacheRequestProfile(queryPlan = {}, spatialContext = {}, options = {}) {
+  const center = normalizePoint(spatialContext?.center)
+    || normalizePoint(queryPlan?.anchor)
+    || getViewportCenter(spatialContext)
+
+  return {
+    query_type: normalizeQueryType(queryPlan),
+    viewport_hash: resolveViewportHashForCache(options, spatialContext) || null,
+    viewport_bounds: resolveCacheViewportBounds(spatialContext),
+    area_km2: Number(deriveSpatialAreaKm2(spatialContext).toFixed(6)),
+    center: center
+      ? { lon: Number(center.lon.toFixed(6)), lat: Number(center.lat.toFixed(6)) }
+      : null,
+    map_zoom_bucket: resolveCacheMapZoomBucket(options, spatialContext),
+    draw_mode: resolveCacheDrawMode(queryPlan, spatialContext, options)
+  }
+}
+
+function resolveCacheGuardConfig() {
+  const maxAreaRatio = Number(process.env.SPATIAL_CACHE_GUARD_MAX_AREA_RATIO || '1.8')
+  const maxCenterDistanceKm = Number(process.env.SPATIAL_CACHE_GUARD_MAX_CENTER_DISTANCE_KM || '2.5')
+  const maxZoomBucketDiff = Number(process.env.SPATIAL_CACHE_GUARD_MAX_ZOOM_BUCKET_DIFF || '1')
+  const requireViewportHash = isEnvFlagEnabled(process.env.SPATIAL_CACHE_GUARD_REQUIRE_VIEWPORT_HASH, true)
+
+  return {
+    max_area_ratio: Number.isFinite(maxAreaRatio) && maxAreaRatio >= 1 ? maxAreaRatio : 1.8,
+    max_center_distance_km: Number.isFinite(maxCenterDistanceKm) && maxCenterDistanceKm >= 0 ? maxCenterDistanceKm : 2.5,
+    max_zoom_bucket_diff: Number.isFinite(maxZoomBucketDiff) && maxZoomBucketDiff >= 0 ? maxZoomBucketDiff : 1,
+    require_viewport_hash: requireViewportHash
+  }
+}
+
+export function evaluateCachePostHitGuard({ requestProfile = {}, cachedProfile = {}, config = {} } = {}) {
+  const guardConfig = {
+    ...resolveCacheGuardConfig(),
+    ...(config && typeof config === 'object' ? config : {})
+  }
+  const failedGuards = []
+  const details = {}
+
+  const requestArea = Number(requestProfile?.area_km2)
+  const cachedArea = Number(cachedProfile?.area_km2)
+  if (Number.isFinite(requestArea) && requestArea > 0 && Number.isFinite(cachedArea) && cachedArea > 0) {
+    const ratio = Math.max(requestArea, cachedArea) / Math.max(1e-9, Math.min(requestArea, cachedArea))
+    details.area_ratio = Number(ratio.toFixed(6))
+    if (ratio > guardConfig.max_area_ratio) {
+      failedGuards.push('area_ratio_guard')
+    }
+  }
+
+  const requestCenter = normalizePoint(requestProfile?.center)
+  const cachedCenter = normalizePoint(cachedProfile?.center)
+  if (requestCenter && cachedCenter) {
+    const centerDistanceKm = haversineKm(
+      requestCenter.lat,
+      requestCenter.lon,
+      cachedCenter.lat,
+      cachedCenter.lon
+    )
+    details.center_distance_km = Number(centerDistanceKm.toFixed(6))
+    if (centerDistanceKm > guardConfig.max_center_distance_km) {
+      failedGuards.push('center_distance_guard')
+    }
+  }
+
+  const requestViewportHash = String(requestProfile?.viewport_hash || '').trim()
+  const cachedViewportHash = String(cachedProfile?.viewport_hash || '').trim()
+  if (guardConfig.require_viewport_hash) {
+    if (!requestViewportHash || !cachedViewportHash) {
+      failedGuards.push('viewport_hash_guard_missing')
+    } else if (requestViewportHash !== cachedViewportHash) {
+      failedGuards.push('viewport_hash_guard')
+    }
+  }
+
+  const requestZoomBucket = Number(requestProfile?.map_zoom_bucket)
+  const cachedZoomBucket = Number(cachedProfile?.map_zoom_bucket)
+  if (Number.isFinite(requestZoomBucket) && Number.isFinite(cachedZoomBucket)) {
+    const diff = Math.abs(requestZoomBucket - cachedZoomBucket)
+    details.zoom_bucket_diff = diff
+    if (diff > guardConfig.max_zoom_bucket_diff) {
+      failedGuards.push('zoom_bucket_guard')
+    }
+  }
+
+  const accepted = failedGuards.length === 0
+  return {
+    accepted,
+    geometry_match: accepted,
+    cache_guard_reject: !accepted,
+    failed_guards: failedGuards,
+    details
+  }
+}
+
 // 判断是否应使用空间查询结果缓存。
 function shouldUseSpatialResultCache(queryPlan = {}, options = {}) {
   if (options?.skipCache || options?.forceRefresh) return false
@@ -600,6 +747,13 @@ function shouldUseSpatialResultCache(queryPlan = {}, options = {}) {
 
   const queryType = normalizeQueryType(queryPlan)
   if (queryType === 'clarification_needed') return false
+  if (
+    queryType === 'area_analysis'
+    && isEnvFlagEnabled(process.env.SPATIAL_AREA_ANALYSIS_CACHE_REQUIRE_VIEWPORT_HASH, true)
+    && !String(options?.context_binding?.viewport_hash || '').trim()
+  ) {
+    return false
+  }
 
   return true
 }
@@ -608,6 +762,13 @@ function shouldUseSpatialResultCache(queryPlan = {}, options = {}) {
 function buildSpatialCacheFingerprint(queryPlan = {}, spatialContext = {}, options = {}, userQuestion = '') {
   return queryCache.generateQueryFingerprint(queryPlan, spatialContext, {
     sourcePolicy: options?.sourcePolicy || null,
+    cacheKeyVersion: options?.cacheKeyVersion || process.env.SPATIAL_CACHE_KEY_VERSION || 'v2',
+    contextBinding: options?.context_binding || null,
+    viewportHash: resolveViewportHashForCache(options, spatialContext) || null,
+    mapZoom: resolveCacheMapZoomBucket(options, spatialContext),
+    drawMode: resolveCacheDrawMode(queryPlan, spatialContext, options),
+    viewportBounds: resolveCacheViewportBounds(spatialContext),
+    regions: Array.isArray(options?.regions) ? options.regions : [],
     modelProfile: {
       visualModel: normalizeVisualModelName(options?.visualModel),
       ocrModel: options?.ocrModel || null,
@@ -736,6 +897,27 @@ function buildTokenUsageSummary(plannerUsage = null, writerUsage = null) {
     planner,
     writer,
     total_tokens: totalTokens
+  }
+}
+
+export function buildWriterQualityStats(writerDiagnostics = null) {
+  const diagnostics = writerDiagnostics && typeof writerDiagnostics === 'object'
+    ? writerDiagnostics
+    : {}
+  const hallucination = diagnostics?.hallucination && typeof diagnostics.hallucination === 'object'
+    ? diagnostics.hallucination
+    : {}
+  const markdownContract = diagnostics?.markdown_contract && typeof diagnostics.markdown_contract === 'object'
+    ? diagnostics.markdown_contract
+    : {}
+  const hallucinations = Array.isArray(hallucination?.hallucinations)
+    ? hallucination.hallucinations
+    : []
+
+  return {
+    writer_hallucination: hallucination?.hasHallucination === true,
+    writer_hallucination_count: hallucinations.length,
+    writer_markdown_contract_normalized: markdownContract?.normalized === true
   }
 }
 
@@ -2870,6 +3052,11 @@ export async function runNarrativeSpatialJob(payload = {}, reporter = {}) {
   }
 
   const shouldUseCache = shouldUseSpatialResultCache(queryPlan, effectiveOptions)
+  const activeCacheKeyVersion = queryCache.resolveCacheKeyVersion(
+    effectiveOptions?.cacheKeyVersion || process.env.SPATIAL_CACHE_KEY_VERSION || 'v2'
+  )
+  const cacheRequestProfile = buildSpatialCacheRequestProfile(queryPlan, spatialContext, effectiveOptions)
+  const postHitGuardEnabled = isEnvFlagEnabled(process.env.SPATIAL_CACHE_POST_HIT_GUARD, true)
   const spatialCacheFingerprint = shouldUseCache
     ? buildSpatialCacheFingerprint(queryPlan, spatialContext, effectiveOptions, userQuestion)
     : null
@@ -2877,23 +3064,90 @@ export async function runNarrativeSpatialJob(payload = {}, reporter = {}) {
   let normalizedExecutor = null
   let migrationDecision = null
   let cacheLock = null
+  let cacheGuardReject = false
+  let cacheGuardVerdict = {
+    accepted: false,
+    geometry_match: false,
+    cache_guard_reject: false,
+    failed_guards: [],
+    details: {}
+  }
+
+  const tryUseCachedEnvelope = async (cachedEnvelope, { engineLabel }) => {
+    if (!cachedEnvelope) return false
+
+    const candidate = normalizeExecutorEnvelope(cloneForCache(cachedEnvelope))
+    const cachedMeta = candidate?.cache_meta && typeof candidate.cache_meta === 'object'
+      ? candidate.cache_meta
+      : {}
+    const cachedProfile = cachedMeta?.request_profile && typeof cachedMeta.request_profile === 'object'
+      ? cachedMeta.request_profile
+      : {}
+
+    const guardVerdict = postHitGuardEnabled
+      ? evaluateCachePostHitGuard({
+        requestProfile: cacheRequestProfile,
+        cachedProfile,
+        config: {}
+      })
+      : {
+        accepted: true,
+        geometry_match: true,
+        cache_guard_reject: false,
+        failed_guards: [],
+        details: {}
+      }
+
+    cacheGuardVerdict = guardVerdict
+    if (!guardVerdict.accepted) {
+      cacheGuardReject = true
+      telemetry.incrementCounter('spatial_cache_guard_reject_total', {
+        query_type: normalizedQueryType
+      })
+      telemetry.recordKpiEvent('spatial_cache_guard_reject', 1, {
+        trace_id: requestId,
+        query_type: normalizedQueryType,
+        failed_guards: guardVerdict.failed_guards.join('|') || 'unknown'
+      })
+
+      await report.reportStage('executor_cache_guard_reject', {
+        fingerprint: spatialCacheFingerprint ? spatialCacheFingerprint.slice(0, 12) : null,
+        query_type: normalizedQueryType,
+        failed_guards: guardVerdict.failed_guards,
+        details: guardVerdict.details
+      })
+      return false
+    }
+
+    candidate.results = candidate.results || {}
+    candidate.results.stats = {
+      ...(candidate.results.stats || {}),
+      cache_hit: true,
+      cache_key_version: String(cachedMeta?.key_version || activeCacheKeyVersion),
+      geometry_match: guardVerdict.geometry_match === true,
+      cache_guard_reject: false,
+      executor_engine: candidate.results.stats?.executor_engine || engineLabel
+    }
+
+    normalizedExecutor = candidate
+
+    await report.reportStage('executor_cache_hit', {
+      fingerprint: spatialCacheFingerprint ? spatialCacheFingerprint.slice(0, 12) : null,
+      query_type: normalizeQueryType(queryPlan),
+      cache_key_version: String(cachedMeta?.key_version || activeCacheKeyVersion),
+      geometry_match: guardVerdict.geometry_match === true
+    })
+    return true
+  }
+
   // Cache lookup path: reuse cached executor envelope when available.
   if (shouldUseCache && spatialCacheFingerprint) {
     const cachedEnvelope = await queryCache.getFromCache(spatialCacheFingerprint, {
       queryType: normalizedQueryType
     })
     if (cachedEnvelope) {
-      normalizedExecutor = normalizeExecutorEnvelope(cloneForCache(cachedEnvelope))
-      normalizedExecutor.results = normalizedExecutor.results || {}
-      normalizedExecutor.results.stats = {
-        ...(normalizedExecutor.results.stats || {}),
-        cache_hit: true,
-        executor_engine: normalizedExecutor.results.stats?.executor_engine || 'cached_spatial_result'
-      }
-
-      await report.reportStage('executor_cache_hit', {
-        fingerprint: spatialCacheFingerprint.slice(0, 12),
-        query_type: normalizeQueryType(queryPlan)
+      await tryUseCachedEnvelope(cachedEnvelope, {
+        engineLabel: 'cached_spatial_result'
       })
     } else {
       cacheLock = queryCache.acquireComputationLock(spatialCacheFingerprint)
@@ -2909,13 +3163,9 @@ export async function runNarrativeSpatialJob(payload = {}, reporter = {}) {
             queryType: normalizedQueryType
           })
           if (waitedEnvelope) {
-            normalizedExecutor = normalizeExecutorEnvelope(cloneForCache(waitedEnvelope))
-            normalizedExecutor.results = normalizedExecutor.results || {}
-            normalizedExecutor.results.stats = {
-              ...(normalizedExecutor.results.stats || {}),
-              cache_hit: true,
-              executor_engine: normalizedExecutor.results.stats?.executor_engine || 'cached_spatial_result_wait'
-            }
+            await tryUseCachedEnvelope(waitedEnvelope, {
+              engineLabel: 'cached_spatial_result_wait'
+            })
           }
         }
 
@@ -2956,9 +3206,15 @@ export async function runNarrativeSpatialJob(payload = {}, reporter = {}) {
       normalizedExecutor = normalizeExecutorEnvelope(executorEnvelope)
 
       if (shouldUseCache && spatialCacheFingerprint && normalizedExecutor.success !== false) {
+        const cacheEnvelope = cloneForCache(normalizedExecutor)
+        cacheEnvelope.cache_meta = {
+          key_version: activeCacheKeyVersion,
+          request_profile: cacheRequestProfile,
+          created_at_ms: Date.now()
+        }
         await queryCache.setToCache(
           spatialCacheFingerprint,
-          cloneForCache(normalizedExecutor),
+          cacheEnvelope,
           normalizedQueryType
         )
       }
@@ -2992,10 +3248,28 @@ export async function runNarrativeSpatialJob(payload = {}, reporter = {}) {
   let writerFallbackUsed = false
   let writerFallbackReason = null
   let writerTokenUsage = null
+  let writerValidationDiagnostics = null
 
   const writerRuntimeOptions = {
     ...effectiveOptions,
     onWriterDiagnostics: (diagnostics) => {
+      writerValidationDiagnostics = diagnostics && typeof diagnostics === 'object'
+        ? diagnostics
+        : null
+      if (diagnostics?.markdown_contract?.normalized === true) {
+        telemetry.incrementCounter('writer_markdown_contract_normalized_total', {
+          query_type: normalizedQueryType
+        })
+        telemetry.recordKpiEvent('writer_markdown_structure_invalid', 1, {
+          trace_id: requestId,
+          query_type: normalizedQueryType
+        })
+      }
+      if (diagnostics?.hallucination?.hasHallucination === true) {
+        telemetry.incrementCounter('writer_hallucination_detected_total', {
+          query_type: normalizedQueryType
+        })
+      }
       report.reportStage('writer_validation', diagnostics).catch(() => {})
     },
     onTokenUsage: (usage) => {
@@ -3051,6 +3325,7 @@ export async function runNarrativeSpatialJob(payload = {}, reporter = {}) {
     : {}
   const plannerTokenUsage = normalizeTokenUsage(plannerOutput?.tokenUsage)
   const pipelineTokenUsage = buildTokenUsageSummary(plannerTokenUsage, writerTokenUsage)
+  const writerQualityStats = buildWriterQualityStats(writerValidationDiagnostics)
   const pipelineStageChecklist = buildPipelineStageChecklist(baseStats, {
     used_fallback: writerFallbackUsed,
     fallback_reason: writerFallbackReason,
@@ -3084,6 +3359,18 @@ export async function runNarrativeSpatialJob(payload = {}, reporter = {}) {
   if (Array.isArray(prefetchSummary?.prefetch_error_codes) && prefetchSummary.prefetch_error_codes.length > 0) {
     prefetchStats.prefetch_error_codes = prefetchSummary.prefetch_error_codes.slice(0, 5)
   }
+  const cacheStats = {
+    cache_hit: Boolean(baseStats.cache_hit),
+    cache_key_version: String(baseStats.cache_key_version || activeCacheKeyVersion),
+    geometry_match: baseStats.geometry_match === true,
+    cache_guard_reject: cacheGuardReject === true || baseStats.cache_guard_reject === true,
+    cache_guard_failed: Array.isArray(cacheGuardVerdict?.failed_guards)
+      ? cacheGuardVerdict.failed_guards.slice(0, 4)
+      : [],
+    cache_guard_details: cacheGuardVerdict?.details && typeof cacheGuardVerdict.details === 'object'
+      ? cacheGuardVerdict.details
+      : {}
+  }
   const criticSummary = normalizeCriticSummary(finalResults)
   const criticStats = {
     critic_mode: criticRouting.critic_mode,
@@ -3104,13 +3391,15 @@ export async function runNarrativeSpatialJob(payload = {}, reporter = {}) {
     ...vectorStats,
     ...contextStats,
     ...prefetchStats,
+    ...cacheStats,
     ...criticStats,
     token_usage: pipelineTokenUsage,
     planner_token_usage: plannerTokenUsage,
     writer_token_usage: writerTokenUsage,
     pipeline_stage_checklist: pipelineStageChecklist,
     writer_fallback_used: writerFallbackUsed,
-    writer_fallback_reason: writerFallbackReason || null
+    writer_fallback_reason: writerFallbackReason || null,
+    ...writerQualityStats
   }
 
   if (criticRouting.critic_mode === 'async') {
@@ -3185,7 +3474,9 @@ export async function runNarrativeSpatialJob(payload = {}, reporter = {}) {
       writer: {
         token_usage: writerTokenUsage,
         fallback_used: writerFallbackUsed,
-        fallback_reason: writerFallbackReason || null
+        fallback_reason: writerFallbackReason || null,
+        validation: writerValidationDiagnostics,
+        quality: writerQualityStats
       },
       compute_mode: normalizedExecutor?.results?.stats?.cache_hit
         ? 'cache_hit'
@@ -3202,6 +3493,12 @@ export async function runNarrativeSpatialJob(payload = {}, reporter = {}) {
         frontier_emulated: criticRouting.frontier_emulated === true
       },
       cache_hit: Boolean(normalizedExecutor?.results?.stats?.cache_hit),
+      cache_key_version: normalizedExecutor?.results?.stats?.cache_key_version || activeCacheKeyVersion,
+      geometry_match: normalizedExecutor?.results?.stats?.geometry_match === true,
+      cache_guard_reject: normalizedExecutor?.results?.stats?.cache_guard_reject === true || cacheGuardReject === true,
+      cache_guard_failed: Array.isArray(normalizedExecutor?.results?.stats?.cache_guard_failed)
+        ? normalizedExecutor.results.stats.cache_guard_failed
+        : (Array.isArray(cacheGuardVerdict?.failed_guards) ? cacheGuardVerdict.failed_guards : []),
       pipeline_stage_checklist: pipelineStageChecklist,
       dsl_validation: validation?.diagnostics || null
     }
@@ -3230,6 +3527,8 @@ export function toLegacySSEPayload(jobResult) {
 export default {
   extractLastUserMessage,
   normalizeVisualModelName,
+  buildWriterQualityStats,
+  evaluateCachePostHitGuard,
   decideExecutionMode,
   executeSpatialPlanWithFallback,
   runNarrativeSpatialJob,

@@ -161,6 +161,7 @@ import { marked } from 'marked';
 import { ArrowLeft, Close, Hide, Loading, MagicStick, VideoPlay, View } from '@element-plus/icons-vue';
 import { fromLonLat, toLonLat } from 'ol/proj';
 import { NARRATIVE_TEXT_TEMPLATE_MARKDOWN, NARRATIVE_UI_ONLY_NOTICE } from '../utils/narrativeTextTemplate';
+import { normalizeMarkdownForRender } from '../utils/markdownContract.js';
 
 const MapContainer = defineAsyncComponent(() => import('../components/MapContainer.vue'));
 
@@ -273,7 +274,10 @@ const NARRATIVE_TEMPLATE_CONTENT = `${NARRATIVE_UI_ONLY_NOTICE}
 
 ${NARRATIVE_TEXT_TEMPLATE_MARKDOWN}`;
 
-const formattedAiResponse = computed(() => marked.parse(aiResponse.value || NARRATIVE_TEMPLATE_CONTENT));
+const formattedAiResponse = computed(() => {
+  const normalized = normalizeMarkdownForRender(aiResponse.value || NARRATIVE_TEMPLATE_CONTENT);
+  return marked.parse(normalized);
+});
 
 
 watch(aiResponse, () => {

@@ -151,6 +151,103 @@ _LOW_SIGNAL_CATEGORY_KEYWORDS: Tuple[str, ...] = (
     "\u901a\u9053",
     "\u95e8\u536b",
     "\u7269\u4e1a",
+    "\u9053\u8def\u540d",
+    "\u8def\u53e3\u540d",
+    "\u7ad9\u53e3",
+    "\u5145\u7535\u5b9d",
+    "\u5171\u4eab\u5145\u7535",
+)
+
+_LIVELIHOOD_PRIMARY_FALLBACK = "\u5176\u4ed6"
+
+_LIVELIHOOD_PRIMARY_RULES: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
+    (
+        "\u5b66\u4e60",
+        (
+            "\u6559\u80b2",
+            "\u5b66\u6821",
+            "\u5927\u5b66",
+            "\u5b66\u9662",
+            "\u57f9\u8bad",
+            "\u56fe\u4e66\u9986",
+            "\u79d1\u7814",
+            "\u6821\u533a",
+            "\u4e66\u9662",
+        ),
+    ),
+    (
+        "\u533b\u7597",
+        (
+            "\u533b\u7597",
+            "\u533b\u9662",
+            "\u8bca\u6240",
+            "\u836f\u5e97",
+            "\u536b\u751f",
+            "\u95e8\u8bca",
+            "\u4f53\u68c0",
+            "\u6025\u6551",
+        ),
+    ),
+    (
+        "\u98df",
+        (
+            "\u9910",
+            "\u5c0f\u5403",
+            "\u5496\u5561",
+            "\u8336\u996e",
+            "\u996e\u54c1",
+            "\u65e9\u9910",
+            "\u591c\u5bb5",
+            "\u7f8e\u98df",
+            "\u9910\u5385",
+        ),
+    ),
+    (
+        "\u4f4f",
+        (
+            "\u4f4f\u5b85",
+            "\u5c0f\u533a",
+            "\u516c\u5bd3",
+            "\u5bbf\u820d",
+            "\u9152\u5e97",
+            "\u5bbe\u9986",
+            "\u6c11\u5bbf",
+            "\u79df\u8d41",
+            "\u4f4f\u623f",
+        ),
+    ),
+    (
+        "\u8863",
+        (
+            "\u670d\u88c5",
+            "\u670d\u9970",
+            "\u978b",
+            "\u7bb1\u5305",
+            "\u73e0\u5b9d",
+            "\u9970\u54c1",
+            "\u7a7f\u642d",
+            "\u767e\u8d27",
+        ),
+    ),
+    (
+        "\u884c",
+        (
+            "\u4ea4\u901a",
+            "\u5730\u94c1",
+            "\u516c\u4ea4",
+            "\u7ad9",
+            "\u505c\u8f66",
+            "\u8def",
+            "\u8def\u53e3",
+            "\u51fa\u5165\u53e3",
+            "\u9053\u8def",
+            "\u5145\u7535\u5b9d",
+            "\u5145\u7535\u6869",
+            "\u5171\u4eab\u5355\u8f66",
+            "\u6253\u8f66",
+            "\u51fa\u884c",
+        ),
+    ),
 )
 
 _REGION_NAME_FALLBACK_SUFFIX: Dict[str, str] = {
@@ -213,6 +310,106 @@ def _build_category_counter(cluster_pois: List[Dict[str, Any]]) -> Counter:
         if not _is_low_signal_category_name(category):
             preferred_counter[category] += 1
     return preferred_counter if preferred_counter else fallback_counter
+
+
+def _resolve_livelihood_primary_category(poi: Dict[str, Any]) -> str:
+    category_fields = (
+        poi.get("category_small"),
+        poi.get("category_mid"),
+        poi.get("category_big"),
+        poi.get("type"),
+    )
+    merged = " ".join(str(field or "").strip().lower() for field in category_fields if str(field or "").strip())
+    if not merged:
+        return _LIVELIHOOD_PRIMARY_FALLBACK
+
+    for primary_label, keywords in _LIVELIHOOD_PRIMARY_RULES:
+        if any(keyword in merged for keyword in keywords):
+            return primary_label
+    return _LIVELIHOOD_PRIMARY_FALLBACK
+
+
+def _build_livelihood_profile(cluster_pois: List[Dict[str, Any]]) -> Dict[str, Any]:
+    total = len(cluster_pois)
+    preferred_primary_counter: Counter = Counter()
+    fallback_primary_counter: Counter = Counter()
+    secondary_counter: Counter = _build_category_counter(cluster_pois)
+    low_signal_count = 0
+
+    for poi in cluster_pois:
+        category = str(_category_of(poi) or "").strip()
+        primary = _resolve_livelihood_primary_category(poi)
+        fallback_primary_counter[primary] += 1
+        is_low_signal = _is_low_signal_category_name(category)
+        if is_low_signal:
+            low_signal_count += 1
+            continue
+        preferred_primary_counter[primary] += 1
+
+    primary_counter = preferred_primary_counter if preferred_primary_counter else fallback_primary_counter
+
+    primary_categories = [
+        {
+            "category": category,
+            "count": int(count),
+            "ratio_value": round((count / total), 4) if total > 0 else 0.0,
+        }
+        for category, count in primary_counter.most_common(7)
+    ]
+    secondary_top = [
+        {"category": category, "count": int(count)}
+        for category, count in secondary_counter.most_common(3)
+    ]
+
+    dominant_primary = _LIVELIHOOD_PRIMARY_FALLBACK
+    dominant_primary_count = 0
+    if primary_categories:
+        dominant_primary = str(primary_categories[0]["category"])
+        dominant_primary_count = int(primary_categories[0]["count"])
+
+        if dominant_primary == _LIVELIHOOD_PRIMARY_FALLBACK and len(primary_categories) > 1:
+            secondary_primary = primary_categories[1]
+            secondary_count = int(secondary_primary.get("count") or 0)
+            if secondary_count >= max(2, int(round(total * 0.2))):
+                dominant_primary = str(secondary_primary.get("category") or dominant_primary)
+                dominant_primary_count = secondary_count
+
+    low_signal_ratio = (low_signal_count / total) if total > 0 else 0.0
+    return {
+        "dominant_primary": dominant_primary,
+        "dominant_primary_count": int(dominant_primary_count),
+        "primary_categories": primary_categories,
+        "secondary_top": secondary_top,
+        "low_signal_count": int(low_signal_count),
+        "low_signal_ratio": round(float(low_signal_ratio), 4),
+    }
+
+
+def _should_apply_livelihood_ranking(
+    *,
+    query_type: str,
+    intent_mode: str,
+    user_question: str,
+) -> bool:
+    normalized_query_type = str(query_type or "").strip().lower()
+    if normalized_query_type != "area_analysis":
+        return False
+
+    normalized_intent_mode = str(intent_mode or "").strip().lower()
+    if normalized_intent_mode in {"macro_overview", "macro"}:
+        return True
+
+    question = str(user_question or "").strip()
+    if not question:
+        return False
+    dominant_keywords = (
+        "\u4e3b\u5bfc",
+        "\u4e3b\u529b",
+        "\u6d3b\u529b",
+        "\u673a\u4f1a",
+        "\u4e1a\u6001",
+    )
+    return any(keyword in question for keyword in dominant_keywords)
 
 
 def _parse_json_object(raw_text: str) -> Dict[str, Any] | None:
@@ -2609,6 +2806,70 @@ def _deduplicate_cluster_entries(
     }
 
 
+def _evaluate_undersegmentation_guard(
+    *,
+    enabled: bool,
+    area_km2: float,
+    total_candidates: int,
+    cluster_count: int,
+    min_regions: int,
+    dedup_before_count: int,
+    dedup_after_count: int,
+    dedup_removed_count: int,
+    dedup_removed_ratio: float,
+    area_threshold_km2: float = 20.0,
+    candidate_threshold: int = 120,
+) -> Dict[str, Any]:
+    verdict = {
+        "enabled": bool(enabled),
+        "risk": False,
+        "reason": None,
+        "signals": [],
+        "should_restore_pre_dedup": False,
+        "restored_pre_dedup": False,
+        "mitigated": False,
+        "area_km2": float(max(0.0, area_km2)),
+        "total_candidates": int(max(0, total_candidates)),
+        "cluster_count": int(max(0, cluster_count)),
+        "min_regions": int(max(1, min_regions)),
+        "dedup_before_count": int(max(0, dedup_before_count)),
+        "dedup_after_count": int(max(0, dedup_after_count)),
+        "dedup_removed_count": int(max(0, dedup_removed_count)),
+        "dedup_removed_ratio": round(_clamp01(float(max(0.0, dedup_removed_ratio))), 4),
+    }
+    if not verdict["enabled"]:
+        return verdict
+
+    signals: List[str] = []
+    if verdict["area_km2"] >= float(max(1.0, area_threshold_km2)):
+        signals.append("large_view")
+    if verdict["total_candidates"] >= int(max(20, candidate_threshold)):
+        signals.append("candidate_dense")
+    if verdict["cluster_count"] < verdict["min_regions"]:
+        signals.append("cluster_count_below_min")
+    if verdict["dedup_removed_count"] >= 2 and verdict["dedup_removed_ratio"] >= 0.45:
+        signals.append("dedup_excessive")
+
+    verdict["signals"] = signals
+    hard_risk = (
+        "large_view" in signals
+        and "candidate_dense" in signals
+        and "cluster_count_below_min" in signals
+    )
+    verdict["risk"] = bool(hard_risk)
+    if verdict["risk"]:
+        verdict["reason"] = "cluster_count_below_min_regions"
+        verdict["should_restore_pre_dedup"] = bool(
+            verdict["dedup_before_count"] >= verdict["min_regions"]
+            and verdict["dedup_after_count"] < verdict["min_regions"]
+            and (
+                "dedup_excessive" in signals
+                or verdict["dedup_removed_count"] > 0
+            )
+        )
+    return verdict
+
+
 def _clamp01(value: float) -> float:
     if value < 0.0:
         return 0.0
@@ -3316,6 +3577,9 @@ class SpatialPipeline:
 
         hints = _safe_json_loads(request.get("hints"), {})
         semantic_query = hints.get("semantic_query") or ""
+        user_question = str(request.get("query") or request.get("question") or "").strip()
+        if not user_question:
+            user_question = str(semantic_query or "").strip()
         terms = [term.strip() for term in semantic_query.split() if term.strip()]
 
         hints_options = hints.get("options") if isinstance(hints.get("options"), dict) else {}
@@ -3487,6 +3751,41 @@ class SpatialPipeline:
             default_value=24,
             max_value=80,
         )
+        livelihood_ranking_enabled = _option_enabled(
+            hints_options.get("livelihoodRankingEnabled"),
+            default_value=_option_enabled(
+                os.getenv("SPATIAL_LIVELIHOOD_RANKING"),
+                default_value=True,
+            ),
+        )
+        undersegmentation_guard_enabled = _option_enabled(
+            hints_options.get("undersegmentationGuardEnabled"),
+            default_value=_option_enabled(
+                os.getenv("SPATIAL_UNDERSEGMENTATION_GUARD"),
+                default_value=True,
+            ),
+        )
+        undersegmentation_min_regions = _resolve_limit(
+            hints_options.get("undersegmentationMinRegions"),
+            default_value=5,
+            max_value=20,
+        )
+        undersegmentation_candidate_threshold = _resolve_limit(
+            hints_options.get("undersegmentationCandidateThreshold"),
+            default_value=120,
+            max_value=100000,
+        )
+        try:
+            undersegmentation_area_threshold_km2 = max(
+                1.0,
+                float(
+                    hints_options.get("undersegmentationAreaThresholdKm2")
+                    or os.getenv("SPATIAL_UNDERSEGMENTATION_AREA_THRESHOLD_KM2")
+                    or 20.0
+                ),
+            )
+        except (TypeError, ValueError):
+            undersegmentation_area_threshold_km2 = 20.0
 
         if not categories and isinstance(source_policy, dict) and source_policy.get("has_category_filter"):
             selected = source_policy.get("selected_categories") or hints_options.get("selectedCategories") or []
@@ -3500,6 +3799,14 @@ class SpatialPipeline:
         anchor_hint = query_plan.get("anchor") if isinstance(query_plan, dict) else None
         query_plan_type = str(query_plan.get("query_type") or query_type).strip().lower()
         intent_mode = str(query_plan.get("intent_mode") or "").strip().lower()
+        livelihood_ranking_applied = (
+            livelihood_ranking_enabled
+            and _should_apply_livelihood_ranking(
+                query_type=query_plan_type,
+                intent_mode=intent_mode,
+                user_question=user_question,
+            )
+        )
         need_graph_reasoning = bool(query_plan.get("need_graph_reasoning")) or query_type == "graph_reasoning"
         need_region_comparison = query_type == "region_comparison"
         region_context = hints_options.get("regions") if isinstance(hints_options.get("regions"), list) else []
@@ -4573,8 +4880,23 @@ class SpatialPipeline:
                     d_coords = [(float(p["lon"]), float(p["lat"])) for p in d_pois if p.get("lon") and p.get("lat")]
 
                     categories_counter = _build_category_counter(d_pois)
-                    top_category = categories_counter.most_common(1)[0][0] if categories_counter else "unclassified"
-                    top_count = categories_counter.most_common(1)[0][1] if categories_counter else 0
+                    livelihood_profile = _build_livelihood_profile(d_pois)
+                    top_secondary_category = categories_counter.most_common(1)[0][0] if categories_counter else "unclassified"
+                    top_secondary_count = categories_counter.most_common(1)[0][1] if categories_counter else 0
+                    top_category = top_secondary_category
+                    top_count = top_secondary_count
+                    livelihood_ranking_used = False
+                    dominant_primary = str(livelihood_profile.get("dominant_primary") or "")
+                    dominant_primary_count = int(livelihood_profile.get("dominant_primary_count") or 0)
+                    if (
+                        livelihood_ranking_applied
+                        and dominant_primary
+                        and dominant_primary != _LIVELIHOOD_PRIMARY_FALLBACK
+                        and dominant_primary_count > 0
+                    ):
+                        top_category = dominant_primary
+                        top_count = dominant_primary_count
+                        livelihood_ranking_used = True
                     poi_quality = _cluster_poi_quality(d_pois)
 
                     d_bbox_area_m2 = _calc_bbox_area(d_coords) if len(d_coords) >= 2 else 0.0
@@ -4711,6 +5033,14 @@ class SpatialPipeline:
                         {"category": cat, "count": int(cnt)}
                         for cat, cnt in categories_counter.most_common(3)
                     ]
+                    dominant_primary_categories = [
+                        {
+                            "category": str(item.get("category") or _LIVELIHOOD_PRIMARY_FALLBACK),
+                            "count": int(item.get("count") or 0),
+                            "ratio_value": float(item.get("ratio_value") or 0.0),
+                        }
+                        for item in (livelihood_profile.get("primary_categories") or [])[:4]
+                    ]
                     boundary_surface = _to_surface_polygon(boundary_geom, cluster_points=d_coords)
                     boundary_ring = _polygon_ring(boundary_surface)
 
@@ -4725,6 +5055,14 @@ class SpatialPipeline:
                         "layers": {"outer": {}, "transition": {"confidence": district.name_confidence}, "core": {}},
                         "dominant_category": top_category,
                         "dominant_categories": dominant_categories,
+                        "dominant_secondary_categories": dominant_categories,
+                        "dominant_primary_categories": dominant_primary_categories,
+                        "livelihood_profile": {
+                            **livelihood_profile,
+                            "ranking_applied": bool(livelihood_ranking_used),
+                            "secondary_dominant": top_secondary_category,
+                            "secondary_dominant_count": int(top_secondary_count),
+                        },
                         "membership": asdict(membership),
                         "density": round(density, 4),
                         "purity": round(purity, 4),
@@ -4778,7 +5116,22 @@ class SpatialPipeline:
                 center_lat = sum(lat for _, lat in cluster_points_list) / len(cluster_points_list)
 
                 categories_counter = _build_category_counter(cluster_pois)
+                livelihood_profile = _build_livelihood_profile(cluster_pois)
                 top_category, top_count = categories_counter.most_common(1)[0]
+                top_secondary_category = top_category
+                top_secondary_count = top_count
+                livelihood_ranking_used = False
+                dominant_primary = str(livelihood_profile.get("dominant_primary") or "")
+                dominant_primary_count = int(livelihood_profile.get("dominant_primary_count") or 0)
+                if (
+                    livelihood_ranking_applied
+                    and dominant_primary
+                    and dominant_primary != _LIVELIHOOD_PRIMARY_FALLBACK
+                    and dominant_primary_count > 0
+                ):
+                    top_category = dominant_primary
+                    top_count = dominant_primary_count
+                    livelihood_ranking_used = True
                 poi_quality = _cluster_poi_quality(cluster_pois)
                 semantic_anchor = _infer_semantic_anchor(
                     cluster_pois=cluster_pois,
@@ -4944,6 +5297,14 @@ class SpatialPipeline:
                     {"category": category, "count": int(count)}
                     for category, count in categories_counter.most_common(3)
                 ]
+                dominant_primary_categories = [
+                    {
+                        "category": str(item.get("category") or _LIVELIHOOD_PRIMARY_FALLBACK),
+                        "count": int(item.get("count") or 0),
+                        "ratio_value": float(item.get("ratio_value") or 0.0),
+                    }
+                    for item in (livelihood_profile.get("primary_categories") or [])[:4]
+                ]
 
                 cluster_entries.append(
                     {
@@ -4961,6 +5322,14 @@ class SpatialPipeline:
                         },
                         "dominant_category": top_category,
                         "dominant_categories": dominant_categories,
+                        "dominant_secondary_categories": dominant_categories,
+                        "dominant_primary_categories": dominant_primary_categories,
+                        "livelihood_profile": {
+                            **livelihood_profile,
+                            "ranking_applied": bool(livelihood_ranking_used),
+                            "secondary_dominant": top_secondary_category,
+                            "secondary_dominant_count": int(top_secondary_count),
+                        },
                         "membership": asdict(membership),
                         "density": round(density, 4),
                         "purity": round(purity, 4),
@@ -4988,6 +5357,7 @@ class SpatialPipeline:
                     }
                 )
 
+        pre_dedup_cluster_entries: List[Dict[str, Any]] = list(cluster_entries)
         v5_region_dedup_summary: Dict[str, Any] = {
             "enabled": bool(v5_region_dedup_enabled),
             "iou_threshold": round(float(v5_region_dedup_iou_threshold), 4),
@@ -4996,6 +5366,10 @@ class SpatialPipeline:
             "after_count": len(cluster_entries),
             "removed_count": 0,
             "removed_examples": [],
+            "removed_ratio": 0.0,
+            "effective_after_count": len(cluster_entries),
+            "effective_removed_count": 0,
+            "restored_by_underseg_guard": False,
         }
         if v5_region_dedup_enabled and cluster_entries:
             cluster_entries, v5_region_dedup_summary = _deduplicate_cluster_entries(
@@ -5012,6 +5386,52 @@ class SpatialPipeline:
                     flush=True,
                     file=sys.stderr,
                 )
+        _dedup_before_count = int(v5_region_dedup_summary.get("before_count", len(pre_dedup_cluster_entries)))
+        _dedup_after_count = int(v5_region_dedup_summary.get("after_count", len(cluster_entries)))
+        _dedup_removed_count = int(v5_region_dedup_summary.get("removed_count", max(0, _dedup_before_count - _dedup_after_count)))
+        _dedup_removed_ratio = (
+            _dedup_removed_count / max(1, _dedup_before_count)
+            if _dedup_before_count > 0
+            else 0.0
+        )
+        v5_region_dedup_summary["removed_ratio"] = round(float(_dedup_removed_ratio), 4)
+        v5_region_dedup_summary["effective_after_count"] = int(_dedup_after_count)
+        v5_region_dedup_summary["effective_removed_count"] = int(
+            max(0, _dedup_before_count - int(v5_region_dedup_summary.get("effective_after_count", _dedup_after_count)))
+        )
+        v5_region_dedup_summary["restored_by_underseg_guard"] = False
+
+        undersegmentation_guard_result = _evaluate_undersegmentation_guard(
+            enabled=undersegmentation_guard_enabled,
+            area_km2=_extract_area_km2(spatial_context),
+            total_candidates=len(pois),
+            cluster_count=len(cluster_entries),
+            min_regions=undersegmentation_min_regions,
+            dedup_before_count=_dedup_before_count,
+            dedup_after_count=_dedup_after_count,
+            dedup_removed_count=_dedup_removed_count,
+            dedup_removed_ratio=_dedup_removed_ratio,
+            area_threshold_km2=undersegmentation_area_threshold_km2,
+            candidate_threshold=undersegmentation_candidate_threshold,
+        )
+        if undersegmentation_guard_result.get("should_restore_pre_dedup") and pre_dedup_cluster_entries:
+            cluster_entries = list(pre_dedup_cluster_entries)
+            boundary_methods = [str(item.get("boundary_method") or "") for item in cluster_entries]
+            effective_cluster_count = len(cluster_entries)
+            undersegmentation_guard_result["restored_pre_dedup"] = True
+            undersegmentation_guard_result["effective_cluster_count"] = int(effective_cluster_count)
+            undersegmentation_guard_result["risk"] = bool(effective_cluster_count < undersegmentation_min_regions)
+            undersegmentation_guard_result["mitigated"] = not undersegmentation_guard_result["risk"]
+            if not undersegmentation_guard_result["risk"]:
+                undersegmentation_guard_result["reason"] = None
+            v5_region_dedup_summary["restored_by_underseg_guard"] = True
+            v5_region_dedup_summary["effective_after_count"] = int(effective_cluster_count)
+            v5_region_dedup_summary["effective_removed_count"] = int(
+                max(0, _dedup_before_count - effective_cluster_count)
+            )
+        else:
+            undersegmentation_guard_result["effective_cluster_count"] = int(len(cluster_entries))
+            undersegmentation_guard_result["mitigated"] = False
 
         name_audit_summary = {
             "rule_rewritten": 0,
@@ -5236,6 +5656,37 @@ class SpatialPipeline:
             cluster_entries=cluster_entries,
             fuzzy_regions=fuzzy_regions,
         )
+        livelihood_profiles = [
+            entry.get("livelihood_profile")
+            for entry in cluster_entries
+            if isinstance(entry.get("livelihood_profile"), dict)
+        ]
+        livelihood_ranking_region_count = sum(
+            1 for profile in livelihood_profiles if profile.get("ranking_applied") is True
+        )
+        livelihood_primary_aligned_regions = sum(
+            1
+            for entry in cluster_entries
+            if isinstance(entry.get("livelihood_profile"), dict)
+            and str((entry.get("livelihood_profile") or {}).get("dominant_primary") or "")
+            and str((entry.get("livelihood_profile") or {}).get("dominant_primary") or "") != _LIVELIHOOD_PRIMARY_FALLBACK
+            and str(entry.get("dominant_category") or "") == str((entry.get("livelihood_profile") or {}).get("dominant_primary") or "")
+        )
+        livelihood_alignment_denominator = livelihood_ranking_region_count or len(cluster_entries)
+        livelihood_primary_alignment_rate = (
+            round(livelihood_primary_aligned_regions / livelihood_alignment_denominator, 4)
+            if livelihood_alignment_denominator > 0
+            else 0.0
+        )
+        avg_livelihood_low_signal_ratio = (
+            round(
+                sum(float(profile.get("low_signal_ratio") or 0.0) for profile in livelihood_profiles)
+                / len(livelihood_profiles),
+                4,
+            )
+            if livelihood_profiles
+            else 0.0
+        )
         fuzzy_summary = cluster_summary["fuzzy_summary"]
         visual_scores = [
             float((entry.get("visual_morphology") or {}).get("score"))
@@ -5383,6 +5834,12 @@ class SpatialPipeline:
                 "fuzzy_transition_count": fuzzy_summary["transition"],
                 "fuzzy_periphery_count": fuzzy_summary["periphery"],
                 "region_output_limit": int(region_output_limit),
+                "livelihood_ranking_enabled": bool(livelihood_ranking_enabled),
+                "livelihood_ranking_applied": bool(livelihood_ranking_applied),
+                "livelihood_ranking_region_count": int(livelihood_ranking_region_count),
+                "livelihood_primary_aligned_regions": int(livelihood_primary_aligned_regions),
+                "livelihood_primary_alignment_rate": float(livelihood_primary_alignment_rate),
+                "avg_livelihood_low_signal_ratio": float(avg_livelihood_low_signal_ratio),
                 "v5_region_dedup_enabled": bool(v5_region_dedup_summary.get("enabled")),
                 "v5_region_dedup_iou_threshold": float(v5_region_dedup_summary.get("iou_threshold", 0.0)),
                 "v5_region_dedup_containment_threshold": float(
@@ -5391,6 +5848,41 @@ class SpatialPipeline:
                 "v5_region_dedup_before_count": int(v5_region_dedup_summary.get("before_count", len(cluster_entries))),
                 "v5_region_dedup_after_count": int(v5_region_dedup_summary.get("after_count", len(cluster_entries))),
                 "v5_region_dedup_removed_count": int(v5_region_dedup_summary.get("removed_count", 0)),
+                "v5_region_dedup_removed_ratio": float(v5_region_dedup_summary.get("removed_ratio", 0.0)),
+                "v5_region_dedup_effective_after_count": int(
+                    v5_region_dedup_summary.get("effective_after_count", len(cluster_entries))
+                ),
+                "v5_region_dedup_effective_removed_count": int(
+                    v5_region_dedup_summary.get("effective_removed_count", 0)
+                ),
+                "v5_region_dedup_restored_by_underseg_guard": bool(
+                    v5_region_dedup_summary.get("restored_by_underseg_guard", False)
+                ),
+                "undersegmentation_guard_enabled": bool(undersegmentation_guard_result.get("enabled")),
+                "undersegmentation_risk": bool(undersegmentation_guard_result.get("risk")),
+                "undersegmentation_reason": undersegmentation_guard_result.get("reason"),
+                "undersegmentation_signals": list(undersegmentation_guard_result.get("signals") or []),
+                "undersegmentation_min_regions": int(
+                    undersegmentation_guard_result.get("min_regions", undersegmentation_min_regions)
+                ),
+                "undersegmentation_cluster_count": int(
+                    undersegmentation_guard_result.get("cluster_count", len(cluster_entries))
+                ),
+                "undersegmentation_effective_cluster_count": int(
+                    undersegmentation_guard_result.get("effective_cluster_count", len(cluster_entries))
+                ),
+                "undersegmentation_total_candidates": int(
+                    undersegmentation_guard_result.get("total_candidates", len(pois))
+                ),
+                "undersegmentation_area_km2": float(
+                    undersegmentation_guard_result.get("area_km2", area_km2)
+                ),
+                "undersegmentation_guard_restored_pre_dedup": bool(
+                    undersegmentation_guard_result.get("restored_pre_dedup", False)
+                ),
+                "undersegmentation_guard_mitigated": bool(
+                    undersegmentation_guard_result.get("mitigated", False)
+                ),
                 "v5_in_memory_join_used": bool(v5_in_memory_join_summary.get("used")),
                 "v5_in_memory_join_enriched_rows": int(v5_in_memory_join_summary.get("enriched_rows", 0)),
                 "v5_in_memory_join_block_matches": int(v5_in_memory_join_summary.get("block_matches", 0)),
@@ -5483,7 +5975,40 @@ class SpatialPipeline:
                         "before_count": int(v5_region_dedup_summary.get("before_count", len(cluster_entries))),
                         "after_count": int(v5_region_dedup_summary.get("after_count", len(cluster_entries))),
                         "removed_count": int(v5_region_dedup_summary.get("removed_count", 0)),
+                        "removed_ratio": float(v5_region_dedup_summary.get("removed_ratio", 0.0)),
+                        "effective_after_count": int(
+                            v5_region_dedup_summary.get("effective_after_count", len(cluster_entries))
+                        ),
+                        "effective_removed_count": int(v5_region_dedup_summary.get("effective_removed_count", 0)),
+                        "restored_by_underseg_guard": bool(
+                            v5_region_dedup_summary.get("restored_by_underseg_guard", False)
+                        ),
                         "removed_examples": list(v5_region_dedup_summary.get("removed_examples") or []),
+                    },
+                    "livelihood": {
+                        "ranking_enabled": bool(livelihood_ranking_enabled),
+                        "ranking_applied": bool(livelihood_ranking_applied),
+                        "ranking_region_count": int(livelihood_ranking_region_count),
+                        "primary_aligned_regions": int(livelihood_primary_aligned_regions),
+                        "primary_alignment_rate": float(livelihood_primary_alignment_rate),
+                        "avg_low_signal_ratio": float(avg_livelihood_low_signal_ratio),
+                    },
+                    "undersegmentation_guard": {
+                        "enabled": bool(undersegmentation_guard_result.get("enabled")),
+                        "risk": bool(undersegmentation_guard_result.get("risk")),
+                        "reason": undersegmentation_guard_result.get("reason"),
+                        "signals": list(undersegmentation_guard_result.get("signals") or []),
+                        "area_km2": float(undersegmentation_guard_result.get("area_km2", area_km2)),
+                        "total_candidates": int(undersegmentation_guard_result.get("total_candidates", len(pois))),
+                        "cluster_count": int(undersegmentation_guard_result.get("cluster_count", len(cluster_entries))),
+                        "effective_cluster_count": int(
+                            undersegmentation_guard_result.get("effective_cluster_count", len(cluster_entries))
+                        ),
+                        "min_regions": int(
+                            undersegmentation_guard_result.get("min_regions", undersegmentation_min_regions)
+                        ),
+                        "restored_pre_dedup": bool(undersegmentation_guard_result.get("restored_pre_dedup", False)),
+                        "mitigated": bool(undersegmentation_guard_result.get("mitigated", False)),
                     },
                     "visual_review_enabled": visual_review_enabled,
                     "visual_remote_enabled": visual_remote_enabled,

@@ -916,14 +916,16 @@ export async function* generateAnswer(userQuestion, executorResult, options = {}
     
     const validation = validateWriterOutput(streamedOutput, executorResult, {
       autoClean: false,
-      addWarning: false
+      addWarning: false,
+      enforceMarkdownContract: true
     })
 
     if (typeof options.onWriterDiagnostics === 'function') {
       options.onWriterDiagnostics({
         query_type: writerProfile.queryType,
         quality_mode: writerProfile.qualityMode,
-        hallucination: validation.hallucinationReport
+        hallucination: validation.hallucinationReport,
+        markdown_contract: validation.markdownContract
       })
     }
 
@@ -1047,6 +1049,7 @@ export default {
   buildQuickReply,
   buildResultContext,
   detectHallucinations,
+  normalizeMarkdownStructure,
   validateWriterOutput
 }
 
@@ -1252,6 +1255,49 @@ export function detectHallucinations(writerOutput, executorResult) {
   return result
 }
 
+function detectMarkdownContractIssues(markdown = '') {
+  const content = String(markdown || '')
+  const issues = []
+  if (/^\s*#{1,6}\s*\*+/m.test(content)) {
+    issues.push('heading_prefix_asterisk')
+  }
+  if (/^\s*#{1,6}.*\*{2,}\s*$/m.test(content)) {
+    issues.push('heading_suffix_asterisk')
+  }
+  if (/^\s*\*{3,}\s*\S+/m.test(content)) {
+    issues.push('asterisk_heading_mixed')
+  }
+  return issues
+}
+
+function normalizeHeadingLine(line = '') {
+  const raw = String(line || '')
+  if (!raw.trim()) return ''
+
+  const pureAsteriskHeadingMatch = raw.match(/^\s*\*{3,}\s*(.+?)\s*\*{0,}\s*$/)
+  if (pureAsteriskHeadingMatch) {
+    const title = String(pureAsteriskHeadingMatch[1] || '').replace(/^\*+|\*+$/g, '').trim()
+    return title ? `### ${title}` : ''
+  }
+
+  const markdownHeadingMatch = raw.match(/^(\s*#{1,6})\s*(.+)$/)
+  if (!markdownHeadingMatch) return raw
+
+  const level = markdownHeadingMatch[1].trim()
+  const cleanedTitle = String(markdownHeadingMatch[2] || '')
+    .replace(/^\*+/, '')
+    .replace(/\*+$/, '')
+    .trim()
+
+  return cleanedTitle ? `${level} ${cleanedTitle}` : `${level}`
+}
+
+export function normalizeMarkdownStructure(markdown = '') {
+  const lines = String(markdown || '').split(/\r?\n/)
+  const normalizedLines = lines.map((line) => normalizeHeadingLine(line))
+  return normalizedLines.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd()
+}
+
 /**
  * 验证并清理 Writer 输出
  * 
@@ -1261,11 +1307,16 @@ export function detectHallucinations(writerOutput, executorResult) {
  * @returns {Object} { cleanedOutput: string, warnings: string[], hallucinationReport: Object }
  */
 export function validateWriterOutput(writerOutput, executorResult, options = {}) {
-  const { autoClean = false, addWarning = true } = options
+  const { autoClean = false, addWarning = true, enforceMarkdownContract = false } = options
   
   const hallucinationReport = detectHallucinations(writerOutput, executorResult)
   let cleanedOutput = writerOutput
   const warnings = []
+  const markdownContract = {
+    enabled: enforceMarkdownContract === true,
+    normalized: false,
+    issues: []
+  }
   
   if (hallucinationReport.hasHallucination) {
     if (autoClean) {
@@ -1281,10 +1332,25 @@ export function validateWriterOutput(writerOutput, executorResult, options = {})
       warnings.push(`⚠️ 回答中可能包含未经验证的地点名称: ${hallucinationReport.hallucinations.join(', ')}`)
     }
   }
+
+  if (enforceMarkdownContract === true) {
+    const issues = detectMarkdownContractIssues(cleanedOutput)
+    const normalizedMarkdown = normalizeMarkdownStructure(cleanedOutput)
+    const normalizedChanged = normalizedMarkdown !== cleanedOutput
+    if (normalizedChanged) {
+      cleanedOutput = normalizedMarkdown
+    }
+    if (issues.length > 0 && addWarning) {
+      warnings.push('已对回答进行 Markdown 结构规范化处理。')
+    }
+    markdownContract.issues = issues
+    markdownContract.normalized = normalizedChanged
+  }
   
   return {
     cleanedOutput,
     warnings,
-    hallucinationReport
+    hallucinationReport,
+    markdownContract
   }
 }

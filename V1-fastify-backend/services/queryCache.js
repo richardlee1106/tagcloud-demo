@@ -280,6 +280,19 @@ function toFiniteNumber(value) {
   return Number.isFinite(numeric) ? numeric : null
 }
 
+function normalizeCacheKeyVersion(rawVersion) {
+  const normalized = String(rawVersion || '').trim().toLowerCase()
+  if (normalized === 'v1') return 'v1'
+  return 'v2'
+}
+
+export function resolveCacheKeyVersion(rawVersion = null) {
+  if (rawVersion != null) {
+    return normalizeCacheKeyVersion(rawVersion)
+  }
+  return normalizeCacheKeyVersion(process.env.SPATIAL_CACHE_KEY_VERSION || 'v2')
+}
+
 function normalizeQuestionForFingerprint(question) {
   return String(question || '')
     .trim()
@@ -327,7 +340,82 @@ function buildBoundarySignature(boundary) {
   }
 }
 
-export function generateQueryFingerprint(queryPlan, spatialContext = {}, extra = {}) {
+function normalizeViewportBounds(viewport) {
+  if (!Array.isArray(viewport) || viewport.length < 4) return null
+  const bounds = viewport.slice(0, 4).map((value) => toFiniteNumber(value))
+  if (!bounds.every((value) => value !== null)) return null
+  return bounds.map((value) => Number(value).toFixed(4))
+}
+
+function normalizeRegionsForDigest(regions = []) {
+  if (!Array.isArray(regions) || regions.length === 0) return []
+  const normalized = []
+
+  for (const item of regions) {
+    if (!item) continue
+
+    if (typeof item === 'string' || typeof item === 'number') {
+      normalized.push(String(item))
+      continue
+    }
+
+    if (typeof item === 'object') {
+      const id = item.id ?? item.region_id ?? item.name ?? item.label
+      if (id != null) {
+        normalized.push(String(id))
+        continue
+      }
+      try {
+        normalized.push(JSON.stringify(item))
+      } catch {
+        // ignore non-serializable region entry
+      }
+    }
+  }
+
+  return normalized.sort()
+}
+
+function resolveViewportHash(spatialContext = {}, extra = {}) {
+  return String(
+    extra?.viewportHash
+    || extra?.contextBinding?.viewport_hash
+    || spatialContext?.context_binding?.viewport_hash
+    || spatialContext?.viewport_hash
+    || ''
+  ).trim()
+}
+
+function resolveMapZoomBucket(spatialContext = {}, extra = {}) {
+  const zoomRaw = toFiniteNumber(
+    extra?.mapZoom
+    ?? extra?.map_zoom
+    ?? spatialContext?.map_zoom
+    ?? spatialContext?.zoom
+  )
+  if (zoomRaw === null) return null
+  return Math.max(0, Math.round(zoomRaw))
+}
+
+function resolveDrawMode(queryPlan = {}, spatialContext = {}, extra = {}) {
+  const drawMode = String(
+    extra?.drawMode
+    || extra?.draw_mode
+    || spatialContext?.draw_mode
+    || spatialContext?.mode
+    || queryPlan?.scope?.geometry_source
+    || ''
+  ).trim().toLowerCase()
+  return drawMode || null
+}
+
+function resolveViewportBounds(spatialContext = {}, extra = {}) {
+  const fromExtra = normalizeViewportBounds(extra?.viewportBounds || extra?.viewport_bounds)
+  if (fromExtra) return fromExtra
+  return normalizeViewportBounds(spatialContext?.viewport)
+}
+
+function buildFingerprintDataV1(queryPlan, spatialContext = {}, extra = {}) {
   const fingerprintData = {}
 
   fingerprintData.type = queryPlan.query_type || 'unknown'
@@ -413,6 +501,133 @@ export function generateQueryFingerprint(queryPlan, spatialContext = {}, extra =
   const normalizedQuestion = normalizeQuestionForFingerprint(extra?.userQuestion || extra?.query || '')
   if (normalizedQuestion) {
     fingerprintData.user_question_digest = hashFragment(normalizedQuestion)
+  }
+
+  return fingerprintData
+}
+
+export function generateQueryFingerprint(queryPlan, spatialContext = {}, extra = {}) {
+  const cacheKeyVersion = resolveCacheKeyVersion(extra?.cacheKeyVersion)
+  const fallbackVersion = resolveCacheKeyVersion(process.env.SPATIAL_CACHE_KEY_VERSION || 'v2')
+  const activeVersion = cacheKeyVersion || fallbackVersion
+
+  if (activeVersion === 'v1') {
+    const dataString = JSON.stringify(buildFingerprintDataV1(queryPlan, spatialContext, extra))
+    return createHash('md5').update(dataString).digest('hex')
+  }
+
+  const sourcePolicy = extra?.sourcePolicy || {}
+  const selectedCategories = Array.isArray(sourcePolicy?.selected_categories)
+    ? [...sourcePolicy.selected_categories].map((item) => String(item || '')).filter(Boolean).sort()
+    : []
+
+  const viewportHash = resolveViewportHash(spatialContext, extra)
+  const viewportBounds = resolveViewportBounds(spatialContext, extra)
+  const boundarySignature = buildBoundarySignature(spatialContext.boundary || extra?.boundary)
+  const mapZoomBucket = resolveMapZoomBucket(spatialContext, extra)
+  const drawMode = resolveDrawMode(queryPlan, spatialContext, extra)
+  const normalizedQuestion = normalizeQuestionForFingerprint(extra?.userQuestion || extra?.query || '')
+  const normalizedQueryType = String(extra?.queryType || queryPlan?.query_type || 'unknown').trim().toLowerCase()
+
+  const fingerprintData = {
+    cache_key_version: activeVersion,
+    query_type: normalizedQueryType,
+    type: queryPlan?.query_type || 'unknown',
+    categories: Array.isArray(queryPlan?.categories)
+      ? [...queryPlan.categories].map((item) => String(item || '')).filter(Boolean).sort()
+      : []
+  }
+
+  const centerLat = toFiniteNumber(
+    spatialContext?.center?.lat
+    ?? queryPlan?.anchor?.lat
+    ?? extra?.center?.lat
+  )
+  const centerLon = toFiniteNumber(
+    spatialContext?.center?.lon
+    ?? queryPlan?.anchor?.lon
+    ?? extra?.center?.lon
+  )
+  if (centerLat !== null && centerLon !== null && centerLat >= -90 && centerLat <= 90 && centerLon >= -180 && centerLon <= 180) {
+    try {
+      fingerprintData.h3_center = h3.latLngToCell(centerLat, centerLon, CACHE_CONFIG.h3Resolution)
+    } catch {
+      fingerprintData.approx_center = `${centerLat.toFixed(3)},${centerLon.toFixed(3)}`
+    }
+  } else if (viewportBounds) {
+    const [minLon, minLat, maxLon, maxLat] = viewportBounds.map((value) => Number(value))
+    const viewportCenterLat = (minLat + maxLat) / 2
+    const viewportCenterLon = (minLon + maxLon) / 2
+    try {
+      fingerprintData.h3_center = h3.latLngToCell(viewportCenterLat, viewportCenterLon, CACHE_CONFIG.h3Resolution)
+    } catch {
+      fingerprintData.approx_center = `${viewportCenterLat.toFixed(3)},${viewportCenterLon.toFixed(3)}`
+    }
+  }
+
+  if (viewportBounds) {
+    fingerprintData.viewport_bounds = viewportBounds
+  }
+  if (viewportHash) {
+    fingerprintData.viewport_hash = viewportHash
+  }
+  if (drawMode) {
+    fingerprintData.draw_mode = drawMode
+  }
+  if (boundarySignature?.digest) {
+    fingerprintData.boundary_digest = boundarySignature.digest
+  }
+
+  const regionsDigest = hashFragment(
+    normalizeRegionsForDigest(
+      extra?.regions
+      || queryPlan?.target_regions
+      || spatialContext?.regions
+      || []
+    ).join('|')
+  )
+  if (regionsDigest) {
+    fingerprintData.regions_digest = regionsDigest
+  }
+
+  if (mapZoomBucket !== null) {
+    fingerprintData.map_zoom_bucket = mapZoomBucket
+  }
+
+  if (queryPlan?.radius_m) {
+    fingerprintData.radius_bucket = Math.ceil(queryPlan.radius_m / CACHE_CONFIG.radiusBucket) * CACHE_CONFIG.radiusBucket
+  }
+
+  if (queryPlan?.semantic_query) {
+    fingerprintData.semantic = String(queryPlan.semantic_query).trim().toLowerCase()
+  }
+
+  if (queryPlan?.aggregation_strategy?.enable) {
+    fingerprintData.aggregation = true
+    fingerprintData.sampling = queryPlan?.sampling_strategy?.method || 'default'
+  }
+
+  fingerprintData.source_policy = {
+    category_source: sourcePolicy?.category_source || null,
+    geometry_source: sourcePolicy?.geometry_source || null,
+    has_custom_area: Boolean(sourcePolicy?.has_custom_area),
+    has_category_filter: Boolean(sourcePolicy?.has_category_filter),
+    selected_categories: selectedCategories
+  }
+
+  if (extra?.route) {
+    fingerprintData.route = String(extra.route)
+  }
+
+  if (normalizedQuestion) {
+    fingerprintData.user_question_digest = hashFragment(normalizedQuestion)
+  }
+
+  if (extra?.modelProfile && typeof extra.modelProfile === 'object') {
+    const modelProfileDigest = hashFragment(JSON.stringify(extra.modelProfile))
+    if (modelProfileDigest) {
+      fingerprintData.model_profile_digest = modelProfileDigest
+    }
   }
 
   const dataString = JSON.stringify(fingerprintData)
@@ -656,6 +871,7 @@ if (typeof cacheMaintenanceTimer.unref === 'function') {
 
 export default {
   generateQueryFingerprint,
+  resolveCacheKeyVersion,
   getFromCache,
   setToCache,
   acquireComputationLock,
