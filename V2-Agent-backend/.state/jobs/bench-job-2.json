@@ -1,0 +1,20 @@
+{
+  "job_id": "bench-job-2",
+  "trace_id": "bench-trace-2",
+  "state": "S7_DEEP_DONE",
+  "result_version": 3,
+  "history": [
+    "S0_RECEIVED",
+    "S7_DEEP_DONE"
+  ],
+  "fast_result": {
+    "result_type": "fast_initial"
+  },
+  "deep_partial": {
+    "result_type": "deep_patch"
+  },
+  "deep_final": {
+    "result_type": "deep_final"
+  },
+  "updated_at": "2026-03-08T13:47:22.113Z"
+}

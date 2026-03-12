@@ -47,6 +47,15 @@
 - `docs/plans/2026-03-05-phase-f-followup-4-issues-remediation-plan.md`（用于 V1 问题背景对照）。
 - 当前仓库代码树（仅用于 V2 新建，不复用 V1 业务代码）。
 
+### 0.4 本轮评审结论落地（仅写入计划，不立即开发）
+- 本文已纳入 5 个高优先修订项（P0）：
+  - DSL 正式规范补齐（语法、schema、版本）。
+  - Fast Lane 门禁分级（10s 目标不变，先达可落地门槛再收敛）。
+  - 缓存策略补齐（结果缓存 + 中间缓存 + 失效规则）。
+  - 状态机补齐（`S6_DEEP_PARTIAL` 行为、状态持久化、超时恢复）。
+  - 资源限制量化（CPU/内存/超时阈值与超限动作）。
+- 前端交互需求已写入计划：在“空间选区”控件左侧新增“架构选择”入口（`V1架构` / `V2 Agent架构`）用于 A/B 对比切换；当前阶段仅作为实施条目，不执行代码开发。
+
 ---
 
 ## 1. 目标与非目标
@@ -125,6 +134,39 @@
   "constraints": {"lane": "fast", "deadline_ms": 10000, "max_retries": 2}
 }
 ```
+
+## 4.4 DSL 正式规范（P0 补齐）
+### 4.4.1 设计目标
+- 让 LLM->Agent->Tool 的中间契约可校验、可版本化、可回放。
+- 禁止自由文本直接驱动工具执行，必须先落地为 DSL AST。
+
+### 4.4.2 DSL 抽象结构（v0）
+```json
+{
+  "dsl_version": "dsl.v0.1",
+  "intent_type": "area_analysis|overlay|network_analysis",
+  "scope": {
+    "aoi_source": "user_aoi|viewport|named_region",
+    "crs": "EPSG:4326"
+  },
+  "pipeline": [
+    {"op": "clip", "args": {"source": "poi", "mask": "aoi"}},
+    {"op": "buffer", "args": {"distance": 50, "unit": "m"}},
+    {"op": "merge", "args": {"dissolve": true}},
+    {"op": "export_geojson", "args": {"filename": "poi_buffer_50m.geojson"}}
+  ],
+  "constraints": {"deadline_ms": 10000, "max_retries": 2}
+}
+```
+
+### 4.4.3 轻量语法（便于人读）
+- `clip(source=poi, mask=aoi) -> buffer(distance=50m) -> merge(dissolve=true) -> export(type=geojson)`
+- 编译规则：语法串 -> AST(JSON) -> schema 校验 -> 执行计划。
+
+### 4.4.4 版本策略
+- `dsl.v0.x`：允许字段新增，不允许语义破坏。
+- `dsl.v1.0`：冻结核心算子签名（`clip/buffer/merge/export`）。
+- 兼容策略：执行层至少兼容当前主版本和前一小版本。
 
 ---
 
@@ -229,6 +271,21 @@
 - Plan Graph 必须环检测，发现环直接失败并输出诊断。
 - 前端合并规则：按 `result_version` 单调递增，不允许回退覆盖。
 
+## 6.5 状态补齐（P0）
+### 6.5.1 `S6_DEEP_PARTIAL` 处理
+- 定义：Deep 任务输出了可合并分片，但未达到最终完成条件。
+- 前端行为：显示“阶段性结果”，并以 `result_version` 增量合并，不覆盖已确认结果。
+- 后端行为：继续执行剩余步骤，直到 `S7_DEEP_DONE` 或 `S8_TERMINAL_DEGRADED`。
+
+### 6.5.2 状态持久化
+- 持久层：Redis（热状态）+ PostgreSQL（审计/恢复）。
+- 持久字段：`trace_id`、`state`、`result_version`、`last_event_ts`、`retry_count`、`budget_left_ms`。
+
+### 6.5.3 超时恢复
+- 进程重启后按 `trace_id` 恢复最近状态。
+- 若 `deadline` 已过：转 `S8_TERMINAL_DEGRADED` 并返回可用中间结果。
+- 若 `deadline` 未过：从最近未完成 `plan_step` 继续执行。
+
 ---
 
 ## 7. 时间预算与调度策略
@@ -253,6 +310,29 @@
 ## 7.3 动态预算分配（建议公式）
 - `budget_step = remaining_budget * weight(step_kind, uncertainty, risk)`
 - 当 `critical_path` 连续两次集中于同类步骤时，下一轮自动降低其预算上限并触发降维策略。
+
+## 7.4 Fast Lane 门禁分级（P0）
+- 目标不变：`P95 <= 10s`。
+- 发布门禁采用两阶段：
+  - Gate-1（上线门槛）：`P95 <= 12s`，并确保降级可用率 `100%`。
+  - Gate-2（收敛目标）：`P95 <= 10s`，稳定后固化为硬门禁。
+- 支撑机制：
+  - LLM 预热、Python worker 预热、连接池预热。
+  - 首 token 优先策略，减少感知等待。
+
+## 7.5 缓存策略（P0）
+### 7.5.1 缓存层级
+- L1（请求结果缓存）：相同 DSL + 相同数据版本命中直接返回。
+- L2（中间算子缓存）：`clip/buffer/merge` 中间结果可复用。
+- L3（检索缓存）：Retrieval 候选与排序结果短期缓存。
+
+### 7.5.2 Key 设计
+- `cache_key = hash(dsl_ast + data_snapshot + tool_version + crs + params)`
+- 必含 `data_snapshot`，避免脏缓存污染。
+
+### 7.5.3 TTL 与失效
+- L1: 5-15 分钟；L2: 15-60 分钟；L3: 1-5 分钟（可配置）。
+- 数据更新、schema 升级、工具版本变更时强制失效。
 
 ---
 
@@ -333,6 +413,15 @@
 - 契约采用语义化版本：`contract.vX.Y`。
 - 新增字段只增不删；删字段需经历 `deprecated -> removed`。
 
+## 9.4 前端架构切换入口（计划项，暂不开发）
+- 需求：在前端 head 栏“空间选区”`el-select` 左侧新增一个同风格 `el-select`。
+- 选项：`V1架构`、`V2 Agent架构`。
+- 目的：作为后端路由切换入口，便于同一查询在 V1/V2 间做效果对比与回归。
+- 实施约束（后续开发阶段）：
+  - 切换仅影响请求路由目标，不改变查询文本本身。
+  - 切换状态应持久化到会话级（刷新后可恢复）。
+  - 所有对比请求必须附带 `arch_mode` 埋点（`v1|v2`）。
+
 ---
 
 ## 10. 安全与稳健性设计
@@ -341,6 +430,16 @@
 - 提示词注入防护：用户输入与系统工具指令分层隔离。
 - 数据脱敏：日志与 incident bundle 禁止直接输出敏感原文。
 - 资源保护：每请求 CPU/内存/时间预算上限。
+
+## 10.1 资源限制量化（P0）
+- 默认阈值（可按环境配置）：
+  - 单请求 CPU 时间上限：`1500ms`（控制平面）/ `5000ms`（工具平面）。
+  - 单请求内存上限：`512MB`（控制平面）/ `1024MB`（工具平面）。
+  - Fast Lane 硬超时：`10000ms`；Deep Lane 按 DL1/DL2/DL3。
+- 超限动作：
+  - 第一次超限：记录 `budget_exceeded` + 降级。
+  - 连续超限：触发熔断窗口并切换低成本策略。
+  - 严重超限：终止当前 step，返回中间结果与诊断建议。
 
 ---
 
@@ -522,4 +621,22 @@ V2-Agent-backend/
 - 变更需记录版本与日期：
   - `Spec-Version: v2.0`
   - `Last-Updated: 2026-03-05`
+
+---
+
+## 17. 剩余可优化项（非阻塞）
+> 说明：以下项目不阻塞 P0/P1 主链路落地，但建议按优先级逐步补齐。
+
+| 项目 | 当前现状 | 建议补齐 | 优先级 | 触发条件 | 交付件 |
+|---|---|---|---|---|---|
+| DSL 完整 JSON Schema 文件 | 4.4 已给 DSL 结构与语法示例，但尚未落地独立 schema 文件 | 在 `observability/schemas` 之外新增 `dsl-schema/*.json`，并在 CI 中做 DSL 入参校验 | 高 | P1 进入联调前 | `dsl.v0.1.schema.json`、校验脚本、示例用例 |
+| DSL x Tool 版本兼容矩阵 | 当前仅有“兼容当前+前一小版本”原则，未给映射表 | 补充“DSL 版本 × Tool 版本 × 兼容状态”对照表，并绑定回归样本 | 高 | 首次多工具并行接入前 | 兼容矩阵文档、版本回归报告 |
+| 前端地图联动细节 | 9.2/9.3 已定义结果契约与版本规则，9.4 已定义架构切换入口需求 | 补前端 SDK 级消费规范：`deep.patch` 合并策略、地图图层刷新策略、失败回滚 UI 行为 | 中 | 前端进入 V2 可视化联调前 | 前端联动规范、时序图、验收清单 |
+| P4 自动化回放闭环 | 12 章已定义循环流程，但自动化基建未落地 | 先做最小自动化（固定样本 + 定时回放 + 指标对比），再做错误聚类与根因建议自动化 | 中 | P3 验证稳定后 | 回放作业脚本、日报模板、回归看板 |
+
+### 17.1 执行顺序建议（非阻塞）
+1. `DSL 完整 JSON Schema 文件`
+2. `DSL x Tool 版本兼容矩阵`
+3. `前端地图联动细节`
+4. `P4 自动化回放闭环`
 

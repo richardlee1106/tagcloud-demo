@@ -1,0 +1,291 @@
+{
+  "job_id": "fa4d3806-eff3-435b-8846-d652b8e93023",
+  "trace_id": "c7fc2048-cc2a-4860-aecc-c7bb6e90bfee",
+  "state": "S7_DEEP_DONE",
+  "result_version": 3,
+  "history": [
+    "S0_RECEIVED",
+    "S1_CHAIN_PLANNED",
+    "S2_FAST_RUNNING",
+    "S3_FAST_DONE",
+    "S4_DEEP_QUEUED",
+    "S5_DEEP_RUNNING",
+    "S6_DEEP_PARTIAL",
+    "S7_DEEP_DONE"
+  ],
+  "objective": "legacy_fallback",
+  "routing_output": {
+    "objective": "legacy_fallback",
+    "confidence": 0.6,
+    "routing_features": {
+      "compare_hits": 0,
+      "micro_hits": 0,
+      "macro_hits": 0,
+      "has_distance": false,
+      "has_current_area": false,
+      "bbox_area": 0.003,
+      "zoom": 15,
+      "history_turns": 0,
+      "matched_keywords": {},
+      "allowlist_hit": false
+    },
+    "legacy_hint": "fallback-summary",
+    "allowlist_hit": false,
+    "execution_path": "legacy",
+    "query_type": "area_analysis",
+    "primary_intent": "micro",
+    "sub_intent": "summary",
+    "selected_agents": [],
+    "routing_source": "rule",
+    "llm_reasoning": null,
+    "llm_confidence": null
+  },
+  "execution_path": "legacy",
+  "fallback": {
+    "reason_code": "objective_not_in_allowlist",
+    "legacy_hint": "fallback-summary"
+  },
+  "intent": {
+    "primary_intent": "micro",
+    "sub_intent": "summary",
+    "query_type": "area_analysis",
+    "confidence": 0.6,
+    "features": {
+      "compare_hits": 0,
+      "micro_hits": 0,
+      "macro_hits": 0,
+      "has_distance": false,
+      "has_current_area": false,
+      "bbox_area": 0.003,
+      "zoom": 15,
+      "history_turns": 0
+    },
+    "feature_vector": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      15,
+      0.003,
+      0
+    ]
+  },
+  "template": {
+    "id": "macro-hotspot-summary",
+    "base_score": 0.81,
+    "score": 0.9422,
+    "learned_adjustment": 0.1322,
+    "strategy": "rule+learning"
+  },
+  "objective_contract": {
+    "objective": "legacy_fallback",
+    "response_mode": "legacy_fallback",
+    "must_cover": [
+      "summary"
+    ],
+    "latency_budget_ms": 30000,
+    "requires_grounding": false,
+    "requires_artifact": false,
+    "quality_level": "fast",
+    "request_context": {
+      "session_id": "debug-cn-live-after-restart",
+      "query": "?? 30 ?????????????????????????????????",
+      "history_summary": []
+    },
+    "scope": {
+      "aoi_source": "viewport",
+      "viewport": {
+        "bbox": [
+          114.3,
+          30.52,
+          114.36,
+          30.57
+        ],
+        "zoom": 15
+      },
+      "regions": [],
+      "crs": "EPSG:4326"
+    },
+    "execution_policy": {
+      "lane": "fast_then_deep",
+      "deadline_ms": 30000,
+      "max_retries": 2,
+      "allow_fallback": true,
+      "deep_mode": "background",
+      "objective_bias": "legacy_fallback"
+    },
+    "artifact_policy": {
+      "artifact_required": false,
+      "artifact_type": null,
+      "delivery_mode": "none"
+    },
+    "fallback_policy": {
+      "allowlist_hit": false,
+      "legacy_hint": "fallback-summary",
+      "fallback_target": "legacy-compatible-path"
+    }
+  },
+  "grounding_result": null,
+  "quality_decision": null,
+  "fast_result": {
+    "schema_version": "contract.v2.0",
+    "capabilities": [
+      "intent-routing",
+      "objective-routing",
+      "task-orchestration",
+      "template-ranking",
+      "dsl-validation",
+      "data-grounding",
+      "specialist-agents",
+      "quality-guard",
+      "layered-cache",
+      "tool-execution",
+      "sse-streaming",
+      "incident-bundle"
+    ],
+    "trace_id": "c7fc2048-cc2a-4860-aecc-c7bb6e90bfee",
+    "job_id": "fa4d3806-eff3-435b-8846-d652b8e93023",
+    "result_type": "fast_initial",
+    "result_version": 1,
+    "state": "S3_FAST_DONE",
+    "objective": "legacy_fallback",
+    "execution_path": "legacy",
+    "routing_output": {
+      "objective": "legacy_fallback",
+      "confidence": 0.6,
+      "routing_features": {
+        "compare_hits": 0,
+        "micro_hits": 0,
+        "macro_hits": 0,
+        "has_distance": false,
+        "has_current_area": false,
+        "bbox_area": 0.003,
+        "zoom": 15,
+        "history_turns": 0,
+        "matched_keywords": {},
+        "allowlist_hit": false
+      },
+      "legacy_hint": "fallback-summary",
+      "allowlist_hit": false,
+      "execution_path": "legacy",
+      "query_type": "area_analysis",
+      "primary_intent": "micro",
+      "sub_intent": "summary",
+      "selected_agents": [],
+      "routing_source": "rule",
+      "llm_reasoning": null,
+      "llm_confidence": null
+    },
+    "fallback": {
+      "reason_code": "objective_not_in_allowlist",
+      "legacy_hint": "fallback-summary"
+    },
+    "intent": {
+      "primary_intent": "micro",
+      "sub_intent": "summary",
+      "query_type": "area_analysis",
+      "confidence": 0.6,
+      "features": {
+        "compare_hits": 0,
+        "micro_hits": 0,
+        "macro_hits": 0,
+        "has_distance": false,
+        "has_current_area": false,
+        "bbox_area": 0.003,
+        "zoom": 15,
+        "history_turns": 0
+      },
+      "feature_vector": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        15,
+        0.003,
+        0
+      ]
+    },
+    "template": {
+      "id": "macro-hotspot-summary",
+      "base_score": 0.81,
+      "score": 0.9422,
+      "learned_adjustment": 0.1322,
+      "strategy": "rule+learning"
+    },
+    "summary": {
+      "text": "V2 GIS analysis completed with 3 GeoJSON features."
+    },
+    "telemetry": {
+      "cache_hit": false,
+      "cache_level": null,
+      "duration_ms": 4.67
+    }
+  },
+  "deep_partial": {
+    "schema_version": "contract.v2.0",
+    "capabilities": [
+      "intent-routing",
+      "objective-routing",
+      "task-orchestration",
+      "template-ranking",
+      "dsl-validation",
+      "data-grounding",
+      "specialist-agents",
+      "quality-guard",
+      "layered-cache",
+      "tool-execution",
+      "sse-streaming",
+      "incident-bundle"
+    ],
+    "trace_id": "c7fc2048-cc2a-4860-aecc-c7bb6e90bfee",
+    "job_id": "fa4d3806-eff3-435b-8846-d652b8e93023",
+    "result_type": "deep_patch",
+    "result_version": 2,
+    "state": "S6_DEEP_PARTIAL",
+    "objective": "legacy_fallback",
+    "execution_path": "legacy",
+    "summary": {
+      "text": "Partial deep result is ready."
+    },
+    "telemetry": {
+      "cache_hit": false,
+      "cache_level": null
+    }
+  },
+  "deep_final": {
+    "schema_version": "contract.v2.0",
+    "capabilities": [
+      "intent-routing",
+      "objective-routing",
+      "task-orchestration",
+      "template-ranking",
+      "dsl-validation",
+      "data-grounding",
+      "specialist-agents",
+      "quality-guard",
+      "layered-cache",
+      "tool-execution",
+      "sse-streaming",
+      "incident-bundle"
+    ],
+    "trace_id": "c7fc2048-cc2a-4860-aecc-c7bb6e90bfee",
+    "job_id": "fa4d3806-eff3-435b-8846-d652b8e93023",
+    "result_type": "deep_final",
+    "result_version": 3,
+    "state": "S7_DEEP_DONE",
+    "objective": "legacy_fallback",
+    "execution_path": "legacy",
+    "summary": {
+      "text": "Deep analysis completed."
+    },
+    "evidence": [],
+    "evidence_refs": [],
+    "telemetry": {
+      "cache_hit": false,
+      "cache_level": null
+    }
+  },
+  "updated_at": "2026-03-09T15:09:21.412Z"
+}

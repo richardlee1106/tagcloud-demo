@@ -1,0 +1,167 @@
+{
+  "job_id": "bb45045b-1006-4001-9cbe-b6e7a0b622c3",
+  "trace_id": "f9a060ad-b852-40f8-bca2-cea2bbefb3fc",
+  "state": "S7_DEEP_DONE",
+  "result_version": 3,
+  "history": [
+    "S0_RECEIVED",
+    "S1_CHAIN_PLANNED",
+    "S2_FAST_RUNNING",
+    "S3_FAST_DONE",
+    "S4_DEEP_QUEUED",
+    "S5_DEEP_RUNNING",
+    "S6_DEEP_PARTIAL",
+    "S7_DEEP_DONE"
+  ],
+  "intent": {
+    "primary_intent": "micro",
+    "sub_intent": "buffer_merge",
+    "query_type": "area_analysis",
+    "confidence": 0.92,
+    "features": {
+      "compare_hits": 0,
+      "micro_hits": 4,
+      "macro_hits": 0,
+      "has_distance": true,
+      "has_current_area": true,
+      "bbox_area": 0.003,
+      "zoom": 15,
+      "history_turns": 0
+    },
+    "feature_vector": [
+      0,
+      4,
+      0,
+      1,
+      1,
+      15,
+      0.003,
+      0
+    ]
+  },
+  "template": {
+    "id": "vector-buffer-merge",
+    "base_score": 0.74,
+    "score": 0.9924,
+    "learned_adjustment": 0.1724,
+    "strategy": "rule+learning"
+  },
+  "fast_result": {
+    "schema_version": "contract.v2.0",
+    "capabilities": [
+      "intent-routing",
+      "template-ranking",
+      "dsl-validation",
+      "layered-cache",
+      "tool-execution",
+      "sse-streaming",
+      "incident-bundle"
+    ],
+    "trace_id": "f9a060ad-b852-40f8-bca2-cea2bbefb3fc",
+    "job_id": "bb45045b-1006-4001-9cbe-b6e7a0b622c3",
+    "result_type": "fast_initial",
+    "result_version": 1,
+    "state": "S3_FAST_DONE",
+    "intent": {
+      "primary_intent": "micro",
+      "sub_intent": "buffer_merge",
+      "query_type": "area_analysis",
+      "confidence": 0.92,
+      "features": {
+        "compare_hits": 0,
+        "micro_hits": 4,
+        "macro_hits": 0,
+        "has_distance": true,
+        "has_current_area": true,
+        "bbox_area": 0.003,
+        "zoom": 15,
+        "history_turns": 0
+      },
+      "feature_vector": [
+        0,
+        4,
+        0,
+        1,
+        1,
+        15,
+        0.003,
+        0
+      ]
+    },
+    "template": {
+      "id": "vector-buffer-merge",
+      "base_score": 0.74,
+      "score": 0.9924,
+      "learned_adjustment": 0.1724,
+      "strategy": "rule+learning"
+    },
+    "artifact": {
+      "path": "D:\\AAA_Edu\\TagCloud\\vite-project\\V2-Agent-backend\\artifacts\\f9a060ad-b852-40f8-bca2-cea2bbefb3fc.geojson",
+      "format": "geojson"
+    },
+    "summary": {
+      "text": "V2 GIS analysis completed with 1 GeoJSON features."
+    },
+    "telemetry": {
+      "cache_hit": false,
+      "cache_level": null,
+      "duration_ms": 73.36
+    }
+  },
+  "deep_partial": {
+    "schema_version": "contract.v2.0",
+    "capabilities": [
+      "intent-routing",
+      "template-ranking",
+      "dsl-validation",
+      "layered-cache",
+      "tool-execution",
+      "sse-streaming",
+      "incident-bundle"
+    ],
+    "trace_id": "f9a060ad-b852-40f8-bca2-cea2bbefb3fc",
+    "job_id": "bb45045b-1006-4001-9cbe-b6e7a0b622c3",
+    "result_type": "deep_patch",
+    "result_version": 2,
+    "state": "S6_DEEP_PARTIAL",
+    "summary": {
+      "text": "Partial deep result is ready. GeoJSON artifact can already be used."
+    },
+    "artifact": {
+      "path": "D:\\AAA_Edu\\TagCloud\\vite-project\\V2-Agent-backend\\artifacts\\f9a060ad-b852-40f8-bca2-cea2bbefb3fc.geojson",
+      "format": "geojson"
+    },
+    "telemetry": {
+      "cache_hit": false,
+      "cache_level": null
+    }
+  },
+  "deep_final": {
+    "schema_version": "contract.v2.0",
+    "capabilities": [
+      "intent-routing",
+      "template-ranking",
+      "dsl-validation",
+      "layered-cache",
+      "tool-execution",
+      "sse-streaming",
+      "incident-bundle"
+    ],
+    "trace_id": "f9a060ad-b852-40f8-bca2-cea2bbefb3fc",
+    "job_id": "bb45045b-1006-4001-9cbe-b6e7a0b622c3",
+    "result_type": "deep_final",
+    "result_version": 3,
+    "state": "S7_DEEP_DONE",
+    "summary": {
+      "text": "Deep analysis completed. GeoJSON file is available at D:\\AAA_Edu\\TagCloud\\vite-project\\V2-Agent-backend\\artifacts\\f9a060ad-b852-40f8-bca2-cea2bbefb3fc.geojson."
+    },
+    "evidence_refs": [
+      "D:\\AAA_Edu\\TagCloud\\vite-project\\V2-Agent-backend\\artifacts\\f9a060ad-b852-40f8-bca2-cea2bbefb3fc.geojson"
+    ],
+    "telemetry": {
+      "cache_hit": false,
+      "cache_level": null
+    }
+  },
+  "updated_at": "2026-03-08T14:06:23.488Z"
+}

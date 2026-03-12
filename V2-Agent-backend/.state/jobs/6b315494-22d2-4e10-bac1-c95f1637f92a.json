@@ -1,0 +1,616 @@
+{
+  "job_id": "6b315494-22d2-4e10-bac1-c95f1637f92a",
+  "trace_id": "6fa3cfd0-79e1-41c8-9624-25c88eda7e53",
+  "state": "S7_DEEP_DONE",
+  "result_version": 3,
+  "history": [
+    "S0_RECEIVED",
+    "S1_CHAIN_PLANNED",
+    "S2_FAST_RUNNING",
+    "S3_FAST_DONE",
+    "S4_DEEP_QUEUED",
+    "S5_DEEP_RUNNING",
+    "S6_DEEP_PARTIAL",
+    "S7_DEEP_DONE"
+  ],
+  "objective": "area_briefing",
+  "routing_output": {
+    "objective": "area_briefing",
+    "confidence": 0.76,
+    "routing_features": {
+      "compare_hits": 0,
+      "micro_hits": 0,
+      "macro_hits": 0,
+      "has_distance": false,
+      "has_current_area": false,
+      "bbox_area": 0.003,
+      "zoom": 15,
+      "history_turns": 0,
+      "matched_keywords": {
+        "areaBriefing": [
+          "片区"
+        ],
+        "dominant": [
+          "业态",
+          "主导"
+        ],
+        "hotspot": [
+          "热点"
+        ],
+        "opportunity": [
+          "机会"
+        ]
+      },
+      "allowlist_hit": true
+    },
+    "legacy_hint": "micro-poi-summary",
+    "allowlist_hit": true,
+    "execution_path": "new_agent",
+    "query_type": "area_analysis",
+    "primary_intent": "micro",
+    "sub_intent": "hotspot"
+  },
+  "execution_path": "new_agent",
+  "fallback": null,
+  "intent": null,
+  "template": null,
+  "objective_contract": {
+    "objective": "area_briefing",
+    "response_mode": "brief_30s",
+    "must_cover": [
+      "dominant_industries",
+      "hotspots",
+      "opportunity_points"
+    ],
+    "latency_budget_ms": 30000,
+    "requires_grounding": true,
+    "requires_artifact": false,
+    "quality_level": "fast",
+    "request_context": {
+      "session_id": "smoke-user",
+      "query": "请在30秒内给我这片区的关键结论：主导业态、活力热点、最值得关注的机会点。",
+      "history_summary": []
+    },
+    "scope": {
+      "aoi_source": "viewport",
+      "viewport": {
+        "bbox": [
+          114.3,
+          30.52,
+          114.36,
+          30.57
+        ],
+        "zoom": 15
+      },
+      "regions": [],
+      "crs": "EPSG:4326"
+    },
+    "execution_policy": {
+      "lane": "fast_then_deep",
+      "deadline_ms": 30000,
+      "max_retries": 2,
+      "allow_fallback": true,
+      "deep_mode": "background",
+      "objective_bias": "area_briefing"
+    },
+    "artifact_policy": {
+      "artifact_required": false,
+      "artifact_type": null,
+      "delivery_mode": "none"
+    },
+    "fallback_policy": {
+      "allowlist_hit": true,
+      "legacy_hint": "micro-poi-summary",
+      "fallback_target": null
+    }
+  },
+  "grounding_result": {
+    "aoi": {
+      "resolved": true,
+      "source": "viewport",
+      "geometry_ref": "aoi://aoi_exact"
+    },
+    "query_summary": {
+      "data_source": "sample-postgis",
+      "tables": [
+        "poi"
+      ],
+      "filters": [
+        "within_aoi_exact"
+      ]
+    },
+    "coverage": {
+      "status": "sufficient",
+      "poi_count": 5,
+      "sufficiency_reason": "Grounding found 5 POIs at aoi_exact."
+    },
+    "working_set_refs": [
+      "dataset://poi/area_briefing/aoi_exact"
+    ],
+    "no_data_ladder": [
+      {
+        "step": "aoi_exact",
+        "status": "success",
+        "poi_count": 5
+      },
+      {
+        "step": "aoi_expand_250m",
+        "status": "success",
+        "poi_count": 5
+      },
+      {
+        "step": "aoi_expand_500m",
+        "status": "success",
+        "poi_count": 5
+      }
+    ],
+    "limitations": [
+      "Grounding currently uses the sample POI dataset in this development slice."
+    ],
+    "working_set": {
+      "poi_features": [
+        {
+          "type": "Feature",
+          "properties": {
+            "id": "poi-1",
+            "category": "food"
+          },
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              114.3205,
+              30.541
+            ]
+          }
+        },
+        {
+          "type": "Feature",
+          "properties": {
+            "id": "poi-2",
+            "category": "food"
+          },
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              114.324,
+              30.545
+            ]
+          }
+        },
+        {
+          "type": "Feature",
+          "properties": {
+            "id": "poi-3",
+            "category": "lifestyle"
+          },
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              114.331,
+              30.548
+            ]
+          }
+        },
+        {
+          "type": "Feature",
+          "properties": {
+            "id": "poi-4",
+            "category": "retail"
+          },
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              114.343,
+              30.553
+            ]
+          }
+        },
+        {
+          "type": "Feature",
+          "properties": {
+            "id": "poi-5",
+            "category": "retail"
+          },
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              114.352,
+              30.556
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "quality_decision": {
+    "decision": "pass",
+    "reason_codes": [],
+    "allowed_output": {
+      "can_emit_fast": true,
+      "can_emit_deep": true,
+      "can_claim_artifact": false
+    },
+    "required_disclaimers": [],
+    "next_action": "continue"
+  },
+  "fast_result": {
+    "schema_version": "contract.v2.0",
+    "capabilities": [
+      "intent-routing",
+      "objective-routing",
+      "task-orchestration",
+      "template-ranking",
+      "dsl-validation",
+      "data-grounding",
+      "specialist-agents",
+      "quality-guard",
+      "layered-cache",
+      "tool-execution",
+      "sse-streaming",
+      "incident-bundle"
+    ],
+    "trace_id": "6fa3cfd0-79e1-41c8-9624-25c88eda7e53",
+    "job_id": "6b315494-22d2-4e10-bac1-c95f1637f92a",
+    "result_type": "fast_initial",
+    "result_version": 1,
+    "state": "S3_FAST_DONE",
+    "objective": "area_briefing",
+    "execution_path": "new_agent",
+    "routing_output": {
+      "objective": "area_briefing",
+      "confidence": 0.76,
+      "routing_features": {
+        "compare_hits": 0,
+        "micro_hits": 0,
+        "macro_hits": 0,
+        "has_distance": false,
+        "has_current_area": false,
+        "bbox_area": 0.003,
+        "zoom": 15,
+        "history_turns": 0,
+        "matched_keywords": {
+          "areaBriefing": [
+            "片区"
+          ],
+          "dominant": [
+            "业态",
+            "主导"
+          ],
+          "hotspot": [
+            "热点"
+          ],
+          "opportunity": [
+            "机会"
+          ]
+        },
+        "allowlist_hit": true
+      },
+      "legacy_hint": "micro-poi-summary",
+      "allowlist_hit": true,
+      "execution_path": "new_agent",
+      "query_type": "area_analysis",
+      "primary_intent": "micro",
+      "sub_intent": "hotspot"
+    },
+    "answer": {
+      "text": "基于现有数据，该片区的主导业态为食品与零售各占2个点位，活力热点主要集中在东北象限（3个点位），而东南象限目前暂无POI存在。由于东南象限的POI数量为0，相关机会点分析可能存在不确定性。",
+      "sections": [
+        {
+          "key": "dominant_industries",
+          "title": "Dominant Industries",
+          "summary": "Dominant industries: food (2), retail (2).",
+          "metrics": {
+            "total_poi": 5,
+            "category_counts": {
+              "food": 2,
+              "lifestyle": 1,
+              "retail": 2
+            }
+          }
+        },
+        {
+          "key": "hotspots",
+          "title": "Hotspots",
+          "summary": "Hotspots concentrate in the northeast quadrant (3 POIs).",
+          "metrics": {
+            "quadrant_counts": {
+              "northwest": 1,
+              "northeast": 3,
+              "southwest": 1,
+              "southeast": 0
+            },
+            "top_quadrant": "northeast",
+            "top_quadrant_poi_count": 3
+          }
+        },
+        {
+          "key": "opportunity_points",
+          "title": "Opportunity Points",
+          "summary": "Opportunity focus: southeast quadrant currently has 0 POIs.",
+          "metrics": {
+            "quadrant_counts": {
+              "northwest": 1,
+              "northeast": 3,
+              "southwest": 1,
+              "southeast": 0
+            },
+            "target_quadrant": "southeast",
+            "target_quadrant_poi_count": 0
+          }
+        }
+      ]
+    },
+    "evidence": [
+      {
+        "ref": "dataset://poi/area_briefing/aoi_exact",
+        "kind": "dataset",
+        "source": "sample-postgis"
+      }
+    ],
+    "warnings": [],
+    "telemetry": {
+      "duration_ms": 1124.73,
+      "grounding_duration_ms": 1123.69,
+      "grounding_poi_count": 5,
+      "coverage_status": "sufficient",
+      "quality_decision": "pass",
+      "narrative_mode": "llm_rewrite"
+    }
+  },
+  "deep_partial": {
+    "schema_version": "contract.v2.0",
+    "capabilities": [
+      "intent-routing",
+      "objective-routing",
+      "task-orchestration",
+      "template-ranking",
+      "dsl-validation",
+      "data-grounding",
+      "specialist-agents",
+      "quality-guard",
+      "layered-cache",
+      "tool-execution",
+      "sse-streaming",
+      "incident-bundle"
+    ],
+    "trace_id": "6fa3cfd0-79e1-41c8-9624-25c88eda7e53",
+    "job_id": "6b315494-22d2-4e10-bac1-c95f1637f92a",
+    "result_type": "deep_patch",
+    "result_version": 2,
+    "state": "S6_DEEP_PARTIAL",
+    "objective": "area_briefing",
+    "execution_path": "new_agent",
+    "answer": {
+      "text": "基于现有数据，该片区的主导业态为食品（2个）和零售（2个），活力热点集中在东北象限（共3个POI）。然而，东南象限目前仅有0个POI，属于当前最轻的供应区域，是首个值得关注的机会点。由于东南象限缺乏基础数据支撑，相关结论存在一定不确定性。",
+      "sections": [
+        {
+          "key": "dominant_industries",
+          "title": "Dominant Industries",
+          "summary": "Dominant industries: food (2), retail (2).",
+          "metrics": {
+            "total_poi": 5,
+            "category_counts": {
+              "food": 2,
+              "lifestyle": 1,
+              "retail": 2
+            }
+          }
+        },
+        {
+          "key": "hotspots",
+          "title": "Hotspots",
+          "summary": "Hotspots concentrate in the northeast quadrant (3 POIs).",
+          "metrics": {
+            "quadrant_counts": {
+              "northwest": 1,
+              "northeast": 3,
+              "southwest": 1,
+              "southeast": 0
+            },
+            "top_quadrant": "northeast",
+            "top_quadrant_poi_count": 3
+          }
+        },
+        {
+          "key": "opportunity_points",
+          "title": "Opportunity Points",
+          "summary": "Opportunity focus: southeast quadrant currently has 0 POIs.",
+          "metrics": {
+            "quadrant_counts": {
+              "northwest": 1,
+              "northeast": 3,
+              "southwest": 1,
+              "southeast": 0
+            },
+            "target_quadrant": "southeast",
+            "target_quadrant_poi_count": 0
+          }
+        }
+      ],
+      "details": [
+        {
+          "section_type": "dominant_industries",
+          "claims": [
+            {
+              "statement": "Dominant industries are food (2), retail (2).",
+              "confidence": 0.84,
+              "evidence_refs": [
+                "dataset://poi/area_briefing/aoi_exact"
+              ]
+            }
+          ],
+          "limitations": [
+            "Grounding currently uses the sample POI dataset in this development slice."
+          ]
+        },
+        {
+          "section_type": "hotspots",
+          "claims": [
+            {
+              "statement": "The main hotspot is in the northeast quadrant with 3 POIs.",
+              "confidence": 0.79,
+              "evidence_refs": [
+                "dataset://poi/area_briefing/aoi_exact"
+              ]
+            }
+          ],
+          "limitations": [
+            "Grounding currently uses the sample POI dataset in this development slice."
+          ]
+        },
+        {
+          "section_type": "opportunity_points",
+          "claims": [
+            {
+              "statement": "The southeast quadrant has the lightest current supply (0 POIs) and is the first opportunity candidate.",
+              "confidence": 0.72,
+              "evidence_refs": [
+                "dataset://poi/area_briefing/aoi_exact"
+              ]
+            }
+          ],
+          "limitations": [
+            "Grounding currently uses the sample POI dataset in this development slice."
+          ]
+        }
+      ]
+    },
+    "evidence": [
+      {
+        "ref": "dataset://poi/area_briefing/aoi_exact",
+        "kind": "dataset",
+        "source": "sample-postgis"
+      }
+    ],
+    "warnings": []
+  },
+  "deep_final": {
+    "schema_version": "contract.v2.0",
+    "capabilities": [
+      "intent-routing",
+      "objective-routing",
+      "task-orchestration",
+      "template-ranking",
+      "dsl-validation",
+      "data-grounding",
+      "specialist-agents",
+      "quality-guard",
+      "layered-cache",
+      "tool-execution",
+      "sse-streaming",
+      "incident-bundle"
+    ],
+    "trace_id": "6fa3cfd0-79e1-41c8-9624-25c88eda7e53",
+    "job_id": "6b315494-22d2-4e10-bac1-c95f1637f92a",
+    "result_type": "deep_final",
+    "result_version": 3,
+    "state": "S7_DEEP_DONE",
+    "objective": "area_briefing",
+    "execution_path": "new_agent",
+    "answer": {
+      "text": "基于现有数据，该片区的主导业态为食品（2个）和零售（2个），活力热点集中在东北象限（共3个POI）。然而，东南象限目前仅有0个POI，属于当前最轻的供应区域，是首个值得关注的机会点。由于东南象限缺乏基础数据支撑，相关结论存在一定不确定性。",
+      "sections": [
+        {
+          "key": "dominant_industries",
+          "title": "Dominant Industries",
+          "summary": "Dominant industries: food (2), retail (2).",
+          "metrics": {
+            "total_poi": 5,
+            "category_counts": {
+              "food": 2,
+              "lifestyle": 1,
+              "retail": 2
+            }
+          }
+        },
+        {
+          "key": "hotspots",
+          "title": "Hotspots",
+          "summary": "Hotspots concentrate in the northeast quadrant (3 POIs).",
+          "metrics": {
+            "quadrant_counts": {
+              "northwest": 1,
+              "northeast": 3,
+              "southwest": 1,
+              "southeast": 0
+            },
+            "top_quadrant": "northeast",
+            "top_quadrant_poi_count": 3
+          }
+        },
+        {
+          "key": "opportunity_points",
+          "title": "Opportunity Points",
+          "summary": "Opportunity focus: southeast quadrant currently has 0 POIs.",
+          "metrics": {
+            "quadrant_counts": {
+              "northwest": 1,
+              "northeast": 3,
+              "southwest": 1,
+              "southeast": 0
+            },
+            "target_quadrant": "southeast",
+            "target_quadrant_poi_count": 0
+          }
+        }
+      ],
+      "details": [
+        {
+          "section_type": "dominant_industries",
+          "claims": [
+            {
+              "statement": "Dominant industries are food (2), retail (2).",
+              "confidence": 0.84,
+              "evidence_refs": [
+                "dataset://poi/area_briefing/aoi_exact"
+              ]
+            }
+          ],
+          "limitations": [
+            "Grounding currently uses the sample POI dataset in this development slice."
+          ]
+        },
+        {
+          "section_type": "hotspots",
+          "claims": [
+            {
+              "statement": "The main hotspot is in the northeast quadrant with 3 POIs.",
+              "confidence": 0.79,
+              "evidence_refs": [
+                "dataset://poi/area_briefing/aoi_exact"
+              ]
+            }
+          ],
+          "limitations": [
+            "Grounding currently uses the sample POI dataset in this development slice."
+          ]
+        },
+        {
+          "section_type": "opportunity_points",
+          "claims": [
+            {
+              "statement": "The southeast quadrant has the lightest current supply (0 POIs) and is the first opportunity candidate.",
+              "confidence": 0.72,
+              "evidence_refs": [
+                "dataset://poi/area_briefing/aoi_exact"
+              ]
+            }
+          ],
+          "limitations": [
+            "Grounding currently uses the sample POI dataset in this development slice."
+          ]
+        }
+      ]
+    },
+    "evidence": [
+      {
+        "ref": "dataset://poi/area_briefing/aoi_exact",
+        "kind": "dataset",
+        "source": "sample-postgis"
+      }
+    ],
+    "warnings": [],
+    "completion_summary": "基于现有数据，该片区的主导业态为食品（2个）和零售（2个），活力热点集中在东北象限（共3个POI）。然而，东南象限目前仅有0个POI，属于当前最轻的供应区域，是首个值得关注的机会点。由于东南象限缺乏基础数据支撑，相关结论存在一定不确定性。"
+  },
+  "updated_at": "2026-03-09T14:27:54.115Z"
+}
