@@ -26,8 +26,8 @@ start.bat
 ### 2.2 手动启动
 
 ```bash
-# 终端1：后端
-npm --prefix fastify-backend run dev:stack
+# 终端1：V1 后端
+cd V1-fastify-backend && npm run dev:stack
 
 # 终端2：前端
 npm run dev
@@ -53,7 +53,7 @@ npm run dev:all
 npm run dev:stack
 ```
 
-### 3.2 `fastify-backend/`
+### 3.2 `V1-fastify-backend/`
 
 ```bash
 npm run start
@@ -66,9 +66,6 @@ npm run worker:spatial
 npm run kpi:report
 npm run ops:hotspots
 npm run template:weights
-
-npm run sql:apply
-npm run sql:apply:obs
 ```
 
 ## 4. 当前系统行为（最新）
@@ -91,7 +88,7 @@ VITE_DEV_API_BASE=http://127.0.0.1:3300 npm run dev
 
 ### 4.3 后端监听
 
-- 后端默认：`HOST=127.0.0.1`，`PORT=3200`（见 `fastify-backend/server.js`）
+- V1 后端默认：`HOST=127.0.0.1`，`PORT=3200`（见 `V1-fastify-backend/server.js`）
 
 ## 5. 关键 API
 
@@ -122,18 +119,18 @@ VITE_DEV_API_BASE=http://127.0.0.1:3300 npm run dev
 
 - SSE 元数据增强：`trace_id`、`schema_version`、`capabilities`
 - 模板反馈闭环：曝光/点击/定位/追问/会话结果
-- 模板权重离线重算：`npm --prefix fastify-backend run template:weights`
+- 模板权重离线重算：`cd V1-fastify-backend && npm run template:weights`
 - 分层缓存：L1 内存 + 可选 L2 Redis（自动降级）
-- 相关 SQL：`fastify-backend/sql/05_ai_observability.sql`
+- 相关 SQL：`V1-fastify-backend/sql/05_ai_observability.sql`
 
 ## 7. 常见问题
 
 ### 7.1 `ERR_CONNECTION_REFUSED http://127.0.0.1:3200`
 
-后端未启动或已退出。先执行：
+V1 后端未启动或已退出。执行：
 
 ```bash
-npm --prefix fastify-backend run dev:stack
+cd V1-fastify-backend && npm run dev:stack
 ```
 
 ### 7.2 `502 Bad Gateway`

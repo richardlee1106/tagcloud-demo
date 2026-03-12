@@ -234,7 +234,17 @@ import { useRouter } from 'vue-router';
 import { ElNotification } from 'element-plus';
 import ControlPanel from './components/ControlPanel.vue';
 import TagCloud from './components/TagCloud.vue';
-import MapContainer from './components/MapContainer.vue';
+// MapContainer 使用异步组件延迟加载 OpenLayers（318KB）
+const MapContainer = defineAsyncComponent({
+  loader: () => import('./components/MapContainer.vue'),
+  loadingComponent: {
+    template: `<div class="map-loading-placeholder">
+      <div class="loading-spinner"></div>
+      <span>地图加载中...</span>
+    </div>`
+  },
+  delay: 0
+});
 const AiChat = defineAsyncComponent(() => import('./components/AiChat.vue'));
 import { semanticSearch } from './utils/aiService';
 import { normalizeAiEvidencePayload } from './utils/aiEvidencePayload';
@@ -2259,11 +2269,38 @@ html, body, #app {
   width: 100vw;
   margin: 0;
   overflow: hidden;
-  background-color: #020617; 
+  background-color: #020617;
   color: #f1f5f9;
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   scrollbar-width: thin;
   scrollbar-color: rgba(99, 102, 241, 0.3) transparent;
+}
+
+/* 地图加载占位符 */
+.map-loading-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  width: 100%;
+  background: rgba(2, 6, 23, 0.9);
+  color: #94a3b8;
+  font-size: 14px;
+  gap: 12px;
+}
+
+.map-loading-placeholder .loading-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid rgba(99, 102, 241, 0.2);
+  border-top-color: #6366f1;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 /* 全量统一的 Mesh 渐变背景，增强整体感 */

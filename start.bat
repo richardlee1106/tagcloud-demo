@@ -9,7 +9,7 @@ echo ============================================================
 echo.
 
 :: 启动后端 dev:stack（在新窗口）
-start "GeoLoom Backend" cmd /k "cd /d %~dp0fastify-backend && npm run dev:stack"
+start "GeoLoom Backend" cmd /k "cd /d %~dp0V1-fastify-backend && npm run dev:stack"
 
 :: 等待 2 秒让后端先初始化
 timeout /t 2 /nobreak > nul
