@@ -9,9 +9,13 @@ import db from '../../services/database.js';
 import milvus from '../../services/vectordb.js';
 import { resolveAnchor } from '../../services/geocoder.js';
 import { createRAGSession } from '../../services/ragLogger.js';
-import { computeSpatialStream, isGrpcComputeEnabled } from '../../services/grpcClient.js';
+import { computeSpatialStream, isGrpcComputeEnabled, spatialSearch } from '../../services/grpcClient.js';
 import { resolveSourcePolicy } from '../../services/sourcePolicy.js';
 import { toSpatialPoiFeature } from '../../services/spatialFeatureMapper.js';
+import { spatialRerank, hybridSearchWithRerank } from '../../../V3-GeoEncoder-RAG/services/spatialRerank.js';
+import { parseSpatialIntent, generateAnswer, generateEmbedding as llmGenerateEmbedding } from '../../../V3-GeoEncoder-RAG/services/llmService.js';
+import { parseIntent, filterCandidatesWithSmallLLM, checkSmallLLMAvailability } from '../../../V3-GeoEncoder-RAG/services/intentService.js';
+import { hybridSearch as pythonHybridSearch, getIndexStatus as getPythonIndexStatus } from '../../services/spatialSearch.js';
 
 /**
  * LLM 意图解析 Prompt
@@ -834,6 +838,490 @@ ${context}
       postgis: true,
       milvus: milvus.isMilvusAvailable(),
     };
+  });
+
+  /**
+   * POST /api/spatial/hybrid
+   * 混合检索 API：语义召回 + 空间过滤 + 空间重排
+   *
+   * 请求体：
+   * {
+   *   "query": "用户查询",
+   *   "anchor": {"lon": 114.3, "lat": 30.6},
+   *   "radius": 1000,
+   *   "categories": ["咖啡馆"],
+   *   "topK": 20,
+   *   "spatialWeight": 0.5,
+   *   "semanticWeight": 0.5
+   * }
+   */
+  fastify.post('/hybrid', async (request, reply) => {
+    const {
+      query: userQuery,
+      anchor,
+      radius = 1000,
+      categories = [],
+      topK = 20,
+      spatialWeight = 0.5,
+      semanticWeight = 0.5,
+    } = request.body || {};
+
+    if (!anchor || anchor.lon == null || anchor.lat == null) {
+      return reply.code(400).send({ error: 'anchor with lon/lat is required' });
+    }
+
+    const session = createRAGSession();
+    session.setUserQuery(userQuery || 'hybrid search');
+
+    try {
+      const startTime = Date.now();
+
+      // 执行混合检索
+      const results = await hybridSearchWithRerank({
+        anchor,
+        radius,
+        semanticQuery: userQuery,
+        categories,
+        topK,
+        spatialWeight,
+        semanticWeight,
+      });
+
+      const duration = Date.now() - startTime;
+
+      session.log('HybridSearch', 'Completed', {
+        resultCount: results.length,
+        duration,
+        anchor,
+        radius,
+      });
+
+      return {
+        success: true,
+        query: userQuery,
+        anchor,
+        radius,
+        total: results.length,
+        duration_ms: duration,
+        results: results.map(r => ({
+          id: r.id,
+          name: r.name,
+          address: r.address,
+          category: r.category,
+          lon: r.lon,
+          lat: r.lat,
+          distance_m: r.distance_m,
+          spatial_score: r.spatial_score,
+          semantic_score: r.semantic_score,
+          fused_score: r.fused_score,
+        })),
+      };
+    } catch (error) {
+      session.log('Error', 'HybridSearchFailed', { error: error.message });
+      throw error;
+    }
+  });
+
+  /**
+   * POST /api/spatial/rerank
+   * 空间重排 API：对已有候选列表进行空间重排
+   *
+   * 请求体：
+   * {
+   *   "candidates": [...],  // 候选 POI 列表
+   *   "anchor": {"lon": 114.3, "lat": 30.6},
+   *   "spatialWeight": 0.5,
+   *   "semanticWeight": 0.5,
+   *   "topK": 20
+   * }
+   */
+  fastify.post('/rerank', async (request, reply) => {
+    const {
+      candidates = [],
+      anchor,
+      spatialWeight = 0.5,
+      semanticWeight = 0.5,
+      topK = 20,
+    } = request.body || {};
+
+    if (!candidates || candidates.length === 0) {
+      return reply.code(400).send({ error: 'candidates is required and must not be empty' });
+    }
+
+    try {
+      const startTime = Date.now();
+
+      const reranked = await spatialRerank(candidates, anchor, {
+        spatialWeight,
+        semanticWeight,
+        topK,
+      });
+
+      const duration = Date.now() - startTime;
+
+      return {
+        success: true,
+        total: reranked.length,
+        duration_ms: duration,
+        results: reranked,
+      };
+    } catch (error) {
+      return reply.code(500).send({ error: error.message });
+    }
+  });
+
+  /**
+   * POST /api/spatial/ask
+   * LLM 驱动的空间问答 API
+   *
+   * 完整流程：
+   * 1. LLM 意图解析
+   * 2. 地理编码（解析地名到坐标）
+   * 3. 混合检索
+   * 4. LLM 答案生成
+   *
+   * 请求体：
+   * {
+   *   "query": "武汉大学附近500米内有哪些咖啡馆？",
+   *   "topK": 10
+   * }
+   */
+  fastify.post('/ask', async (request, reply) => {
+    const { query: userQuery, topK = 10 } = request.body || {};
+
+    if (!userQuery) {
+      return reply.code(400).send({ error: 'query is required' });
+    }
+
+    const session = createRAGSession();
+    session.setUserQuery(userQuery);
+
+    const startTime = Date.now();
+    const pipeline = { stages: [] };
+
+    try {
+      // Stage 1: 小模型意图解析（优先）/ 硬编码兜底
+      const t_intent = Date.now();
+      console.log(`[Spatial/Ask] Parsing intent with small LLM: ${userQuery}`);
+      const intent = await parseIntent(userQuery);
+      pipeline.stages.push({
+        name: 'intent_parsing',
+        duration_ms: Date.now() - t_intent,
+        method: intent.method,  // 'small_llm' or 'fallback'
+        category: intent.category,
+        tags: intent.semanticTags,
+      });
+      session.setIntent(intent);
+      console.log(`[Spatial/Ask] Intent (${intent.method}):`, intent);
+
+      // Stage 2: 地理编码
+      let anchor = null;
+      if (intent.placeName) {
+        const t0 = Date.now();
+        anchor = await resolveAnchor(intent.placeName);
+        pipeline.stages.push({ name: 'geocoding', duration_ms: Date.now() - t0 });
+        console.log('[Spatial/Ask] Anchor:', anchor);
+      }
+
+      // 如果没有锚点，使用默认位置（武汉市中心）或报错
+      if (!anchor) {
+        // 检查是否是全局查询（不需要位置）
+        // 放宽条件：只要没有指定地点，就使用默认锚点进行推荐
+        const isGlobalQuery = !intent.placeName;
+
+        if (isGlobalQuery) {
+          // 全局查询：使用武汉市中心
+          anchor = { lon: 114.3055, lat: 30.5931, source: 'default' };
+          console.log('[Spatial/Ask] Using default anchor (Wuhan center)');
+        }
+      }
+
+      // Stage 3: 混合检索（Python gRPC 优先）
+      const t1 = Date.now();
+      let results = null;
+      let searchMethod = 'python_grpc';
+      const RECALL_K = 50;  // 召回更多候选，供语义筛选
+
+      // 获取区域过滤条件
+      const targetRegion = intent.regionLabel;
+      if (targetRegion !== null && targetRegion !== undefined) {
+        console.log(`[Spatial/Ask] Region filter enabled: ${targetRegion}`);
+      }
+
+      // 优先使用 Python gRPC 服务进行空间检索
+      if (isGrpcComputeEnabled()) {
+        try {
+          results = await pythonHybridSearch({
+            anchor,
+            radius: intent.radiusM || 500,
+            categories: intent.category ? [intent.category] : [],
+            topK: RECALL_K,
+            spatialWeight: 0.6,
+            semanticWeight: 0.4,
+            targetRegion,  // 区域过滤
+            regionWeight: 0.15,  // 区域加分权重
+          });
+          console.log(`[Spatial/Ask] Python gRPC returned ${results?.length || 0} results`);
+        } catch (e) {
+          console.warn('[Spatial/Ask] Python gRPC failed:', e.message);
+        }
+      }
+
+      // Python gRPC 不可用时回退到 Node.js FAISS
+      if (!results || results.length === 0) {
+        try {
+          const { faissHybridSearch, getIndexStatus } = await import('../../../V3-GeoEncoder-RAG/services/faissIndex.js');
+          const faissStatus = getIndexStatus();
+
+          if (faissStatus.loaded) {
+            results = await faissHybridSearch({
+              anchor,
+              radius: intent.radiusM || 500,
+              categories: intent.category ? [intent.category] : [],
+              topK: RECALL_K,
+              spatialWeight: 0.6,
+              semanticWeight: 0.4,
+              targetRegion,
+              regionWeight: 0.15,
+            });
+            searchMethod = 'faiss';
+          }
+        } catch (e) {
+          console.warn('[Spatial/Ask] FAISS not available:', e.message);
+        }
+      }
+
+      // 最后回退到 PostGIS
+      if (!results || results.length === 0) {
+        results = await hybridSearchWithRerank({
+          anchor,
+          radius: intent.radiusM || 500,
+          categories: intent.category ? [intent.category] : [],
+          topK: RECALL_K,
+          spatialWeight: 0.6,
+          semanticWeight: 0.4,
+        });
+        searchMethod = 'postgis';
+      }
+
+      pipeline.stages.push({
+        name: 'hybrid_search',
+        duration_ms: Date.now() - t1,
+        result_count: results?.length || 0,
+        method: searchMethod,
+      });
+      console.log(`[Spatial/Ask] Found ${results?.length || 0} candidates (method: ${searchMethod})`);
+
+      if (!results || results.length === 0) {
+        return {
+          success: true,
+          query: userQuery,
+          intent,
+          anchor,
+          total: 0,
+          answer: '抱歉，在指定范围内没有找到相关的地点。',
+          results: [],
+          pipeline,
+          total_duration_ms: Date.now() - startTime,
+        };
+      }
+
+      // Stage 4: 小模型语义筛选
+      const t_filter = Date.now();
+      const filteredResults = await filterCandidatesWithSmallLLM(userQuery, intent, results);
+      pipeline.stages.push({
+        name: 'semantic_filter',
+        duration_ms: Date.now() - t_filter,
+        input_count: results.length,
+        output_count: filteredResults.length,
+      });
+      console.log(`[Spatial/Ask] Filtered to ${filteredResults.length} results`);
+
+      // Stage 5: 大模型答案生成
+      const t2 = Date.now();
+      const answer = await generateAnswer(userQuery, filteredResults, null, intent.intentDesc);
+      pipeline.stages.push({ name: 'answer_generation', duration_ms: Date.now() - t2 });
+
+      const totalDuration = Date.now() - startTime;
+
+      session.setFinalPOIs(filteredResults);
+      session.markSuccess();
+
+      return {
+        success: true,
+        query: userQuery,
+        intent,
+        anchor,
+        total: filteredResults.length,
+        answer,
+        results: filteredResults.map(r => ({
+          id: r.id,
+          name: r.name,
+          category: r.category,
+          distance_m: Math.round(r.distance_m),
+          scores: {
+            spatial: r.spatial_score,
+            semantic: r.semantic_score,
+            fused: r.fused_score,
+          },
+        })),
+        pipeline,
+        total_duration_ms: totalDuration,
+      };
+    } catch (error) {
+      console.error('[Spatial/Ask] Error:', error.message);
+      session.log('Error', 'AskFailed', { error: error.message });
+      return reply.code(500).send({
+        success: false,
+        error: error.message,
+        pipeline,
+      });
+    }
+  });
+
+  /**
+   * POST /api/spatial/ask/stream
+   * 流式空间问答 API（SSE）
+   */
+  fastify.post('/ask/stream', async (request, reply) => {
+    const { query: userQuery, topK = 10 } = request.body || {};
+
+    if (!userQuery) {
+      return reply.code(400).send({ error: 'query is required' });
+    }
+
+    const startTime = Date.now();
+    let pipeline = { stages: [] };
+
+    try {
+      // 动态导入流式服务
+      const { generateStreamAnswer, createSSEHandler } = await import('../../../V3-GeoEncoder-RAG/services/streamService.js');
+      const { faissHybridSearch, loadEmbeddings } = await import('../../../V3-GeoEncoder-RAG/services/faissIndex.js');
+
+      const sendEvent = createSSEHandler(reply);
+
+      // 发送开始事件
+      sendEvent('start', { query: userQuery, timestamp: Date.now() });
+
+      // Stage 1: 意图解析
+      const t0 = Date.now();
+      const intent = await parseSpatialIntent(userQuery);
+      pipeline.stages.push({ name: 'intent_parsing', duration_ms: Date.now() - t0 });
+      sendEvent('intent', intent);
+
+      if (!intent.is_spatial_query) {
+        sendEvent('done', {
+          success: true,
+          is_spatial_query: false,
+          message: '这看起来不是一个空间查询，请尝试询问附近的地点。',
+        });
+        reply.raw.end();
+        return;
+      }
+
+      // Stage 2: 地理编码
+      const t1 = Date.now();
+      let anchor = null;
+      if (intent.place_name) {
+        anchor = await resolveAnchor(intent.place_name, intent.gate);
+      }
+      pipeline.stages.push({ name: 'geocoding', duration_ms: Date.now() - t1 });
+
+      if (!anchor) {
+        sendEvent('done', {
+          success: false,
+          error: `无法找到地点: ${intent.place_name || '未知'}`,
+        });
+        reply.raw.end();
+        return;
+      }
+
+      sendEvent('anchor', anchor);
+
+      // Stage 3: FAISS 加速检索
+      const t2 = Date.now();
+
+      // 尝试使用 FAISS
+      let results = await faissHybridSearch({
+        anchor,
+        radius: intent.radius_m || 500,
+        categories: intent.category ? [intent.category] : [],
+        topK,
+      });
+
+      // FAISS 不可用时回退到 PostGIS
+      if (!results) {
+        results = await hybridSearchWithRerank({
+          anchor,
+          radius: intent.radius_m || 500,
+          categories: intent.category ? [intent.category] : [],
+          topK,
+        });
+      }
+
+      pipeline.stages.push({ name: 'hybrid_search', duration_ms: Date.now() - t2, result_count: results.length });
+      sendEvent('results', {
+        total: results.length,
+        pois: results.slice(0, 5).map(r => ({ name: r.name, category: r.category, distance_m: Math.round(r.distance_m) })),
+      });
+
+      // Stage 4: 流式答案生成
+      const t3 = Date.now();
+
+      await generateStreamAnswer(userQuery, results, sendEvent);
+
+      pipeline.stages.push({ name: 'answer_generation', duration_ms: Date.now() - t3 });
+
+      // 发送最终统计
+      sendEvent('stats', {
+        total_duration_ms: Date.now() - startTime,
+        pipeline,
+      });
+
+      reply.raw.end();
+
+    } catch (error) {
+      console.error('[Spatial/Ask/Stream] Error:', error.message);
+      reply.raw.write(`event: error\ndata: ${JSON.stringify({ error: error.message })}\n\n`);
+      reply.raw.end();
+    }
+  });
+
+  /**
+   * GET /api/spatial/index/status
+   * 获取空间检索服务状态
+   */
+  fastify.get('/index/status', async (request, reply) => {
+    try {
+      // 优先返回 Python gRPC 服务状态
+      const pythonStatus = getPythonIndexStatus();
+      if (pythonStatus.loaded) {
+        return { ...pythonStatus, backend: 'python_grpc' };
+      }
+
+      // 回退到 Node.js FAISS 状态
+      const { getIndexStatus } = await import('../../../V3-GeoEncoder-RAG/services/faissIndex.js');
+      return { ...getIndexStatus(), backend: 'nodejs_faiss' };
+    } catch (error) {
+      return { loaded: false, error: error.message };
+    }
+  });
+
+  /**
+   * POST /api/spatial/index/load
+   * 手动加载索引（仅对 Node.js FAISS 有效）
+   * Query params:
+   *   - force: boolean - 强制重新加载
+   */
+  fastify.post('/index/load', async (request, reply) => {
+    try {
+      const force = request.query.force === 'true';
+      const { loadEmbeddings, getIndexStatus } = await import('../../../V3-GeoEncoder-RAG/services/faissIndex.js');
+      await loadEmbeddings(force);
+      return { success: true, ...getIndexStatus() };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
   });
 }
 

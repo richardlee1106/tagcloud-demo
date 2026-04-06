@@ -1,17 +1,41 @@
 /**
  * AI 服务模块 - 前端版本（调用后端 API）
- * 
+ *
  * 所有敏感配置已移至后端，此模块仅负责：
  * 1. 调用后端 API 接口
  * 2. 处理流式响应
  * 3. 提供前端需要的辅助函数
+ *
+ * V3 模式：使用简化版 v3aiService
  */
 
 // 后端 API 基础路径
-// 后端 API 基础路径
-import { API_BASE_URL } from '../config';
+import { AI_API_BASE_URL, SPATIAL_API_BASE_URL } from '../config';
 import { validateSSEEventPayload } from '../../shared/sseEventSchema.js';
-const API_BASE = `${API_BASE_URL}/api/ai`;
+import { sendV3ChatStream, checkV3Service, getV3Models, getV3Status } from './v3aiService.js';
+
+const AI_API_BASE = `${AI_API_BASE_URL}/api/ai`;
+const GEO_API_BASE = `${AI_API_BASE_URL}/api/geo`;
+
+function getBackendVersion() {
+  return String(import.meta.env.VITE_BACKEND_VERSION || '').trim().toLowerCase()
+}
+
+function isV3Mode() {
+  return getBackendVersion() === 'v3'
+}
+
+function isV4Mode() {
+  return getBackendVersion() === 'v4'
+}
+
+if (import.meta.env.DEV) {
+  if (isV3Mode()) {
+    console.log('[AI Service] V3 模式已启用');
+  } else if (isV4Mode()) {
+    console.log('[AI Service] V4 模式已启用');
+  }
+}
 
 function createClientRequestId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -51,14 +75,28 @@ const REASONING_MARKERS = [
   'refining for tone',
   'final polish',
   'revised draft',
-  'final plan'
+  'final plan',
+  'analyze',
+  'evaluate',
+  'draft',
+  'refine'
 ]
 
 function stripThinkTags(text = '') {
-  return String(text || '')
+  let result = String(text || '')
+    // 移除 XML 格式的思考标签
     .replace(/<think>[\s\S]*?<\/think>/gi, '')
     .replace(/<\/?think>/gi, '')
+    // 移除 <thinking> 标签
+    .replace(/<thinking>[\s\S]*?<\/thinking>/gi, '')
+    // 移除 ThinkingProcess: 开头的思考块
+    .replace(/ThinkingProcess:\s*[\s\S]*?(?=\n\s*您好|\n\s*你好|\n\s*\*\*您好|\n\s*\*\*你好|$)/gi, '')
+    // 移除 **Analyze...** 等标题开头的思考块
+    .replace(/\*\*(Analyze|Evaluate|Draft|Refine|Final|Thinking|Reasoning)[\s\S]*?\*\*[\s\S]*?(?=\n\s*您好|\n\s*你好|\n\s*\*{0,2}您好|$)/gi, '')
+    // 移除 "1. **Analyze the Request**" 等编号列表思考块
+    .replace(/1\.\s*\*\*[Aa]nalyze[\s\S]*?(?=\n\s*您好|\n\s*你好|\n\s*\*{0,2}您好|\n\s*\*{0,2}你好|$)/gi, '')
     .trim()
+  return result
 }
 
 function looksLikeReasoningTranscriptStart(text = '') {
@@ -86,7 +124,7 @@ function sanitizeAssistantOutputText(text = '') {
   if (typeof text !== 'string') return ''
   const withoutThink = stripThinkTags(text)
   if (!withoutThink) return ''
-  // 过滤常见“思考过程”前缀，防止渲染到用户界面。
+  // 过滤常见”思考过程”前缀，防止渲染到用户界面。
   if (looksLikeReasoningTranscriptStart(withoutThink)) return ''
   return withoutThink
 }
@@ -95,7 +133,12 @@ function sanitizeAssistantOutputText(text = '') {
 let currentProvider = {
   online: false,
   provider: null,
-  providerName: 'Unknown'
+  providerName: 'Unknown',
+  model: null,
+  providerReady: false,
+  degradedDependencies: [],
+  dependencies: {},
+  health: null
 }
 
 // 位置相关关键词（前端判断用，后端也会再次判断）
@@ -205,7 +248,10 @@ export function buildSystemPrompt(poiContext, isLocationQuery = false) {
  * @returns {Promise<string>} 完整的 AI 回复
  */
 export async function sendChatMessageStream(messages, onChunk, options = {}, poiFeatures = [], onMeta = null) {
-  console.log('[AI Frontend] 调用后端 API，POI 数量:', poiFeatures.length)
+  // 仅开发环境打印关键信息
+  if (import.meta.env.DEV) {
+    console.log('[AI] 发送请求, POI:', poiFeatures.length)
+  }
 
   const requestId = options?.requestId || options?.request_id || createClientRequestId()
   const normalizedOptions = {
@@ -213,7 +259,12 @@ export async function sendChatMessageStream(messages, onChunk, options = {}, poi
     requestId
   }
 
-  const response = await fetch(`${API_BASE}/chat`, {
+  if (isV3Mode()) {
+    return sendV3ChatStream(messages, onChunk, normalizedOptions, poiFeatures, onMeta)
+  }
+
+  const endpoint = isV4Mode() ? `${GEO_API_BASE}/chat` : `${AI_API_BASE}/chat`
+  const response = await fetch(endpoint, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'
@@ -229,6 +280,8 @@ export async function sendChatMessageStream(messages, onChunk, options = {}, poi
     const error = await response.text()
     throw new Error(`AI 请求失败: ${response.status} - ${error}`)
   }
+
+  // ========== V1 完整模式 ==========
 
   // 获取当前使用的服务商
   const provider = response.headers.get('X-AI-Provider')
@@ -302,9 +355,10 @@ export async function sendChatMessageStream(messages, onChunk, options = {}, poi
         try {
           // 统一处理具名 SSE 元事件（查表模式，消除重复分支）
           const META_EVENT_TYPES = new Set([
-            'pois', 'stage', 'boundary', 'spatial_clusters',
+            'trace', 'job', 'stage', 'thinking', 'reasoning',
+            'intent_preview', 'pois', 'boundary', 'spatial_clusters',
             'vernacular_regions', 'fuzzy_regions', 'stats', 'progress',
-            'partial', 'refined_result', 'schema_error', 'error'
+            'partial', 'refined_result', 'done', 'schema_error', 'error'
           ])
 
           if (eventType && META_EVENT_TYPES.has(eventType)) {
@@ -313,11 +367,10 @@ export async function sendChatMessageStream(messages, onChunk, options = {}, poi
               payload.answer = sanitizeAssistantOutputText(payload.answer)
             }
             const validation = validateSSEEventPayload(eventType, payload)
+            if (!validation.ok && import.meta.env.DEV) {
+              console.warn('[AI] SSE schema mismatch:', eventType, validation.errors.slice(0, 3))
+            }
             if (!validation.ok) {
-              console.warn('[AI Frontend] SSE payload schema mismatch:', {
-                event: eventType,
-                errors: validation.errors.slice(0, 5)
-              })
               if (onMeta) {
                 try {
                   onMeta('schema_error', {
@@ -326,29 +379,23 @@ export async function sendChatMessageStream(messages, onChunk, options = {}, poi
                     trace_id: responseTraceId
                   })
                 } catch (metaErr) {
-                  console.error('[AI Meta Handler Error]', metaErr)
+                  // 静默处理
                 }
               }
               currentEvent = null
               continue
             }
-            if (eventType === 'pois') {
-              console.log('[AI Frontend] 收到后端下发的 POI 数据:', payload.length)
-            } else if (eventType === 'stage') {
-              console.log('[AI Frontend] 收到阶段更新:', payload.name)
-            } else if (eventType === 'error') {
-              console.error('[AI Frontend] 收到后端错误:', payload?.message || payload)
-              if (payload?.error_code || payload?.error_signature) {
-                console.error('[AI Frontend] Error diagnostics:', {
-                  error_code: payload?.error_code || null,
-                  error_signature: payload?.error_signature || null,
-                  trace_id: payload?.trace_id || responseTraceId
-                })
-              }
+            // 仅开发环境打印阶段更新
+            if (import.meta.env.DEV && eventType === 'stage') {
+              console.log('[AI] Stage:', payload.name)
+            }
+            // 错误日志始终打印
+            if (eventType === 'error') {
+              console.error('[AI] Error:', payload?.message || payload)
             }
             if (eventType === 'stats' || eventType === 'refined_result') {
               const timing = extractModelTiming(payload)
-              if (timing) {
+              if (timing && import.meta.env.DEV) {
                 const vlmMs = formatTimingValueMs(timing.vlm_ms)
                 const llmMs = formatTimingValueMs(timing.llm_ms)
                 const wallMs = formatTimingValueMs(timing.parallel_wall_ms)
@@ -367,7 +414,7 @@ export async function sendChatMessageStream(messages, onChunk, options = {}, poi
                 }
                 onMeta(eventType, payload)
               } catch (metaErr) {
-                console.error('[AI Meta Handler Error]', metaErr)
+                // 静默处理
               }
             }
             if (eventType === 'refined_result') {
@@ -453,20 +500,17 @@ export async function sendChatMessage(messages, options = {}) {
 export async function quickSearch(keyword, options = {}) {
   const { spatialContext, colorIndex = 0 } = options;
   const kw = keyword.trim();
-  
-  console.log(`[QuickSearch] 快速搜索: "${kw}"`);
-  console.log(`[QuickSearch] 空间上下文:`, spatialContext);
-  
+
   // 构建查询参数
   const params = new URLSearchParams({ q: kw, limit: '100' });
-  
+
   // ========== 核心业务逻辑 ==========
   // 1. 选择/圆形选区优先
   // 2. 无选区 → 使用当前地图视野 (viewport) 作为边界
   // 3. 禁止无约束全库扫描
-  
+
   let hasGeometry = false;
-  
+
   // 优先级1: 用户绘制的多边形选区
   if (spatialContext?.boundary && spatialContext.boundary.length >= 3) {
     const points = spatialContext.boundary;
@@ -478,7 +522,6 @@ export async function quickSearch(keyword, options = {}) {
     const wktPoints = closedPoints.map(p => `${p[0]} ${p[1]}`).join(', ');
     params.set('geometry', `POLYGON((${wktPoints}))`);
     hasGeometry = true;
-    console.log(`[QuickSearch] 使用多边形选区 (${points.length} 点)`);
   }
   // 优先级2: 地图视野 bbox
   else if (spatialContext?.viewport && Array.isArray(spatialContext.viewport) && spatialContext.viewport.length >= 4) {
@@ -487,9 +530,8 @@ export async function quickSearch(keyword, options = {}) {
     const bboxWkt = `POLYGON((${minLon} ${minLat}, ${maxLon} ${minLat}, ${maxLon} ${maxLat}, ${minLon} ${maxLat}, ${minLon} ${minLat}))`;
     params.set('geometry', bboxWkt);
     hasGeometry = true;
-    console.log(`[QuickSearch] 使用地图视野 bbox`);
   }
-  
+
   // 添加中心点（用于距离排序）
   if (spatialContext?.center) {
     params.set('lat', spatialContext.center.lat);
@@ -500,10 +542,9 @@ export async function quickSearch(keyword, options = {}) {
     params.set('lat', ((minLat + maxLat) / 2).toString());
     params.set('lon', ((minLon + maxLon) / 2).toString());
   }
-  
-  // 如果没有空间约束，警告并返回空结果
+
+  // 如果没有空间约束，返回空结果
   if (!hasGeometry) {
-    console.warn(`[QuickSearch] 警告: 没有空间边界约束，拒绝执行全库搜索`);
     return {
       success: true,
       isComplex: false,
@@ -511,15 +552,15 @@ export async function quickSearch(keyword, options = {}) {
       warning: '请先绘制选区或确保地图视野有效'
     };
   }
-  
+
   try {
-    const response = await fetch(`${API_BASE_URL}/api/search/quick?${params.toString()}`);
+    const response = await fetch(`${SPATIAL_API_BASE_URL}/api/search/quick?${params.toString()}`);
     if (!response.ok) {
       throw new Error(`搜索失败: ${response.status}`);
     }
-    
+
     const data = await response.json();
-    
+
     // 如果后端判断是复杂查询，返回标记
     if (data.isComplex) {
       return {
@@ -536,9 +577,7 @@ export async function quickSearch(keyword, options = {}) {
       }
       return poi;
     });
-    
-    console.log(`[QuickSearch] 快速搜索完成: ${pois.length} 条, ${data.duration_ms}ms`);
-    
+
     return {
       success: true,
       isComplex: false,
@@ -569,21 +608,19 @@ export async function semanticSearch(keyword, features = [], options = {}) {
   }
 
   const kw = keyword.trim();
-  console.log(`[AI Search] 语义搜索: "${kw}"`);
 
   // 1. 先尝试快速搜索
   const quickResult = await quickSearch(kw, options);
-  
+
   // 2. 如果后端判断是复杂查询，需要走 AI 助手
   if (quickResult.isComplex) {
-    console.log(`[AI Search] 复杂查询，需要 AI 助手处理`);
     return {
       pois: [],
       isComplex: true,
       needsAiAssistant: true
     };
   }
-  
+
   // 3. 快速搜索成功
   if (quickResult.success && quickResult.pois.length > 0) {
     return {
@@ -596,7 +633,7 @@ export async function semanticSearch(keyword, features = [], options = {}) {
   
   // 4. 快速搜索无结果，降级到 RAG Pipeline
   console.log(`[AI Search] 快速搜索无结果，尝试 RAG Pipeline`);
-  
+
   let matchedPOIs = [];
 
   // 复用 RAG 管道进行搜索
@@ -604,7 +641,7 @@ export async function semanticSearch(keyword, features = [], options = {}) {
     [{ role: 'user', content: kw }],
     (chunk) => {
        // 忽略文本响应流，只关注结果
-    }, 
+    },
     {
       ...options,
       isSearchOnly: true // 标记为纯搜索模式
@@ -617,8 +654,6 @@ export async function semanticSearch(keyword, features = [], options = {}) {
     }
   );
 
-  console.log(`[AI Search] RAG 搜索完成，找到 ${matchedPOIs.length} 个结果`);
-  
   // 转换为 GeoJSON Feature 格式 (如果后端返回的是 raw object)
   const pois = matchedPOIs.map(p => {
     // 如果已经是 Feature 结构就不动，否则包装一下
@@ -659,18 +694,57 @@ export async function semanticSearch(keyword, features = [], options = {}) {
  */
 export async function checkAIService() {
   try {
-    const response = await fetch(`${API_BASE}/status`)
+    if (isV3Mode()) {
+      const online = await checkV3Service()
+      const status = getV3Status()
+      currentProvider = {
+        online,
+        provider: 'v3-ollama',
+        providerName: 'V3 GeoEncoder RAG',
+        model: status.model || 'qwen3.5-2b'
+      }
+      return online
+    }
+
+    if (isV4Mode()) {
+      const response = await fetch(`${GEO_API_BASE}/health`)
+      if (!response.ok) {
+        currentProvider.online = false
+        return false
+      }
+
+      const data = await response.json()
+      const llmProvider = data?.llm?.provider || 'v4-deterministic'
+      const llmModel = data?.llm?.model || 'deterministic-router'
+      const providerReady = data?.provider_ready === true
+      const degradedDependencies = Array.isArray(data?.degraded_dependencies) ? data.degraded_dependencies.slice() : []
+      const dependencies = data?.dependencies && typeof data.dependencies === 'object' ? data.dependencies : {}
+
+      currentProvider = {
+        online: data?.status === 'ok',
+        provider: llmProvider,
+        providerName: providerReady ? 'GeoLoom V4 Agent' : 'GeoLoom V4 Fallback',
+        model: llmModel,
+        providerReady,
+        degradedDependencies,
+        dependencies,
+        health: data
+      }
+      return currentProvider.online
+    }
+
+    const response = await fetch(`${AI_API_BASE}/status`)
     if (!response.ok) {
       currentProvider.online = false
       return false
     }
 
     const data = await response.json()
+
+    // V1 模式
     currentProvider = data
-    console.log(`[AI] 服务状态: ${data.providerName} (${data.provider})`)
     return data.online
   } catch (e) {
-    console.debug('[AI] status probe skipped/offline:', e?.message || e)
     currentProvider.online = false
     return false
   }
@@ -680,10 +754,36 @@ export async function checkAIService() {
  * 获取当前服务商信息
  */
 export function getCurrentProviderInfo() {
+  // V3 模式
+  if (isV3Mode()) {
+    return {
+      id: currentProvider.provider || 'v3-ollama',
+      name: currentProvider.providerName || 'V3 GeoEncoder RAG',
+      apiBase: AI_API_BASE,
+      modelId: currentProvider.model || 'qwen3.5-2b'
+    }
+  }
+  if (isV4Mode()) {
+    return {
+      id: currentProvider.provider || 'v4-deterministic',
+      name: currentProvider.providerName || 'V4 GeoLoom Beta',
+      apiBase: GEO_API_BASE,
+      modelId: currentProvider.model || 'deterministic-router',
+      providerReady: currentProvider.providerReady === true,
+      degradedDependencies: Array.isArray(currentProvider.degradedDependencies)
+        ? currentProvider.degradedDependencies
+        : [],
+      dependencies: currentProvider.dependencies && typeof currentProvider.dependencies === 'object'
+        ? currentProvider.dependencies
+        : {},
+      health: currentProvider.health || null
+    }
+  }
+  // V1 模式
   return {
     id: currentProvider.provider,
     name: currentProvider.providerName,
-    apiBase: API_BASE,
+    apiBase: AI_API_BASE,
     modelId: currentProvider.provider === 'local' ? 'qwen3.5-2b' : 'mimo-v2-flash'
   }
 }
@@ -694,12 +794,20 @@ export function getCurrentProviderInfo() {
  */
 export async function getAvailableModels() {
   try {
-    const response = await fetch(`${API_BASE}/models`)
+    if (isV3Mode()) {
+      return getV3Models()
+    }
+
+    if (isV4Mode()) {
+      return []
+    }
+
+    const response = await fetch(`${AI_API_BASE}/models`)
     if (!response.ok) return []
     const data = await response.json()
+
     return data.models || []
   } catch {
     return []
   }
 }
-

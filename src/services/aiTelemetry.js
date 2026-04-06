@@ -1,6 +1,6 @@
-﻿import { API_BASE_URL } from '../config'
+import { AI_API_BASE_URL } from '../config'
 
-const AI_API_BASE = `${API_BASE_URL}/api/ai`
+const AI_API_BASE = `${AI_API_BASE_URL}/api/ai`
 const WEIGHT_CACHE_KEY = 'ai_template_weights_v1'
 
 let cachedWeights = {

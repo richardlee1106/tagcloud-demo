@@ -1,5 +1,5 @@
 <template>
-  <div class="ai-chat-container">
+  <div class="ai-chat-container" :class="{ 'is-v4-mode': isV4Mode }">
     <!-- 头部状态栏 -->
     <div class="chat-header">
       <div class="header-main-row">
@@ -11,9 +11,22 @@
             </svg>
           </div>
           <div class="header-info">
-            <span class="ai-name">GeoAI 助手</span>
+            <div class="header-title-row">
+              <span class="ai-name">{{ headerTitle }}</span>
+              <button
+                v-if="showRuntimeDetailsToggle"
+                type="button"
+                class="runtime-details-toggle"
+                @click="toggleRuntimeDetails"
+              >
+                {{ showV4RuntimeDetails ? '收起运行详情' : '查看运行详情' }}
+              </button>
+            </div>
             <span class="ai-status" :class="{ online: isOnline === true, offline: isOnline === false, probing: isOnline === null }">
               {{ statusText }}
+            </span>
+            <span v-if="headerSummaryText" class="ai-provider-line">
+              {{ headerSummaryText }}
             </span>
           </div>
         </div>
@@ -54,21 +67,84 @@
            </button>
         </div>
       </div>
+
+      <div v-if="isV4Mode && showV4RuntimeDetails" class="v4-runtime-details">
+        <div class="runtime-detail-card">
+          <span class="runtime-detail-label">当前模式</span>
+          <strong class="runtime-detail-value">{{ v4RuntimeModeLabel }}</strong>
+        </div>
+        <div v-if="runtimeModelServiceLabel" class="runtime-detail-card">
+          <span class="runtime-detail-label">模型服务</span>
+          <strong class="runtime-detail-value">
+            {{ runtimeModelServiceLabel }}
+          </strong>
+        </div>
+        <div v-if="chatSessionId" class="runtime-detail-card">
+          <span class="runtime-detail-label">当前会话</span>
+          <strong class="runtime-detail-value">{{ shortSessionId }}</strong>
+        </div>
+        <div v-if="v4DegradedDependencyLabels.length > 0" class="runtime-detail-card is-warning">
+          <span class="runtime-detail-label">当前回退</span>
+          <div class="runtime-chip-list">
+            <span
+              v-for="dependency in v4DegradedDependencyLabels"
+              :key="dependency"
+              class="runtime-detail-chip"
+            >
+              {{ dependency }}
+            </span>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div class="chat-body">
       <div class="chat-messages" ref="messagesContainer">
         <!-- 欢迎消息 -->
         <div v-if="messages.length === 0" class="welcome-message">
-          <h3>欢迎使用地名标签云智能分析助手</h3>
-          <p>我具备地理感知能力，可以帮您分析选中区域内的 POI 数据，并提供地理分析与洞察参考。</p>
-          <div class="quick-actions">
-            <button v-for="action in quickActions" :key="action.text" 
-                    @click="sendQuickAction(action.prompt)"
-                    class="quick-action-btn">
-              {{ action.text }}
-            </button>
-          </div>
+          <section class="welcome-shell welcome-shell-compact">
+            <div class="welcome-compact-panel">
+              <div class="welcome-compact-copy">
+                <div class="welcome-kicker">
+                  <span class="kicker-dot"></span>
+                  <span>{{ welcomeAssistantName }}</span>
+                </div>
+                <h3>{{ welcomeHeadline }}</h3>
+                <p>{{ welcomeDescription }}</p>
+              </div>
+
+              <div class="welcome-meta-strip welcome-meta-strip-compact">
+                <div
+                  v-for="stat in welcomeContextStats"
+                  :key="stat.label"
+                  class="welcome-meta-chip"
+                  :class="`is-${stat.tone}`"
+                >
+                  <span class="meta-chip-label">{{ stat.label }}</span>
+                  <strong class="meta-chip-value">{{ stat.value }}</strong>
+                </div>
+              </div>
+            </div>
+
+            <div class="welcome-quick-panel">
+              <div class="welcome-quick-header">
+                <span class="welcome-section-kicker">快速提问</span>
+                <p class="welcome-quick-hint">{{ welcomeFormulaText }}</p>
+              </div>
+
+              <div class="quick-prompt-list">
+                <button
+                  v-for="example in welcomeExamples"
+                  :key="example.label"
+                  type="button"
+                  class="quick-prompt-chip"
+                  @click="sendQuickAction(example.prompt)"
+                >
+                  {{ example.label }}
+                </button>
+              </div>
+            </div>
+          </section>
         </div>
 
         <!-- 消息列表 -->
@@ -87,7 +163,7 @@
           </div>
           <div class="message-content">
             <div
-              v-if="msg.role === 'assistant' && !isGeneralQaMessage(msg) && (msg.pipelineCompleted || (isTyping && index === messages.length - 1))"
+              v-if="shouldShowPipelineForMessage(msg, index)"
               class="pipeline-tracker-inline"
             >
               <div class="pipeline-trace-inline">
@@ -95,15 +171,15 @@
                   <div
                     class="trace-step-inline"
                     :class="{
-                      active: !msg.pipelineCompleted && stageActiveIndex === idx,
-                      completed: msg.pipelineCompleted || stageActiveIndex > idx
+                      active: !msg.pipelineCompleted && getPipelineStageIndexForMessage(msg, index) === idx,
+                      completed: msg.pipelineCompleted || getPipelineStageIndexForMessage(msg, index) > idx
                     }"
                   >
                     <div class="step-icon-wrapper">
-                      <svg v-if="!msg.pipelineCompleted && stageActiveIndex === idx" class="step-spinner" viewBox="0 0 24 24" width="14" height="14">
+                      <svg v-if="!msg.pipelineCompleted && getPipelineStageIndexForMessage(msg, index) === idx" class="step-spinner" viewBox="0 0 24 24" width="14" height="14">
                         <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none" stroke-dasharray="32" stroke-linecap="round"/>
                       </svg>
-                      <svg v-else-if="msg.pipelineCompleted || stageActiveIndex > idx" class="step-check" viewBox="0 0 16 16" width="12" height="12">
+                      <svg v-else-if="msg.pipelineCompleted || getPipelineStageIndexForMessage(msg, index) > idx" class="step-check" viewBox="0 0 16 16" width="12" height="12">
                         <path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z" fill="currentColor"/>
                       </svg>
                       <span v-else class="step-number">{{ idx + 1 }}</span>
@@ -112,7 +188,39 @@
                   </div>
                 </template>
               </div>
-              <div v-if="!msg.pipelineCompleted && currentStageHint" class="pipeline-hint-inline">{{ currentStageHint }}</div>
+              <div v-if="!msg.pipelineCompleted && getPipelineHintForMessage(msg, index)" class="pipeline-hint-inline">{{ getPipelineHintForMessage(msg, index) }}</div>
+              <div
+                v-if="msg.intentPreview && (msg.intentPreview.displayAnchor || msg.intentPreview.targetCategory)"
+                class="pipeline-recognized-inline"
+              >
+                <span
+                  v-if="msg.intentPreview.displayAnchor"
+                  class="recognized-pill"
+                  :class="{ tentative: msg.intentPreview.needsClarification }"
+                >
+                  已识别地点：{{ msg.intentPreview.displayAnchor }}
+                </span>
+                <span v-if="msg.intentPreview.targetCategory" class="recognized-pill">
+                  已识别需求：{{ msg.intentPreview.targetCategory }}
+                </span>
+                <span v-if="msg.intentPreview.isAbbreviation" class="recognized-pill subtle">
+                  {{ msg.intentPreview.normalizedAnchor && msg.intentPreview.normalizedAnchor !== msg.intentPreview.displayAnchor
+                    ? `简称展开：${msg.intentPreview.normalizedAnchor}`
+                    : '简称锚点' }}
+                </span>
+                <span
+                  v-if="typeof msg.intentPreview.confidence === 'number'"
+                  class="recognized-pill subtle"
+                >
+                  置信度：{{ formatIntentConfidence(msg.intentPreview.confidence) }}
+                </span>
+              </div>
+              <div
+                v-if="msg.intentPreview?.needsClarification && msg.intentPreview?.clarificationHint"
+                class="pipeline-clarification-inline"
+              >
+                {{ msg.intentPreview.clarificationHint }}
+              </div>
               <div v-if="msg.queryType || msg.intentMeta?.intentMode" class="pipeline-intent-inline">
                 <span v-if="msg.queryType" class="intent-pill">Type: {{ msg.queryType }}</span>
                 <span v-if="msg.intentMeta?.intentMode" class="intent-pill">Mode: {{ msg.intentMeta.intentMode }}</span>
@@ -130,7 +238,48 @@
               </div>
             </div>
 
-            <div v-if="msg.content && msg.content.trim()" class="message-text" v-html="renderMessageHtml(msg)"></div>
+            <!-- 思考过程展示组件 (V3 推理模型) -->
+            <div
+              v-if="msg.role === 'assistant' && (msg.isThinking || msg.reasoningContent)"
+              class="thinking-process-container"
+            >
+              <div class="thinking-header" @click="msg.isReasoningExpanded = !msg.isReasoningExpanded">
+                <div class="thinking-status">
+                  <svg v-if="msg.isThinking" class="thinking-spinner" viewBox="0 0 24 24" width="16" height="16">
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none" stroke-dasharray="32" stroke-linecap="round"/>
+                  </svg>
+                  <svg v-else class="thinking-check" viewBox="0 0 16 16" width="14" height="14">
+                    <path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z" fill="currentColor"/>
+                  </svg>
+                  <span class="thinking-label">
+                    {{ msg.thinkingMessage || (msg.isThinking ? '正在整理思路...' : '已整理思路') }}
+                  </span>
+                </div>
+                <svg
+                  class="thinking-expand-icon"
+                  :class="{ expanded: msg.isReasoningExpanded }"
+                  viewBox="0 0 24 24"
+                  width="16"
+                  height="16"
+                >
+                  <path d="M7 10l5 5 5-5z" fill="currentColor"/>
+                </svg>
+              </div>
+              <div
+                v-if="msg.reasoningContent"
+                class="thinking-content"
+                :class="{ collapsed: !msg.isReasoningExpanded }"
+              >
+                <div class="thinking-text">{{ msg.reasoningContent }}</div>
+              </div>
+            </div>
+
+            <div
+              v-if="msg.content && msg.content.trim()"
+              class="message-text"
+              :class="{ 'streaming-markdown': shouldRenderStreamingMarkdown(msg, index) }"
+              v-html="renderMessageHtml(msg, { streaming: shouldRenderStreamingMarkdown(msg, index) })"
+            ></div>
 
             <div
               v-if="msg.role === 'assistant' && getMessageCacheLabel(msg)"
@@ -153,6 +302,28 @@
               </span>
             </div>
 
+            <div
+              v-if="msg.role === 'assistant' && (msg.toolCalls?.length || msg.evidenceView)"
+              class="message-evidence-inline"
+            >
+              <div v-if="msg.toolCalls?.length" class="message-evidence-row">
+                <span class="meta-pill evidence-pill">
+                  Tools: {{ msg.toolCalls.length }}
+                </span>
+                <span class="evidence-inline-text">
+                  {{ msg.toolCalls.slice(0, 3).map((call) => `${call.skill}.${call.action}`).join(' · ') }}
+                </span>
+              </div>
+              <div v-if="msg.evidenceView" class="message-evidence-row">
+                <span class="meta-pill evidence-pill is-view">
+                  View: {{ msg.evidenceView.type }}
+                </span>
+                <span class="evidence-inline-text">
+                  {{ (msg.evidenceView.items || []).slice(0, 3).map((item) => item.name).join(' · ') || '已生成结构化证据视图' }}
+                </span>
+              </div>
+            </div>
+
             <EmbeddedTagCloud 
               v-if="msg.role === 'assistant' && !isGeneralQaMessage(msg) && msg.pois && msg.pois.length > 0"
               :pois="msg.pois"
@@ -160,7 +331,7 @@
               :intent-meta="msg.intentMeta || null"
               :width="360"
               :height="200"
-              @render-to-map="handleRenderToMap"
+              @render-to-map="(pois) => handleRenderToMap(msg, pois)"
               @tag-click="handleTagClick"
             />
 
@@ -169,14 +340,14 @@
         </div>
 
         <section
-          v-if="latestAssistantMessage && shouldShowAnalysisBoard(latestAssistantMessage)"
+          v-if="latestAssistantMessage && shouldShowActiveAnalysisBoard(latestAssistantMessage)"
           class="analysis-board analysis-board-inline"
           aria-label="空间分析看板"
         >
           <header class="analysis-board-header">
             <div>
-              <p class="analysis-kicker">最新回复分析看板</p>
-              <h3 class="analysis-title">模板化信息聚合</h3>
+              <p class="analysis-kicker">{{ analysisBoardKicker }}</p>
+              <h3 class="analysis-title">{{ analysisBoardTitle }}</h3>
             </div>
             <span class="analysis-meta">
               {{ latestAssistantMessage?.timestamp ? formatTime(latestAssistantMessage.timestamp) : '--:--' }}
@@ -188,8 +359,17 @@
               {{ analysisNarrativeText }}
             </div>
 
+            <V4EvidencePanel
+              v-if="isV4Mode && shouldShowV4EvidencePanel(latestAssistantMessage)"
+              :message="latestAssistantMessage"
+              :provider-ready="v4ProviderReady"
+              :provider-label="providerName"
+              :model-id="providerModelId"
+              :degraded-dependencies="v4DegradedDependencies"
+              :session-id="latestAssistantMessage.sessionId || chatSessionId"
+            />
             <SpatialEvidenceCard
-              v-if="latestAssistantMessage && hasSpatialEvidence(latestAssistantMessage)"
+              v-else-if="latestAssistantMessage && hasSpatialEvidence(latestAssistantMessage)"
               :clusters="latestAssistantMessage.spatialClusters"
               :vernacular-regions="latestAssistantMessage.vernacularRegions"
               :fuzzy-regions="latestAssistantMessage.fuzzyRegions"
@@ -202,7 +382,7 @@
             />
             <div v-else class="analysis-empty-state">
               <span class="analysis-empty-title">等待空间证据</span>
-              <p>当前最新回复尚未返回可聚合的空间结构化结果，继续提问后将自动生成 1-3 个意图模板。</p>
+              <p>{{ analysisEmptyText }}</p>
             </div>
           </div>
         </section>
@@ -211,13 +391,27 @@
 
     <!-- 输入区域 -->
     <div class="chat-input-area">
+      <div v-if="isV4Mode" class="location-toolbar">
+        <button
+          type="button"
+          class="location-trigger-btn"
+          data-testid="geo-locate-btn"
+          :disabled="isTyping || locationState === 'locating' || !hasBrowserGeolocation"
+          @click="requestCurrentLocation"
+        >
+          {{ locationButtonLabel }}
+        </button>
+        <span class="location-status-pill" :class="`is-${locationStatusTone}`">
+          {{ locationStatusText }}
+        </span>
+      </div>
       <div class="input-wrapper">
         <textarea 
           ref="inputRef"
           v-model="inputText"
           @keydown.enter.exact.prevent="sendMessage"
           @keydown.shift.enter="insertNewline"
-          placeholder="询问关于选中区域 POI 的问题..."
+          :placeholder="chatInputPlaceholder"
           :disabled="isTyping"
           rows="1"
         ></textarea>
@@ -237,7 +431,7 @@
           AI 服务未连接
           <button class="retry-link" type="button" @click="checkOnlineStatus">重试连接</button>
         </span>
-        <span v-else>按 Enter 发送，Shift+Enter 换行</span>
+        <span v-else>{{ inputHintText }}</span>
       </div>
     </div>
   </div>
@@ -257,11 +451,16 @@ import {
   refreshTemplateWeights,
   trackSessionOutcome
 } from '../services/aiTelemetry.js';
+import { filterV3ChatOptions } from '../utils/v3RequestOptions.js';
 import EmbeddedTagCloud from './EmbeddedTagCloud.vue';
 import SpatialEvidenceCard from './SpatialEvidenceCard.vue';
+import V4EvidencePanel from './v4/V4EvidencePanel.vue';
 import { marked } from 'marked';
 import { normalizeMarkdownForRender } from '../utils/markdownContract.js';
 import { resolveAnalysisSignals } from '../utils/analysisSignals.js';
+import { isGeneralQaMessage, shouldShowAnalysisBoard } from '../utils/analysisBoardVisibility.js';
+import { buildChatHistoryExportContent } from '../utils/chatHistoryExport.js';
+import { hasCoordinateMatch, normalizeAiMapFeature } from '../utils/aiMapRender.js';
 
 const props = defineProps({
   // 当前选中的 POI 数据
@@ -321,7 +520,8 @@ const emit = defineEmits([
   'ai-vernacular-regions',
   'ai-fuzzy-regions',
   'ai-analysis-stats',
-  'ai-intent-meta'
+  'ai-intent-meta',
+  'clear-chat-state'
 ]);
 
 // 响应式状态
@@ -332,8 +532,12 @@ const currentStage = ref(''); // 原始 stage 名称（来自 SSE）
 const streamQueue = ref('');
 const forceRecomputeNext = ref(false);
 
-// 阶段顺序与后端实际执行顺序一致：planner → spatial → visual → fusion → writer
-const stageSteps = [
+const backendVersion = String(import.meta.env.VITE_BACKEND_VERSION || '').trim().toLowerCase();
+const isV3Mode = backendVersion === 'v3';
+const isV4Mode = backendVersion === 'v4';
+
+// V1 阶段顺序：planner → spatial → visual → fusion → writer
+const v1StageSteps = [
   { key: 'planner', label: '意图处理', hint: '正在理解问题意图与约束...' },
   { key: 'spatial', label: '空间分析', hint: '正在执行空间检索、聚类与边界建模...' },
   { key: 'visual', label: '视觉感知', hint: '正在提取视口锚点与视觉形态特征...' },
@@ -341,10 +545,57 @@ const stageSteps = [
   { key: 'writer', label: '组织回答', hint: '正在整理答案并生成可读输出...' }
 ];
 
+// V3 简化阶段：意图理解 → 空间检索 → 空间推理 → 答案生成
+const v3StageSteps = [
+  { key: 'intent', label: '意图理解', hint: '正在理解您的问题...' },
+  { key: 'spatial', label: '空间检索', hint: '正在搜索相关地点...' },
+  { key: 'reasoning', label: '空间推理', hint: '正在分析检索结果...' },
+  { key: 'answer', label: '答案生成', hint: '正在生成回答...' }
+];
+
+const v4StageSteps = [
+  { key: 'intent', label: '意图识别', hint: '正在识别问题类型和锚点...' },
+  { key: 'memory', label: '会话记忆', hint: '正在拼接最近对话和用户画像...' },
+  { key: 'tool_select', label: '工具规划', hint: '正在选择本轮最合适的技能组合...' },
+  { key: 'tool_run', label: '工具执行', hint: '正在运行空间检索、路网或语义技能...' },
+  { key: 'evidence', label: '证据整理', hint: '正在压缩证据视图并准备渲染数据...' },
+  { key: 'answer', label: '结果生成', hint: '正在汇总结论并回推前端...' }
+];
+
+// V3 思考过程状态
+const isThinking = ref(false);
+const thinkingMessage = ref('');
+const reasoningContent = ref('');
+const isReasoningExpanded = ref(false);
+
+// 根据模式选择阶段配置
+const stageSteps = isV4Mode ? v4StageSteps : (isV3Mode ? v3StageSteps : v1StageSteps);
+
 function normalizeStageName(stageName) {
   const raw = String(stageName || '').toLowerCase();
   if (!raw) return '';
 
+  if (isV4Mode) {
+    if (raw.includes('intent')) return 'intent';
+    if (raw.includes('memory')) return 'memory';
+    if (raw.includes('tool_select') || raw.includes('select')) return 'tool_select';
+    if (raw.includes('tool_run') || raw.includes('execute') || raw.includes('tool')) return 'tool_run';
+    if (raw.includes('evidence')) return 'evidence';
+    if (raw.includes('query') || raw.includes('sql')) return 'tool_run';
+    if (raw.includes('answer') || raw.includes('done')) return 'answer';
+    return raw;
+  }
+
+  // V3 简化阶段映射
+  if (isV3Mode) {
+    if (raw.includes('intent')) return 'intent';
+    if (raw.includes('spatial')) return 'spatial';
+    if (raw.includes('reasoning')) return 'reasoning';
+    if (raw.includes('answer') || raw.includes('writer')) return 'answer';
+    return raw; // 直接返回原始名称
+  }
+
+  // V1 复杂阶段映射
   // 意图处理阶段
   if (raw.includes('planner') || raw.includes('intent') || raw.includes('irrelevant') || raw.includes('smalltalk') || raw.includes('general_qa')) return 'planner';
   // 空间分析阶段（先于视觉感知执行）
@@ -366,28 +617,6 @@ function normalizeStageName(stageName) {
 
 const normalizedStageKey = computed(() => normalizeStageName(currentStage.value));
 
-// 记录已到达的最高阶段索引，防止 UI 回退
-let highWaterStageIndex = -1;
-
-const stageActiveIndex = computed(() => {
-  const idx = stageSteps.findIndex((step) => step.key === normalizedStageKey.value);
-  if (idx >= 0) {
-    // 单调递增守卫：只允许前进不允许后退
-    if (idx >= highWaterStageIndex) {
-      highWaterStageIndex = idx;
-    }
-    return highWaterStageIndex;
-  }
-  // 无匹配时保持在已到达的最高阶段
-  if (highWaterStageIndex >= 0) return highWaterStageIndex;
-  return isTyping.value ? 0 : -1;
-});
-
-const currentStageHint = computed(() => {
-  if (stageActiveIndex.value < 0) return '';
-  return stageSteps[stageActiveIndex.value]?.hint || '';
-});
-
 function formatPrefetchState(prefetchDebug = {}) {
   if (prefetchDebug?.degraded === true) return '降级';
   if (prefetchDebug?.wasted === true) return '浪费';
@@ -399,6 +628,71 @@ function formatPrefetchOverlap(value = 0) {
   if (!Number.isFinite(numeric)) return '0ms';
   const rounded = Math.round(numeric);
   return `${rounded > 0 ? '+' : ''}${rounded}ms`;
+}
+
+function formatIntentConfidence(value) {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return '--'
+  const normalized = numeric <= 1 ? numeric : numeric / 100
+  return `${Math.round(normalized * 100)}%`
+}
+
+function isStreamingMessage(message, index) {
+  if (!message || message.role !== 'assistant') return false;
+  if (message.pipelineCompleted) return false;
+  if (message.isStreaming === true) return true;
+  return isTyping.value && index === messages.value.length - 1;
+}
+
+function shouldShowPipelineForMessage(message, index) {
+  if (!message || message.role !== 'assistant') return false;
+  if (isGeneralQaMessage(message)) return false;
+  return Boolean(message.pipelineCompleted || isStreamingMessage(message, index));
+}
+
+function updateMessagePipelineHighWater(message, stageKey = '') {
+  if (!message) return -1;
+
+  const idx = stageSteps.findIndex((step) => step.key === stageKey);
+  const previous = Number.isInteger(message.pipelineHighWaterStageIndex)
+    ? message.pipelineHighWaterStageIndex
+    : -1;
+
+  if (idx >= 0) {
+    message.pipelineHighWaterStageIndex = Math.max(previous, idx);
+    return message.pipelineHighWaterStageIndex;
+  }
+
+  return previous;
+}
+
+function getPipelineStageIndexForMessage(message, index) {
+  if (!message) return -1;
+
+  const candidateStage = normalizeStageName(
+    message.pipelineStage
+    || message.currentStage
+    || (isStreamingMessage(message, index) ? normalizedStageKey.value : '')
+  );
+  const candidateIdx = stageSteps.findIndex((step) => step.key === candidateStage);
+  const highWater = Number.isInteger(message.pipelineHighWaterStageIndex)
+    ? message.pipelineHighWaterStageIndex
+    : -1;
+
+  if (candidateIdx >= 0) return Math.max(highWater, candidateIdx);
+  if (highWater >= 0) return highWater;
+
+  if (message.pipelineCompleted) {
+    return Math.max(stageSteps.length - 1, 0);
+  }
+
+  return isStreamingMessage(message, index) ? 0 : -1;
+}
+
+function getPipelineHintForMessage(message, index) {
+  const idx = getPipelineStageIndexForMessage(message, index);
+  if (idx < 0) return '';
+  return stageSteps[idx]?.hint || '';
 }
 
 function toEmbeddedIntentMode(intentMode, queryType = '') {
@@ -425,49 +719,17 @@ function resolveEmbeddedIntentMode(message) {
   return 'macro';
 }
 
-function resolveMessageQueryType(message) {
-  return String(
-    message?.queryType ||
-    message?.intentMeta?.queryType ||
-    ''
-  ).trim().toLowerCase()
-}
-
-function resolveMessageIntentMode(message) {
-  return String(
-    message?.intentMeta?.intentMode ||
-    message?.intentMode ||
-    ''
-  ).trim().toLowerCase()
-}
-
-function isGeneralQaMessage(message) {
-  const queryType = resolveMessageQueryType(message)
-  const intentMode = resolveMessageIntentMode(message)
-
-  if (queryType === 'general_qa' || queryType === 'irrelevant_input') {
-    return true
-  }
-
-  if (intentMode === 'llm_chat' || intentMode === 'out_of_scope') {
-    return true
-  }
-
-  return false
-}
-
-function shouldShowAnalysisBoard(message) {
-  if (!message) return false
-  return !isGeneralQaMessage(message)
-}
 const streamTimer = ref(null);
 const activeMessageIndex = ref(-1);
-const streamRenderStep = 18;
-const streamRenderIntervalMs = 24;
+const streamRenderIntervalMs = 16;
+const streamDrainTimeoutMs = 12000;
 const streamScrollTick = ref(0);
 const isOnline = ref(null);
 const messagesContainer = ref(null);
 const inputRef = ref(null);
+const userLocation = ref(null);
+const locationState = ref('idle');
+const locationErrorMessage = ref('');
 const chatSessionId = ref(`session_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`);
 const extractedPOIs = ref([]); // AI 提取的 POI 名称列表
 const { dispatchMetaEvent } = useAiStreamDispatcher({
@@ -503,37 +765,209 @@ const SNAPSHOT_CACHE_TTL_MS = 25000;
 
 // 计算 POI 数量
 const poiCount = computed(() => props.poiFeatures?.length || 0);
-
-// 快捷操作按钮
-const quickActions = [
-  {
-    text: '\uD83D\uDD0E 30\u79D2\u770B\u61C2\u8FD9\u7247\u533A',
-    prompt: '\u8BF7\u5728 30 \u79D2\u5185\u7ED9\u6211\u8FD9\u7247\u533A\u7684\u5173\u952E\u7ED3\u8BBA\uFF1A\u4E3B\u5BFC\u4E1A\u6001\u3001\u6D3B\u529B\u70ED\u70B9\u3001\u6700\u503C\u5F97\u5173\u6CE8\u7684\u673A\u4F1A\u70B9\u3002'
-  },
-  {
-    text: '\uD83D\uDCCD \u627E\u5F00\u5E97\u673A\u4F1A\u70B9',
-    prompt: '\u8BF7\u57FA\u4E8E\u5F53\u524D\u7A7A\u95F4\u5206\u5E03\uFF0C\u8BC6\u522B 3 \u4E2A\u4F4E\u4F9B\u7ED9\u9AD8\u9700\u6C42\u7684\u5019\u9009\u70B9\uFF0C\u5E76\u8BF4\u660E\u9002\u5408\u4E1A\u6001\u3002'
-  },
-  {
-    text: '\u2696\uFE0F \u76F8\u90BB\u7247\u533A\u5BF9\u6BD4',
-    prompt: '\u8BF7\u5BF9\u6BD4\u5F53\u524D\u9AD8\u6D3B\u529B\u7247\u533A\u548C\u4E3B\u5BFC\u4E1A\u6001\u7247\u533A\u7684\u5DEE\u5F02\uFF0C\u7ED9\u51FA\u4E24\u6761\u53EF\u6267\u884C\u7B56\u7565\u3002'
-  },
-  {
-    text: '\uD83D\uDE87 15\u5206\u949F\u53EF\u8FBE\u6027',
-    prompt: '\u8BF7\u8BC4\u4F30\u5F53\u524D\u533A\u57DF 15 \u5206\u949F\u5185\u7684\u4EA4\u901A\u4FBF\u5229\u5EA6\u4E0E\u751F\u6D3B\u670D\u52A1\u53EF\u8FBE\u6027\u3002'
-  },
-  {
-    text: '\uD83D\uDCCA \u5546\u4E1A\u5185\u5377\u98CE\u9669',
-    prompt: '\u8BF7\u6307\u51FA\u5F53\u524D\u533A\u57DF\u5B58\u5728\u8FC7\u5EA6\u7ADE\u4E89\u98CE\u9669\u7684\u4E1A\u6001\uFF0C\u5E76\u7ED9\u51FA\u5DEE\u5F02\u5316\u5EFA\u8BAE\u3002'
-  },
-  {
-    text: '\uD83E\uDDE0 AI \u63D0\u95EE\u793A\u4F8B',
-    prompt: '\u8BF7\u7ED9\u6211 6 \u4E2A\u9AD8\u8D28\u91CF\u5730\u7406\u7A7A\u95F4\u95EE\u9898\u793A\u4F8B\uFF0C\u6BCF\u4E2A\u95EE\u9898\u90FD\u8981\u80FD\u5F97\u5230\u53EF\u6267\u884C\u7ED3\u8BBA\u3002'
+const hasBrowserGeolocation = computed(() => (
+  typeof navigator !== 'undefined'
+  && typeof navigator.geolocation?.getCurrentPosition === 'function'
+));
+const hasUserLocation = computed(() => (
+  Number.isFinite(Number(userLocation.value?.lon))
+  && Number.isFinite(Number(userLocation.value?.lat))
+));
+const locationButtonLabel = computed(() => {
+  if (locationState.value === 'locating') return '正在定位...';
+  return hasUserLocation.value ? '重新定位' : '使用当前位置';
+});
+const locationStatusText = computed(() => {
+  if (!hasBrowserGeolocation.value) return '当前浏览器不支持定位';
+  if (locationState.value === 'locating') return '正在获取当前位置...';
+  if (locationState.value === 'error') return locationErrorMessage.value || '定位失败，请重试';
+  if (hasUserLocation.value) {
+    const accuracy = Number(userLocation.value?.accuracyM);
+    if (Number.isFinite(accuracy)) {
+      return `已使用当前位置（精度约 ${Math.round(accuracy)} 米）`;
+    }
+    return '已使用当前位置';
   }
-];
+  return '未启用实时定位';
+});
+const locationStatusTone = computed(() => {
+  if (!hasBrowserGeolocation.value) return 'muted';
+  if (locationState.value === 'error') return 'danger';
+  if (locationState.value === 'locating') return 'warning';
+  if (hasUserLocation.value) return 'success';
+  return 'muted';
+});
+
+const welcomeExamples = computed(() => (
+  isV4Mode
+    ? [
+        {
+          label: '武汉大学附近有哪些咖啡店？',
+          prompt: '武汉大学附近有哪些咖啡店？'
+        },
+        {
+          label: '武汉大学最近的地铁站是什么？',
+          prompt: '武汉大学最近的地铁站是什么？'
+        },
+        {
+          label: '和武汉大学周边气质相似的片区有哪些？',
+          prompt: '和武汉大学周边气质相似的片区有哪些？'
+        },
+        {
+          label: '比较武汉大学和湖北大学附近的餐饮活跃度',
+          prompt: '比较武汉大学和湖北大学附近的餐饮活跃度'
+        }
+      ]
+    : [
+        {
+          label: '武汉大学附近有哪些咖啡店？',
+          prompt: '武汉大学附近有哪些咖啡店？'
+        },
+        {
+          label: '武汉大学最近的地铁站是什么？',
+          prompt: '武汉大学最近的地铁站是什么？'
+        },
+        {
+          label: '武汉二中附近有哪些商超？',
+          prompt: '武汉二中附近有哪些商超？'
+        },
+        {
+          label: '这片区适合开轻食店还是咖啡店？',
+          prompt: '这片区适合开轻食店还是咖啡店？请从供给、竞争和周边需求角度分析。'
+        }
+      ]
+));
 
 const providerName = ref('');
+const providerId = ref('');
+const providerModelId = ref('');
 const isLocalProvider = ref(false);
+const v4ProviderReady = ref(false);
+const v4DegradedDependencies = ref([]);
+const v4Dependencies = ref({});
+const showV4RuntimeDetails = ref(false);
+const shortSessionId = computed(() => {
+  const candidate = String(chatSessionId.value || '');
+  if (!candidate) return '未分配';
+  return candidate.length > 18 ? `${candidate.slice(0, 8)}...${candidate.slice(-6)}` : candidate;
+});
+
+const runtimeDependencyLabelMap = {
+  llm_provider: '大模型编排',
+  short_term_memory: '短期记忆',
+  long_term_memory: '长期记忆',
+  spatial_encoder: '空间编码器',
+  spatial_vector: '语义向量检索',
+  route_distance: '路网距离',
+  database: '空间数据库'
+};
+
+function formatRuntimeDependencyLabel(dependency) {
+  const key = String(dependency || '').trim();
+  return runtimeDependencyLabelMap[key] || key.replaceAll('_', ' ');
+}
+
+const v4DegradedDependencyLabels = computed(() => (
+  v4DegradedDependencies.value.map((dependency) => formatRuntimeDependencyLabel(dependency))
+));
+
+const headerTitle = computed(() => isV4Mode ? 'GeoLoom V4' : 'GeoAI 助手');
+const welcomeAssistantName = computed(() => isV4Mode ? 'GeoLoom V4 Agent' : 'GeoAI 助手');
+  const showRuntimeDetailsToggle = computed(() => (
+    isV4Mode
+    && isOnline.value === true
+    && Boolean(providerId.value || providerModelId.value || chatSessionId.value || v4DegradedDependencyLabels.value.length)
+  ));
+  const runtimeModelServiceLabel = computed(() => {
+    if (providerModelId.value) return providerModelId.value;
+    if (!isV4Mode) return '';
+    return providerId.value || '';
+  });
+  const v4RuntimeModeLabel = computed(() => {
+    if (!isV4Mode) return '';
+    if (!v4ProviderReady.value) return '安全回退';
+  return v4DegradedDependencyLabels.value.length > 0 ? '核心链路在线' : '完整模式';
+});
+const headerSummaryText = computed(() => {
+  if (isV4Mode) {
+    if (isOnline.value === null) return '正在连接空间问答服务...';
+    if (isOnline.value === false) return '服务暂时不可用，请稍后重试。';
+    if (!v4ProviderReady.value) {
+      return 'MiniMax 编排暂不可用，当前走安全回退链路，仍可继续查询附近配套、最近站点和片区比较。';
+    }
+    if (v4DegradedDependencyLabels.value.length > 0) {
+      return `MiniMax 编排已在线；当前处于本地回退的能力：${v4DegradedDependencyLabels.value.join('、')}。`;
+    }
+    return '附近配套、最近站点和片区比较已经可以直接问了。';
+  }
+
+  if (!isOnline.value) return '';
+  const parts = [providerId.value, providerModelId.value].filter(Boolean);
+  return parts.join(' · ');
+});
+const welcomeHeadline = computed(() => (
+  isV4Mode
+    ? '直接问附近配套、最近站点和片区比较'
+    : '直接问地点、周边和选址问题'
+));
+const welcomeDescription = computed(() => (
+  isV4Mode
+    ? '先说地点，再说要查什么。我会尽量直接给你地点、距离和结论。'
+    : '我会先识别地点和需求，再结合当前地图状态给出空间检索或空间推理结果。'
+));
+const welcomeContextStats = computed(() => [
+  {
+    label: '当前状态',
+    value: isV4Mode
+      ? (
+          isOnline.value === null
+            ? '正在连接'
+            : isOnline.value === false
+              ? '服务离线'
+              : v4ProviderReady.value
+                ? '可直接提问'
+                : '安全回退中'
+        )
+      : (isOnline.value ? '服务在线' : '等待连接'),
+    tone: (isV4Mode && v4ProviderReady.value) || (!isV4Mode && isOnline.value)
+      ? 'active'
+      : isOnline.value === false
+        ? 'muted'
+        : 'accent'
+  },
+  {
+    label: '适合问题',
+    value: isV4Mode ? '周边配套 / 最近站点 / 片区比较' : '地点 + 空间关系 + 需求',
+    tone: 'accent'
+  },
+  {
+    label: '当前范围',
+    value: poiCount.value > 0 ? `已圈选 ${poiCount.value} 个点位` : '未圈选也能直接提问',
+    tone: poiCount.value > 0 ? 'active' : 'neutral'
+  }
+]);
+const welcomeFormulaText = computed(() => (
+  isV4Mode
+    ? '建议直接按“地点 + 需求”来问，比如“武汉大学最近的地铁站是什么？”'
+    : '地点 + 空间关系 + 需求，例如“武汉大学附近有哪些咖啡店？”'
+));
+const chatInputPlaceholder = computed(() => (
+  isV4Mode
+    ? '例如：武汉大学附近有哪些咖啡店？比较武汉大学和湖北大学附近的餐饮活跃度'
+    : '例如：武汉大学附近有哪些咖啡店？这片区适合开什么店？'
+));
+const inputHintText = computed(() => (
+  isV4Mode
+    ? '按 Enter 发送，Shift+Enter 换行。先说地点，再说需求，我会尽量直接返回地点、距离和结论。'
+    : '按 Enter 发送，Shift+Enter 换行。推荐按“地点 + 空间关系 + 需求”来提问。'
+));
+const analysisBoardKicker = computed(() => isV4Mode ? 'V4 Evidence Console' : '最新回复分析看板');
+const analysisBoardTitle = computed(() => isV4Mode ? '结构化证据与执行轨迹' : '模板化信息聚合');
+const analysisEmptyText = computed(() => (
+  isV4Mode
+    ? '当前最新回复还没有返回可消费的 V4 evidence view，继续提问后会在这里展示结构化证据与 tool trace。'
+    : '当前最新回复尚未返回可聚合的空间结构化结果，继续提问后将自动生成 1-3 个意图模板。'
+));
 
 function stopStatusPolling() {
   if (statusTimer) {
@@ -549,10 +983,32 @@ function startStatusPolling() {
   }, 30000);
 }
 
+function syncStatusFromRuntime() {
+  checkOnlineStatus().catch(() => {});
+}
+
+function handleWindowFocus() {
+  syncStatusFromRuntime();
+}
+
+function handleVisibilityChange() {
+  if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+    syncStatusFromRuntime();
+  }
+}
+
+function toggleRuntimeDetails() {
+  syncStatusFromRuntime();
+  showV4RuntimeDetails.value = !showV4RuntimeDetails.value;
+}
+
 // 计算状态文本
 const statusText = computed(() => {
   if (isOnline.value === null) return '检测中...';
   if (isOnline.value === false) return '离线';
+  if (isV4Mode) {
+    return v4ProviderReady.value ? '可直接提问' : '安全回退中';
+  }
   // 本地显示 "Local LM"，云端统丢显示 "在线"
   return isLocalProvider.value ? 'Local LM' : '在线';
 });
@@ -562,13 +1018,30 @@ async function checkOnlineStatus() {
   isOnline.value = await checkAIService();
   if (isOnline.value) {
     const config = getCurrentProviderInfo();
+    providerId.value = config.id || '';
     providerName.value = config.name;
+    providerModelId.value = config.modelId || '';
     isLocalProvider.value = config.id === 'local';
+    v4ProviderReady.value = config.providerReady === true;
+    v4DegradedDependencies.value = Array.isArray(config.degradedDependencies)
+      ? config.degradedDependencies
+      : [];
+    v4Dependencies.value = config.dependencies && typeof config.dependencies === 'object'
+      ? config.dependencies
+      : {};
     startStatusPolling();
-    refreshTemplateWeights({ force: false }).catch(() => {});
+    if (!isV4Mode) {
+      refreshTemplateWeights({ force: false }).catch(() => {});
+    }
   } else {
+    providerId.value = '';
     providerName.value = '';
+    providerModelId.value = '';
     isLocalProvider.value = false;
+    v4ProviderReady.value = false;
+    v4DegradedDependencies.value = [];
+    v4Dependencies.value = {};
+    showV4RuntimeDetails.value = false;
     stopStatusPolling();
   }
   return isOnline.value;
@@ -621,6 +1094,97 @@ async function captureMapSnapshot(snapshotKey) {
   }
 }
 
+function waitForNextPaint() {
+  return new Promise((resolve) => {
+    window.requestAnimationFrame(() => resolve());
+  });
+}
+
+function buildUserLocationPayload(position) {
+  const longitude = Number(position?.coords?.longitude);
+  const latitude = Number(position?.coords?.latitude);
+  const accuracy = Number(position?.coords?.accuracy);
+
+  if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) {
+    return null;
+  }
+
+  return {
+    lon: longitude,
+    lat: latitude,
+    accuracyM: Number.isFinite(accuracy) ? accuracy : null,
+    source: 'browser_geolocation',
+    capturedAt: new Date(position?.timestamp || Date.now()).toISOString(),
+    coordSys: 'wgs84'
+  };
+}
+
+function mapGeolocationErrorToMessage(error) {
+  const code = Number(error?.code);
+  if (code === 1) return '定位权限被拒绝，请允许浏览器读取当前位置。';
+  if (code === 2) return '当前位置暂时不可用，请稍后重试。';
+  if (code === 3) return '定位超时，请重试。';
+  return '定位失败，请重试。';
+}
+
+function requestCurrentLocation() {
+  if (!hasBrowserGeolocation.value) {
+    locationState.value = 'error';
+    locationErrorMessage.value = '当前浏览器不支持定位';
+    return Promise.resolve(null);
+  }
+
+  locationState.value = 'locating';
+  locationErrorMessage.value = '';
+
+  return new Promise((resolve) => {
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const payload = buildUserLocationPayload(position);
+        if (!payload) {
+          locationState.value = 'error';
+          locationErrorMessage.value = '定位结果无效，请重试。';
+          resolve(null);
+          return;
+        }
+
+        userLocation.value = payload;
+        locationState.value = 'ready';
+        locationErrorMessage.value = '';
+        resolve(payload);
+      },
+      (error) => {
+        locationState.value = 'error';
+        locationErrorMessage.value = mapGeolocationErrorToMessage(error);
+        resolve(null);
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 8000,
+        maximumAge: 120000
+      }
+    );
+  });
+}
+
+function takeNextStreamCharacter(text) {
+  if (!text) {
+    return { char: '', rest: '' };
+  }
+
+  const iterator = text[Symbol.iterator]();
+  const next = iterator.next();
+  const char = next?.value || '';
+  if (!char) {
+    return { char: '', rest: '' };
+  }
+
+  return {
+    char,
+    rest: text.slice(char.length)
+  };
+}
+
 function enqueueStreamChunk(chunk, messageIndex) {
   if (!chunk || typeof chunk !== 'string') return;
 
@@ -646,8 +1210,15 @@ function enqueueStreamChunk(chunk, messageIndex) {
       return;
     }
 
-    const delta = streamQueue.value.slice(0, streamRenderStep);
-    streamQueue.value = streamQueue.value.slice(streamRenderStep);
+    const { char: delta, rest } = takeNextStreamCharacter(streamQueue.value);
+    if (!delta) {
+      streamQueue.value = '';
+      window.clearInterval(streamTimer.value);
+      streamTimer.value = null;
+      return;
+    }
+
+    streamQueue.value = rest;
     currentMessage.content += delta;
 
     streamScrollTick.value += 1;
@@ -661,6 +1232,18 @@ function enqueueStreamChunk(chunk, messageIndex) {
       scrollToBottom(false, 'auto');
     }
   }, streamRenderIntervalMs);
+}
+
+async function waitForStreamQueueToDrain(timeoutMs = streamDrainTimeoutMs) {
+  const startedAt = Date.now();
+
+  while (streamQueue.value || streamTimer.value) {
+    if (Date.now() - startedAt > timeoutMs) {
+      await flushStreamQueue();
+      return;
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, streamRenderIntervalMs));
+  }
 }
 
 async function flushStreamQueue() {
@@ -718,6 +1301,38 @@ function sanitizeAssistantVisibleText(text = '') {
   return cleaned
 }
 
+function removeLastOccurrence(text = '', token = '') {
+  if (!text || !token) return text
+  const index = text.lastIndexOf(token)
+  if (index < 0) return text
+  return `${text.slice(0, index)}${text.slice(index + token.length)}`
+}
+
+function stripDanglingMarkdownTokens(text = '') {
+  let normalized = String(text || '')
+  const pairedTokens = ['**', '__', '`']
+
+  pairedTokens.forEach((token) => {
+    const count = normalized.split(token).length - 1
+    if (count % 2 === 1) {
+      normalized = removeLastOccurrence(normalized, token)
+    }
+  })
+
+  return normalized
+}
+
+function normalizeInlineMarkdownArtifacts(text = '') {
+  return String(text || '')
+    .replace(/([：:])\s*\*\s+/g, '$1\n- ')
+    .replace(/\n\s*\*\s+/g, '\n- ')
+    .replace(/\*或\*/g, '或')
+}
+
+function shouldRenderStreamingMarkdown(message, index) {
+  return isStreamingMessage(message, index)
+}
+
 
 function toggleForceRecompute() {
   forceRecomputeNext.value = !forceRecomputeNext.value;
@@ -740,6 +1355,30 @@ function isMessageCacheHit(message) {
 
 function getMessageRiskWarnings(message) {
   return resolveMessageSignals(message).riskWarnings;
+}
+
+function filterV4ChatOptions(rawOptions = {}) {
+  const {
+    requestId,
+    sessionId,
+    spatialContext,
+    regions,
+    selectedCategories,
+    sourcePolicy,
+    skipCache,
+    forceRefresh
+  } = rawOptions;
+
+  return {
+    requestId,
+    sessionId,
+    spatialContext,
+    regions,
+    selectedCategories,
+    sourcePolicy,
+    skipCache,
+    forceRefresh
+  };
 }
 
 async function sendMessage() {
@@ -786,7 +1425,10 @@ async function sendMessage() {
   let forceRecomputeRequest = false;
 
   try {
-    console.log('[AiChat] Sending message with POI count:', props.poiFeatures?.length || 0);
+    // 仅开发环境打印关键信息
+    if (import.meta.env.DEV) {
+      console.log('[AiChat] 发送消息, POI:', props.poiFeatures?.length || 0);
+    }
 
     const apiMessages = messages.value.map(m => ({
       role: m.role,
@@ -798,8 +1440,20 @@ async function sendMessage() {
     messages.value.push({
       role: 'assistant',
       content: '',
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      isThinking: true,
+      thinkingMessage: '正在理解你的问题...',
+      isReasoningExpanded: false,
+      intentPreview: null,
+      isStreaming: true,
+      pipelineCompleted: false,
+      pipelineStage: 'intent',
+      pipelineHighWaterStageIndex: 0
     });
+
+    await nextTick();
+    scrollToBottom(true, 'auto');
+    await waitForNextPaint();
 
     const spatialContext = buildSpatialContext({
       boundaryPolygon: props.boundaryPolygon,
@@ -809,7 +1463,8 @@ async function sendMessage() {
       mapBounds: props.mapBounds,
       mapZoom: props.mapZoom,
       regions: props.regions,
-      poiFeatures: props.poiFeatures
+      poiFeatures: props.poiFeatures,
+      userLocation: userLocation.value
     });
 
     const normalizedRegions = normalizeRegionsForBackend(props.regions);
@@ -820,7 +1475,7 @@ async function sendMessage() {
     const poiCount = props.poiFeatures?.length || 0;
     const deepSpatialMode = shouldRunDeepSpatialMode(text, spatialContext, props.regions, poiCount);
     forceRecomputeRequest = forceRecomputeNext.value === true;
-    const shouldSnapshot = deepSpatialMode || shouldCaptureSnapshot(text, deepSpatialMode);
+    const shouldSnapshot = !isV3Mode && !isV4Mode && (deepSpatialMode || shouldCaptureSnapshot(text, deepSpatialMode));
     const screenshotBase64 = shouldSnapshot
       ? await captureMapSnapshot(`${props.drawMode || 'none'}:${props.mapZoom || 0}:${poiCount}`)
       : null;
@@ -832,7 +1487,7 @@ async function sendMessage() {
       regions: normalizedRegions
     });
 
-    const options = {
+    const rawOptions = {
       requestId,
       sessionId: chatSessionId.value,
       clientMetrics: {
@@ -880,6 +1535,9 @@ async function sendMessage() {
       analysisDepth: deepSpatialMode ? 'deep' : 'fast',
       ...dslMetaSkeleton
     };
+    const options = isV4Mode
+      ? filterV4ChatOptions(rawOptions)
+      : (isV3Mode ? filterV3ChatOptions(rawOptions) : rawOptions);
 
     await sendChatMessageStream(
       apiMessages,
@@ -891,8 +1549,13 @@ async function sendMessage() {
       options,
       props.poiFeatures,
       (type, data) => {
-        if (type === 'trace' && data?.trace_id) {
-          requestId = data.trace_id;
+        if (type === 'trace' && data) {
+          if (data.trace_id) {
+            requestId = data.trace_id;
+          }
+          if (data.session_id) {
+            chatSessionId.value = String(data.session_id);
+          }
         }
         const fallbackIntentMode = spatialContext?.mode === 'Polygon' ? 'micro' : 'macro';
         const dispatchResult = dispatchMetaEvent({
@@ -903,11 +1566,18 @@ async function sendMessage() {
         });
         if (dispatchResult?.stage) {
           currentStage.value = dispatchResult.stage;
+          if (messages.value[aiMessageIndex]) {
+            messages.value[aiMessageIndex].pipelineStage = dispatchResult.stage;
+            updateMessagePipelineHighWater(
+              messages.value[aiMessageIndex],
+              normalizeStageName(dispatchResult.stage)
+            );
+          }
         }
       }
     );
 
-    await flushStreamQueue();
+    await waitForStreamQueueToDrain();
     requestSucceeded = true;
   } catch (error) {
     console.error('[AiChat] Failed to send message:', error);
@@ -927,9 +1597,16 @@ async function sendMessage() {
       });
     }
   } finally {
-    await flushStreamQueue();
+    if (requestSucceeded) {
+      await waitForStreamQueueToDrain();
+    } else {
+      await flushStreamQueue();
+    }
     resetStreamState();
     if (messages.value[aiMessageIndex]) {
+      messages.value[aiMessageIndex].isStreaming = false;
+      messages.value[aiMessageIndex].pipelineStage = 'answer';
+      updateMessagePipelineHighWater(messages.value[aiMessageIndex], 'answer');
       messages.value[aiMessageIndex].pipelineCompleted = true;
     }
     const finalAssistantMessage = messages.value[aiMessageIndex] || null;
@@ -943,7 +1620,6 @@ async function sendMessage() {
     }).catch(() => {});
     isTyping.value = false;
     currentStage.value = '';
-    highWaterStageIndex = -1;
     await nextTick();
     scrollToBottom(true, 'auto');
     if (forceRecomputeRequest) {
@@ -958,9 +1634,56 @@ function sendQuickAction(prompt) {
 }
 
 // 标签云：渲染到地图
-function handleRenderToMap(pois) {
-  console.log('[AiChat] 渲染 POI 到地图:', pois.length);
-  emit('render-pois-to-map', pois);
+function buildAnchorFeatureFromMessage(message, pois = []) {
+  const stats = message?.analysisStats && typeof message.analysisStats === 'object'
+    ? message.analysisStats
+    : null;
+
+  const lon = Number(stats?.anchor_lon);
+  const lat = Number(stats?.anchor_lat);
+  if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null;
+
+  const alreadyCovered = Array.isArray(pois) && pois.some((poi) => hasCoordinateMatch(poi, lon, lat));
+
+  if (alreadyCovered) return null;
+
+  const anchorName = String(
+    message?.intentPreview?.normalizedAnchor
+    || message?.intentPreview?.displayAnchor
+    || message?.intentMeta?.placeName
+    || '检索锚点'
+  ).trim() || '检索锚点';
+
+  return {
+    type: 'Feature',
+    geometry: {
+      type: 'Point',
+      coordinates: [lon, lat]
+    },
+    properties: {
+      名称: anchorName,
+      type: '检索锚点',
+      category: '检索锚点',
+      _source: 'ai_anchor',
+      _isAnchor: true
+    }
+  };
+}
+
+function handleRenderToMap(message, pois) {
+  const normalizedPois = Array.isArray(pois) ? pois : [];
+  console.log('[AiChat] 渲染 POI 到地图:', normalizedPois.length);
+
+  const anchorFeature = buildAnchorFeatureFromMessage(message, normalizedPois);
+  if (anchorFeature) {
+    emit('render-pois-to-map', {
+      pois: normalizedPois,
+      anchorFeature
+    });
+    return;
+  }
+
+  emit('render-pois-to-map', normalizedPois);
 }
 
 // 标签云：标签点击
@@ -979,8 +1702,18 @@ function hasSpatialEvidence(msg) {
 
 function handleEvidenceLocate(center) {
   if (!center) return;
-  const poi = { lon: center.lon || center[0], lat: center.lat || center[1] };
-  emit('render-pois-to-map', [{ type: 'Feature', geometry: { type: 'Point', coordinates: [poi.lon, poi.lat] }, properties: { _source: 'evidence_locate' } }]);
+  const feature = normalizeAiMapFeature({
+    center,
+    properties: {
+      _source: 'evidence_locate'
+    }
+  }, {
+    defaultSource: 'evidence_locate',
+    fallbackCoordSys: 'wgs84'
+  });
+
+  if (!feature) return;
+  emit('render-pois-to-map', [feature]);
 }
 
 function handleEvidenceFollowup(prompt) {
@@ -993,28 +1726,17 @@ function clearChat() {
   messages.value = [];
   extractedPOIs.value = [];
   currentStage.value = '';
-  highWaterStageIndex = -1;
   resetStreamState();
+  emit('clear-chat-state');
 }
 
 // 保存对话记录
 function saveChatHistory() {
   if (messages.value.length === 0) return;
-  
-  let content = "===== 标签云智能助手对话记录 =====\n\n";
-  content += `导出时间: ${new Date().toLocaleString()}\n`;
-  content += `选中POI数量: ${props.poiFeatures.length}\n\n`;
-  content += "-----------------------------------\n\n";
-  
-  messages.value.forEach(msg => {
-    const role = msg.role === 'user' ? '用户' : '智能助手';
-    const time = new Date(msg.timestamp).toLocaleTimeString();
-    const rawContent = String(msg.content || '');
-    const safeContent = msg.role === 'assistant'
-      ? sanitizeAssistantVisibleText(rawContent)
-      : rawContent;
-    content += `[${role}] ${time}:\n${safeContent}\n\n`;
-    content += "-----------------------------------\n\n";
+
+  const content = buildChatHistoryExportContent(messages.value, {
+    poiCount: props.poiFeatures.length,
+    sanitizeAssistantText: sanitizeAssistantVisibleText
   });
   
   // 写入 UTF-8 BOM，避免 Windows 文本编辑器打开时出现中文乱码。
@@ -1078,6 +1800,14 @@ onUnmounted(() => {
     messagesContainer.value.removeEventListener('scroll', handleScroll)
     messagesContainer.value.removeEventListener('wheel', markManualScrolling)
     messagesContainer.value.removeEventListener('touchmove', markManualScrolling)
+  }
+
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('focus', handleWindowFocus)
+  }
+
+  if (typeof document !== 'undefined') {
+    document.removeEventListener('visibilitychange', handleVisibilityChange)
   }
 
   if (manualScrollTimer) {
@@ -1156,10 +1886,13 @@ function sanitizeRenderedHtml(html) {
   return container.innerHTML;
 }
 
-function renderMarkdown(text) {
+function renderMarkdown(text, options = {}) {
   if (!text) return '';
 
-  const normalizedText = normalizeMarkdownForRender(text);
+  const preparedText = options.streaming
+    ? normalizeInlineMarkdownArtifacts(stripDanglingMarkdownTokens(text))
+    : normalizeInlineMarkdownArtifacts(text);
+  const normalizedText = normalizeMarkdownForRender(preparedText);
   const rawHtml = marked.parse(normalizedText, {
     gfm: true,
     breaks: true
@@ -1168,7 +1901,7 @@ function renderMarkdown(text) {
   return sanitizeRenderedHtml(rawHtml);
 }
 
-function renderMessageHtml(message) {
+function renderMessageHtml(message, options = {}) {
   if (!message || typeof message !== 'object') return '';
   const rawContent = String(message.content || '');
   const content = message.role === 'assistant'
@@ -1177,12 +1910,13 @@ function renderMessageHtml(message) {
   if (!content) return '';
 
   const cached = markdownRenderCache.get(message);
-  if (cached && cached.content === content) {
+  const cacheKey = options.streaming ? `${content}::streaming` : content;
+  if (cached && cached.content === cacheKey) {
     return cached.html;
   }
 
-  const html = renderMarkdown(content);
-  markdownRenderCache.set(message, { content, html });
+  const html = renderMarkdown(content, options);
+  markdownRenderCache.set(message, { content: cacheKey, html });
   return html;
 }
 
@@ -1396,6 +2130,35 @@ function isWeakFeatureClaimText(text = '') {
 }
 
 function buildEvidenceNarrative(message) {
+  const view = message?.evidenceView && typeof message.evidenceView === 'object'
+    ? message.evidenceView
+    : null
+  const anchorName = String(
+    view?.anchor?.resolvedPlaceName ||
+    view?.anchor?.displayName ||
+    view?.anchor?.placeName ||
+    message?.analysisStats?.anchor_name ||
+    ''
+  ).trim()
+  const viewItems = Array.isArray(view?.items) ? view.items : []
+  const comparisonPairs = Array.isArray(view?.pairs) ? view.pairs : []
+  const semanticRegions = Array.isArray(view?.regions) ? view.regions : []
+
+  if (isV4Mode && view) {
+    if (view.type === 'transport' && viewItems[0]) {
+      return `已围绕「${anchorName || '当前锚点'}」整理最近交通接驳结果，当前最近站点是「${viewItems[0].name || '未命名站点'}」。`
+    }
+    if (view.type === 'comparison' && comparisonPairs.length > 0) {
+      return `已完成 ${comparisonPairs.length} 组对比证据整理，可直接查看两个锚点周边同类配套的数量差异与代表结果。`
+    }
+    if (view.type === 'semantic_candidate' && semanticRegions.length > 0) {
+      return `已生成 ${semanticRegions.length} 个语义相似片区候选，可直接对比它们与目标地点的气质相似度。`
+    }
+    if (viewItems.length > 0) {
+      return `已围绕「${anchorName || '当前锚点'}」整理 ${viewItems.length} 条结构化证据，可继续查看 tool 轨迹与地图联动结果。`
+    }
+  }
+
   const hotspots = Array.isArray(message?.spatialClusters?.hotspots) ? message.spatialClusters.hotspots : []
   const regions = Array.isArray(message?.vernacularRegions) ? message.vernacularRegions : []
   const fuzzyRegions = Array.isArray(message?.fuzzyRegions) ? message.fuzzyRegions : []
@@ -1437,6 +2200,21 @@ function buildEvidenceNarrative(message) {
   return parts.join('')
 }
 
+function shouldShowV4EvidencePanel(message) {
+  if (!message || !isV4Mode) return false
+  const hasEvidenceView = Boolean(message.evidenceView && typeof message.evidenceView === 'object')
+  const hasToolCalls = Array.isArray(message.toolCalls) && message.toolCalls.length > 0
+  return hasEvidenceView || hasToolCalls
+}
+
+function shouldShowActiveAnalysisBoard(message) {
+  if (!message) return false
+  if (isV4Mode) {
+    return shouldShowV4EvidencePanel(message) || Boolean(analysisNarrativeText.value)
+  }
+  return shouldShowAnalysisBoard(message, { isV3Mode })
+}
+
 const analysisNarrativeText = computed(() => {
   const message = latestAssistantMessage.value
   if (!message) return ''
@@ -1472,6 +2250,12 @@ watch(() => props.poiFeatures, (newVal, oldVal) => {
 onMounted(() => {
   stopStatusPolling();
   checkOnlineStatus().catch(() => {});
+  if (typeof window !== 'undefined') {
+    window.addEventListener('focus', handleWindowFocus);
+  }
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+  }
 });
 
 /**
@@ -1528,12 +2312,31 @@ defineExpose({
   box-shadow: -8px 0 34px rgba(2, 8, 20, 0.35);
 }
 
+.ai-chat-container.is-v4-mode {
+  --panel-bg-1: #09131d;
+  --panel-bg-2: #132638;
+  --panel-bg-3: #17344a;
+  --line-soft: rgba(148, 184, 214, 0.24);
+  --line-strong: rgba(99, 214, 255, 0.46);
+  --primary: #63d6ff;
+  background:
+    radial-gradient(circle at 88% 0%, rgba(99, 214, 255, 0.22), transparent 38%),
+    radial-gradient(circle at 8% 22%, rgba(245, 158, 11, 0.12), transparent 30%),
+    linear-gradient(155deg, var(--panel-bg-1), var(--panel-bg-2) 54%, var(--panel-bg-3));
+}
+
 .chat-header {
   padding: 14px 16px;
   border-bottom: 1px solid var(--line-soft);
   background: linear-gradient(180deg, rgba(8, 18, 33, 0.9), rgba(8, 18, 33, 0.62));
   backdrop-filter: blur(10px);
   flex-shrink: 0;
+}
+
+.ai-chat-container.is-v4-mode .chat-header {
+  background:
+    linear-gradient(180deg, rgba(9, 19, 31, 0.96), rgba(13, 28, 42, 0.76)),
+    radial-gradient(circle at 100% 0%, rgba(99, 214, 255, 0.14), transparent 26%);
 }
 
 .header-main-row {
@@ -1570,13 +2373,39 @@ defineExpose({
 
 .header-info {
   display: grid;
-  gap: 2px;
+  gap: 4px;
+}
+
+.header-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .ai-name {
   font-size: 15px;
   font-weight: 700;
   letter-spacing: 0.01em;
+}
+
+.runtime-details-toggle {
+  border: 1px solid rgba(110, 176, 224, 0.24);
+  border-radius: 999px;
+  background: rgba(10, 25, 43, 0.72);
+  color: #dcefff;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.2;
+  padding: 5px 10px;
+  cursor: pointer;
+  transition: border-color 180ms ease, background 180ms ease, transform 180ms ease;
+}
+
+.runtime-details-toggle:hover {
+  transform: translateY(-1px);
+  border-color: rgba(135, 205, 255, 0.34);
+  background: rgba(11, 33, 57, 0.88);
 }
 
 .ai-status {
@@ -1619,6 +2448,67 @@ defineExpose({
 .ai-status.probing::before {
   background: #60a5fa;
   box-shadow: 0 0 0 4px rgba(96, 165, 250, 0.15);
+}
+
+.ai-provider-line {
+  font-size: 12px;
+  line-height: 1.55;
+  color: rgba(208, 226, 242, 0.78);
+}
+
+.v4-runtime-details {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.runtime-detail-card {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(117, 169, 208, 0.2);
+  background: rgba(9, 23, 39, 0.58);
+}
+
+.runtime-detail-card.is-warning {
+  border-color: rgba(245, 158, 11, 0.24);
+  background: linear-gradient(135deg, rgba(74, 39, 7, 0.44), rgba(40, 21, 5, 0.26));
+}
+
+.runtime-detail-label {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(170, 202, 229, 0.66);
+}
+
+.runtime-detail-value {
+  min-width: 0;
+  color: #eef6ff;
+  font-size: 13px;
+  line-height: 1.55;
+  word-break: break-word;
+}
+
+.runtime-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.runtime-detail-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(251, 191, 36, 0.28);
+  background: rgba(102, 56, 16, 0.4);
+  color: #ffefcc;
+  font-size: 11px;
+  line-height: 1.3;
 }
 
 .poi-badge {
@@ -1712,50 +2602,373 @@ defineExpose({
 }
 
 .welcome-message {
-  min-height: 220px;
-  padding: 18px 10px;
-  text-align: center;
+  min-height: 240px;
+  padding: 4px 2px 14px;
   display: grid;
-  align-content: center;
-  justify-items: center;
+  align-content: start;
+  gap: 12px;
+}
+
+.welcome-shell {
+  display: grid;
+  gap: 12px;
+  width: 100%;
+}
+
+.welcome-shell-compact {
   gap: 10px;
 }
 
-.welcome-message h3 {
-  margin: 0;
-  font-size: 18px;
-  color: #f3f8ff;
+.welcome-compact-panel {
+  display: grid;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(114, 169, 223, 0.18);
+  background: linear-gradient(180deg, rgba(8, 21, 37, 0.94), rgba(9, 24, 42, 0.88));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
-.welcome-message p {
-  margin: 0;
-  font-size: 13px;
-  color: var(--text-dim);
-  max-width: 320px;
-}
-
-.quick-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
+.welcome-compact-copy {
+  display: grid;
   gap: 8px;
 }
 
-.quick-action-btn {
-  border: 1px solid rgba(106, 168, 216, 0.35);
-  border-radius: 999px;
-  background: linear-gradient(130deg, rgba(11, 30, 54, 0.86), rgba(14, 43, 71, 0.7));
-  color: #d8eafc;
-  font-size: 12px;
-  padding: 7px 12px;
-  cursor: pointer;
-  transition: all 200ms ease;
+.welcome-compact-copy h3 {
+  margin: 0;
+  font-size: clamp(19px, 2.6vw, 24px);
+  line-height: 1.3;
+  color: #f7fbff;
+  letter-spacing: -0.015em;
 }
 
-.quick-action-btn:hover {
-  border-color: rgba(120, 202, 255, 0.56);
-  background: linear-gradient(130deg, rgba(17, 60, 102, 0.86), rgba(18, 88, 130, 0.66));
+.welcome-compact-copy p {
+  margin: 0;
+  max-width: 620px;
+  font-size: 13px;
+  line-height: 1.62;
+  color: rgba(214, 230, 247, 0.78);
+}
+
+.welcome-hero {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  border-radius: 18px;
+  border: 1px solid rgba(114, 169, 223, 0.18);
+  background: linear-gradient(180deg, rgba(8, 21, 37, 0.96), rgba(9, 24, 42, 0.9));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.welcome-kicker {
+  width: fit-content;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(117, 198, 255, 0.22);
+  background: rgba(12, 31, 55, 0.44);
+  color: #dcefff;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.kicker-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #38bdf8;
+}
+
+.welcome-hero h3 {
+  margin: 0;
+  font-size: clamp(22px, 3vw, 28px);
+  line-height: 1.25;
+  color: #f7fbff;
+  letter-spacing: -0.015em;
+}
+
+.welcome-hero p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.65;
+  color: rgba(214, 230, 247, 0.78);
+}
+
+.welcome-meta-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.welcome-meta-strip-compact {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.welcome-meta-chip {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(118, 160, 201, 0.16);
+  background: rgba(8, 18, 31, 0.58);
+}
+
+.welcome-meta-chip.is-active {
+  border-color: rgba(74, 222, 128, 0.34);
+  background: rgba(10, 44, 36, 0.42);
+}
+
+.welcome-meta-chip.is-accent {
+  border-color: rgba(125, 211, 252, 0.34);
+  background: rgba(11, 48, 69, 0.38);
+}
+
+.welcome-meta-chip.is-neutral {
+  border-color: rgba(148, 163, 184, 0.2);
+}
+
+.welcome-meta-chip.is-muted {
+  opacity: 0.86;
+}
+
+.meta-chip-label {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(163, 191, 220, 0.72);
+}
+
+.meta-chip-value {
+  color: #f4f9ff;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.welcome-formula {
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(119, 182, 235, 0.16);
+  background: rgba(9, 24, 43, 0.58);
+}
+
+.formula-label {
+  display: block;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #a8ddff;
+}
+
+.formula-text {
+  margin: 5px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: rgba(220, 234, 248, 0.8);
+}
+
+.welcome-quick-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(116, 169, 218, 0.18);
+  background: rgba(8, 18, 31, 0.72);
+}
+
+.welcome-quick-header {
+  display: grid;
+  gap: 4px;
+}
+
+.welcome-quick-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: rgba(179, 202, 226, 0.72);
+}
+
+.quick-prompt-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.quick-prompt-chip {
+  border: 1px solid rgba(116, 169, 218, 0.24);
+  border-radius: 12px;
+  background: rgba(9, 24, 42, 0.74);
+  color: #deefff;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 8px 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 200ms ease, border-color 200ms ease, background 200ms ease;
+}
+
+.quick-prompt-chip:hover {
   transform: translateY(-1px);
+  border-color: rgba(136, 207, 255, 0.34);
+  background: rgba(10, 31, 54, 0.88);
+}
+
+.welcome-section {
+  display: grid;
+  gap: 10px;
+}
+
+.welcome-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.welcome-section-head.compact {
+  align-items: flex-start;
+}
+
+.welcome-section-head h4 {
+  margin: 3px 0 0;
+  font-size: 16px;
+  color: #f4f9ff;
+}
+
+.welcome-section-head p {
+  margin: 0;
+  max-width: 320px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: rgba(168, 192, 215, 0.68);
+}
+
+.welcome-section-kicker {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #8fd8ff;
+}
+
+.scenario-list {
+  display: grid;
+  gap: 10px;
+}
+
+.scenario-card {
+  --accent: 123, 170, 226;
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(var(--accent), 0.18);
+  background: rgba(8, 18, 31, 0.72);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    transform 180ms ease,
+    border-color 220ms ease,
+    background 220ms ease;
+}
+
+.scenario-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.scenario-card:hover {
+  transform: translateY(-1px);
+  border-color: rgba(var(--accent), 0.34);
+  background: rgba(10, 23, 39, 0.9);
+}
+
+.scenario-card.accent-cyan {
+  --accent: 56, 189, 248;
+}
+
+.scenario-card.accent-amber {
+  --accent: 251, 191, 36;
+}
+
+.scenario-card.accent-emerald {
+  --accent: 52, 211, 153;
+}
+
+.scenario-card.accent-violet {
+  --accent: 167, 139, 250;
+}
+
+.scenario-card.accent-rose {
+  --accent: 251, 113, 133;
+}
+
+.scenario-card.accent-slate {
+  --accent: 148, 163, 184;
+}
+
+.scenario-badge {
+  width: fit-content;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(var(--accent), 0.12);
+  color: #e8f5ff;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.scenario-title {
+  font-size: 15px;
+  line-height: 1.35;
+  color: #f8fbff;
+}
+
+.scenario-desc {
+  font-size: 12px;
+  line-height: 1.55;
+  color: rgba(214, 230, 247, 0.74);
+}
+
+.welcome-examples {
+  padding-top: 0;
+}
+
+.example-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.example-chip {
+  border: 1px solid rgba(116, 169, 218, 0.24);
+  border-radius: 12px;
+  background: rgba(9, 24, 42, 0.74);
+  color: #deefff;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 9px 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 200ms ease, border-color 200ms ease, background 200ms ease;
+}
+
+.example-chip:hover {
+  transform: translateY(-1px);
+  border-color: rgba(136, 207, 255, 0.34);
+  background: rgba(10, 31, 54, 0.88);
 }
 
 .message {
@@ -1794,6 +3007,87 @@ defineExpose({
   gap: 6px;
 }
 
+/* 思考过程展示组件样式 */
+.thinking-process-container {
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(139, 92, 246, 0.1));
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  border-radius: 8px;
+  margin: 4px 0;
+  overflow: hidden;
+}
+
+.thinking-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.2s;
+}
+
+.thinking-header:hover {
+  background: rgba(139, 92, 246, 0.1);
+}
+
+.thinking-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.thinking-spinner {
+  animation: spin 1s linear infinite;
+  color: #8b5cf6;
+}
+
+.thinking-check {
+  color: #22c55e;
+}
+
+.thinking-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: #a78bfa;
+}
+
+.thinking-expand-icon {
+  color: #6b7280;
+  transition: transform 0.2s;
+}
+
+.thinking-expand-icon.expanded {
+  transform: rotate(180deg);
+}
+
+.thinking-content {
+  max-height: 300px;
+  overflow: hidden;
+  transition: max-height 0.3s ease-out;
+}
+
+.thinking-content.collapsed {
+  max-height: 0;
+}
+
+.thinking-text {
+  padding: 8px 12px 12px;
+  font-size: 12px;
+  line-height: 1.68;
+  color: #9ca3af;
+  background: rgba(0, 0, 0, 0.2);
+  border-top: 1px solid rgba(139, 92, 246, 0.2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 250px;
+  overflow-y: auto;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 .assistant .message-content {
   width: calc(100% - 42px);
 }
@@ -1806,8 +3100,12 @@ defineExpose({
   border-radius: 12px;
   padding: 12px 14px;
   font-size: 14px;
-  line-height: 1.6;
+  line-height: 1.78;
   word-break: break-word;
+}
+
+.streaming-markdown {
+  transition: opacity 120ms ease;
 }
 
 .user .message-text {
@@ -1822,6 +3120,58 @@ defineExpose({
   color: #e7f0fa;
 }
 
+.message-text :deep(h1),
+.message-text :deep(h2),
+.message-text :deep(h3),
+.message-text :deep(h4) {
+  margin: 0 0 8px;
+  line-height: 1.35;
+  font-weight: 700;
+  color: #f7fbff;
+}
+
+.message-text :deep(h1),
+.message-text :deep(h2),
+.message-text :deep(h3) {
+  padding-left: 10px;
+  border-left: 3px solid rgba(91, 192, 255, 0.65);
+}
+
+.message-text :deep(h3) {
+  font-size: 15px;
+  color: #dff2ff;
+}
+
+.message-text :deep(p) {
+  margin: 0;
+  line-height: 1.78;
+}
+
+.message-text :deep(ul),
+.message-text :deep(ol) {
+  margin: 2px 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 8px;
+}
+
+.message-text :deep(li) {
+  padding-left: 2px;
+  line-height: 1.72;
+}
+
+.message-text :deep(strong) {
+  color: #ffffff;
+}
+
+.message-text :deep(blockquote) {
+  margin: 8px 0;
+  padding: 8px 12px;
+  border-left: 3px solid rgba(91, 192, 255, 0.5);
+  background: rgba(9, 21, 36, 0.52);
+  color: rgba(226, 242, 255, 0.92);
+}
+
 
 .message-meta-row {
   display: flex;
@@ -1834,6 +3184,36 @@ defineExpose({
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.message-evidence-inline {
+  display: grid;
+  gap: 6px;
+}
+
+.message-evidence-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.evidence-pill {
+  border: 1px solid rgba(96, 165, 250, 0.4);
+  background: rgba(15, 23, 42, 0.64);
+  color: #dbeafe;
+}
+
+.evidence-pill.is-view {
+  border-color: rgba(45, 212, 191, 0.4);
+  background: rgba(8, 47, 73, 0.5);
+  color: #ccfbf1;
+}
+
+.evidence-inline-text {
+  font-size: 12px;
+  color: rgba(214, 230, 247, 0.78);
+  line-height: 1.5;
 }
 
 .meta-pill {
@@ -1919,7 +3299,7 @@ defineExpose({
 
 .pipeline-trace-inline {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(60px, 1fr));
   gap: 6px;
 }
 
@@ -2003,6 +3383,43 @@ defineExpose({
   color: rgba(173, 211, 244, 0.74);
 }
 
+.pipeline-recognized-inline {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+}
+
+.recognized-pill {
+  border-radius: 999px;
+  border: 1px solid rgba(96, 165, 250, 0.45);
+  background: rgba(15, 23, 42, 0.72);
+  color: #eff6ff;
+  font-size: 11px;
+  padding: 4px 10px;
+  line-height: 1.3;
+}
+
+.recognized-pill.subtle {
+  border-color: rgba(148, 163, 184, 0.35);
+  background: rgba(30, 41, 59, 0.55);
+  color: #cbd5e1;
+}
+
+.recognized-pill.tentative {
+  border-color: rgba(250, 204, 21, 0.55);
+  background: rgba(113, 63, 18, 0.48);
+  color: #fef3c7;
+}
+
+.pipeline-clarification-inline {
+  margin-top: 7px;
+  text-align: center;
+  font-size: 11px;
+  color: #fef3c7;
+}
+
 .pipeline-intent-inline {
   margin-top: 6px;
   display: flex;
@@ -2070,6 +3487,14 @@ defineExpose({
   box-shadow: inset 0 1px 0 rgba(165, 210, 247, 0.06);
   overflow: hidden;
   transition: border-color 220ms ease;
+}
+
+.ai-chat-container.is-v4-mode .analysis-board {
+  border-color: rgba(117, 169, 208, 0.26);
+  background:
+    radial-gradient(circle at 100% 0%, rgba(99, 214, 255, 0.12), transparent 28%),
+    radial-gradient(circle at 0% 24%, rgba(245, 158, 11, 0.08), transparent 24%),
+    linear-gradient(180deg, rgba(8, 19, 32, 0.96), rgba(10, 28, 45, 0.92));
 }
 
 .analysis-board-inline {
@@ -2142,19 +3567,87 @@ defineExpose({
 }
 
 .chat-input-area {
-  padding: 10px 12px 14px;
+  padding: 12px 12px 14px;
   border-top: 1px solid var(--line-soft);
-  background: linear-gradient(180deg, rgba(8, 20, 36, 0.9), rgba(7, 16, 28, 0.96));
+  background: linear-gradient(180deg, rgba(10, 24, 43, 0.88), rgba(7, 16, 28, 0.96));
+  box-shadow: 0 -16px 30px rgba(3, 8, 18, 0.18);
+}
+
+.location-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.location-trigger-btn {
+  border: 1px solid rgba(119, 181, 217, 0.28);
+  background: rgba(11, 28, 47, 0.82);
+  color: #d9ecff;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: border-color 0.18s ease, transform 0.18s ease, background 0.18s ease;
+}
+
+.location-trigger-btn:hover:not(:disabled) {
+  border-color: rgba(120, 210, 255, 0.5);
+  background: rgba(15, 38, 61, 0.96);
+  transform: translateY(-1px);
+}
+
+.location-trigger-btn:disabled {
+  opacity: 0.58;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.location-status-pill {
+  flex: 1;
+  min-width: 0;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.3;
+  text-align: right;
+  border: 1px solid rgba(110, 145, 180, 0.18);
+}
+
+.location-status-pill.is-success {
+  color: #bff3de;
+  background: rgba(18, 72, 51, 0.32);
+  border-color: rgba(95, 214, 165, 0.22);
+}
+
+.location-status-pill.is-warning {
+  color: #ffe3b0;
+  background: rgba(92, 58, 12, 0.28);
+  border-color: rgba(255, 199, 92, 0.24);
+}
+
+.location-status-pill.is-danger {
+  color: #ffd0d0;
+  background: rgba(86, 26, 26, 0.28);
+  border-color: rgba(255, 134, 134, 0.22);
+}
+
+.location-status-pill.is-muted {
+  color: rgba(198, 220, 242, 0.78);
+  background: rgba(15, 32, 52, 0.42);
 }
 
 .input-wrapper {
   display: flex;
   align-items: flex-end;
   gap: 8px;
-  border-radius: 14px;
+  border-radius: 18px;
   border: 1px solid rgba(120, 166, 206, 0.35);
-  background: var(--surface);
-  padding: 8px 10px;
+  background: linear-gradient(145deg, rgba(10, 24, 42, 0.94), rgba(8, 19, 34, 0.92));
+  padding: 10px 12px;
   transition: border-color 200ms ease, box-shadow 200ms ease;
 }
 
@@ -2207,6 +3700,7 @@ defineExpose({
   margin-top: 6px;
   padding: 0 2px;
   font-size: 11px;
+  line-height: 1.5;
   color: rgba(172, 196, 223, 0.65);
 }
 
@@ -2260,6 +3754,14 @@ defineExpose({
     padding: 10px 12px;
   }
 
+  .header-main-row {
+    align-items: flex-start;
+  }
+
+  .header-actions {
+    gap: 6px;
+  }
+
   .chat-body {
     padding: 8px 8px 0;
   }
@@ -2273,6 +3775,10 @@ defineExpose({
     gap: 2px;
   }
 
+  .v4-runtime-details {
+    grid-template-columns: 1fr;
+  }
+
   .step-icon-wrapper {
     width: 20px;
     height: 20px;
@@ -2281,11 +3787,61 @@ defineExpose({
   .step-label-inline {
     font-size: 9px;
   }
+
+  .welcome-message {
+    min-height: auto;
+    padding: 2px 0 14px;
+  }
+
+  .welcome-compact-panel,
+  .welcome-quick-panel {
+    padding: 12px;
+  }
+
+  .welcome-hero {
+    padding: 16px;
+  }
+
+  .welcome-section-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .welcome-meta-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .welcome-meta-strip-compact {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .welcome-hero h3 {
+    font-size: 22px;
+  }
+
+  .welcome-meta-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .welcome-meta-strip-compact {
+    grid-template-columns: 1fr;
+  }
+
+  .example-chip {
+    width: 100%;
+  }
+
+  .quick-prompt-chip {
+    width: 100%;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .message,
-  .quick-action-btn,
+  .scenario-card,
+  .example-chip,
   .action-btn,
   .send-btn,
   .analysis-board,

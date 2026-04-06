@@ -1,0 +1,275 @@
+{
+  "area_name": "guanggu_core",
+  "env_info": {
+    "torch_version": "2.12.0.dev20260312+cu128",
+    "cuda_version": "12.8",
+    "device": "cuda",
+    "gpu_name": "NVIDIA GeForce RTX 5060 Laptop GPU",
+    "python_version": "3.13.3",
+    "os": "Windows-11-10.0.26100-SP0",
+    "timestamp": "2026-03-13 21:00:48",
+    "faiss_available": "False",
+    "experiment_version": "V6.1"
+  },
+  "config": {
+    "train_ratio": 0.7,
+    "val_ratio": 0.15,
+    "test_ratio": 0.15,
+    "num_runs": 1,
+    "num_epochs": 10,
+    "learning_rate": 0.0002,
+    "weight_decay": 1e-05,
+    "early_stopping_patience": 15,
+    "warmup_epochs": 5,
+    "batch_size": 256,
+    "grad_accum_steps": 2,
+    "triplet_margin": 1.5,
+    "pk_samples_per_class": 4,
+    "poi_knn_k": 10,
+    "graph_triplet_subset_size": 2048,
+    "sparse_adj_threshold": 5000,
+    "use_sparse_adj": true,
+    "knn_method": "auto",
+    "normalize_coords": false,
+    "num_workers": 0,
+    "pin_memory": true,
+    "persistent_workers": false,
+    "prefetch_factor": 2,
+    "use_amp": true,
+    "eval_every": 2,
+    "eval_batch_size": 1024,
+    "base_seed": 42,
+    "deterministic": true,
+    "embed_dim": 256,
+    "hidden_dim": 128,
+    "transformer_heads": 4,
+    "transformer_layers": 2,
+    "transformer_ffn_dim": 512,
+    "dropout": 0.1,
+    "coord_dim": 2,
+    "gat_heads": 4,
+    "gat_layers": 2,
+    "gat_concat": false,
+    "use_distance_encoding": true,
+    "use_direction_encoding": true,
+    "distance_encoding_dim": 16,
+    "direction_encoding_bins": 8,
+    "use_infonce_loss": true,
+    "infonce_temperature": 0.07,
+    "hard_negative_ratio": 0.5,
+    "triplet_weight": 0.5,
+    "infonce_weight": 0.5,
+    "edge_feature_dim": 4,
+    "device": "cuda",
+    "save_run_checkpoints": true,
+    "enable_profiler": true,
+    "profiler_log_interval": 10,
+    "smoke_test": true
+  },
+  "schema": {
+    "label_field": "labels",
+    "fallback_label_col": 0,
+    "category_col": 0,
+    "landuse_col": 1,
+    "road_class_col": 2,
+    "numerical_cols": [
+      3,
+      4,
+      5
+    ],
+    "num_categories": 23,
+    "num_landuse": 13,
+    "num_road_class": 27
+  },
+  "prepared_meta": {
+    "label_source": "poi_features[:, 0]",
+    "use_category_input": true,
+    "poi_feature_dim": 6,
+    "coord_dim": 2,
+    "block_feature_dim": 3,
+    "num_classes": 21
+  },
+  "graph_meta": {
+    "num_nodes": 13399,
+    "num_edges": 158438,
+    "k": 10,
+    "edge_feature_dim": 24,
+    "max_distance": 0.00011750590056180954
+  },
+  "results": {
+    "Full_Model_V61": {
+      "summary": {
+        "silhouette": {
+          "mean": 0.9517151713371277,
+          "std": 0.0,
+          "values": [
+            0.9517151713371277
+          ]
+        },
+        "nmi": {
+          "mean": 1.0,
+          "std": 0.0,
+          "values": [
+            1.0
+          ]
+        },
+        "ari": {
+          "mean": 1.0,
+          "std": 0.0,
+          "values": [
+            1.0
+          ]
+        }
+      },
+      "runs": [
+        {
+          "history": {
+            "train_loss": [
+              1.3821638938453462,
+              0.44094351513518226,
+              0.3330233295758565,
+              0.28869737519158256,
+              0.26118552933136624,
+              0.24122714830769432,
+              0.2276365790102217,
+              0.21784892471300232,
+              0.2119651883840561,
+              0.21164893317553732
+            ],
+            "train_triplet": [
+              1.497171037726932,
+              0.8730500423245959,
+              0.6654336204131445,
+              0.5771168271700541,
+              0.5222206852502294,
+              0.48236165940761566,
+              0.45520050161414677,
+              0.4356483361787266,
+              0.4238782094584571,
+              0.4232439688510365
+            ],
+            "train_infonce": [
+              1.2671567283363805,
+              0.008836993089062162,
+              0.000613036749806876,
+              0.00027791992559084773,
+              0.00015037123557704035,
+              9.263659578411737e-05,
+              7.265487945712973e-05,
+              4.951204750290749e-05,
+              5.2168516251387904e-05,
+              5.3897510547863523e-05
+            ],
+            "val_silhouette": [
+              0.8788338303565979,
+              0.9319907426834106,
+              0.94682377576828,
+              0.9531257748603821,
+              0.9544406533241272
+            ],
+            "val_nmi": [
+              0.98771247477696,
+              0.9999999999999998,
+              0.9999999999999998,
+              0.9999999999999998,
+              0.9999999999999998
+            ]
+          },
+          "test_metrics": {
+            "silhouette": 0.9517151713371277,
+            "nmi": 1.0,
+            "ari": 1.0
+          },
+          "best_epoch": 10
+        }
+      ]
+    },
+    "Pure_GATv2": {
+      "summary": {
+        "silhouette": {
+          "mean": 0.7407711744308472,
+          "std": 0.0,
+          "values": [
+            0.7407711744308472
+          ]
+        },
+        "nmi": {
+          "mean": 0.9744182440336284,
+          "std": 0.0,
+          "values": [
+            0.9744182440336284
+          ]
+        },
+        "ari": {
+          "mean": 0.9455178058412407,
+          "std": 0.0,
+          "values": [
+            0.9455178058412407
+          ]
+        }
+      },
+      "runs": [
+        {
+          "history": {
+            "train_loss": [
+              0.9813090165456136,
+              0.6608428259690603,
+              0.547509640455246,
+              0.46854328943623436,
+              0.4153427274690734,
+              0.3874988771147198,
+              0.3676297151380115,
+              0.35654589119884705,
+              0.3475903140174018,
+              0.3496055056651433
+            ],
+            "train_triplet": [
+              1.6651900907357533,
+              1.291582660542594,
+              1.086654759115643,
+              0.934910300705168,
+              0.8290856348143684,
+              0.7740795612335205,
+              0.7345859822299745,
+              0.7124490473005507,
+              0.6948057959477106,
+              0.698775718609492
+            ],
+            "train_infonce": [
+              0.2974279360431764,
+              0.030102992326849036,
+              0.008364512824401673,
+              0.0021762795699436944,
+              0.0015998196282048917,
+              0.0009181902949219673,
+              0.0006734478491934068,
+              0.0006427339576475788,
+              0.00037483436285078316,
+              0.00043529311228161934
+            ],
+            "val_silhouette": [
+              0.4516857862472534,
+              0.6434364318847656,
+              0.7206206321716309,
+              0.7497223615646362,
+              0.7553386092185974
+            ],
+            "val_nmi": [
+              0.960006866799402,
+              0.9920126776653374,
+              0.9702785991117698,
+              0.9968864707029368,
+              0.9775976603289424
+            ]
+          },
+          "test_metrics": {
+            "silhouette": 0.7407711744308472,
+            "nmi": 0.9744182440336284,
+            "ari": 0.9455178058412407
+          },
+          "best_epoch": 10
+        }
+      ]
+    }
+  }
+}

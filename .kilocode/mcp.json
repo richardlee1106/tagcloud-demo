@@ -1,1 +1,0 @@
-{"mcpServers":{"context7":{"type":"streamable-http","url":"https://mcp.context7.com/mcp","disabled":false,"alwaysAllow":[]},"github-grep":{"type":"streamable-http","url":"https://mcp.grep.app","disabled":false,"alwaysAllow":[]},"playwright":{"command":"npx","args":["-y","@executeautomation/playwright-mcp-server"],"disabled":true,"alwaysAllow":[]}}}

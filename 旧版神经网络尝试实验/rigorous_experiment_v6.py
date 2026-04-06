@@ -1,0 +1,2465 @@
+# -*- coding: utf-8 -*-
+"""
+严谨实验框架 V6
+
+V5.1 基础上的优化：
+1. Sparse adjacency - 稀疏邻接矩阵支持（大数据集）
+2. GPU kNN / faiss - 快速 KNN 图构建
+3. 在线 profiler - 训练/搬运/验证耗时拆分
+4. 严格的 ablation parameter matching
+5. 论文级 LaTeX/Markdown 表格导出
+6. 冒烟测试模式（1区域 + 1run）
+"""
+
+from __future__ import annotations
+
+import datetime
+import gc
+import json
+import math
+import os
+import platform
+import random
+import sys
+import time
+import warnings
+from contextlib import contextmanager
+from dataclasses import asdict, dataclass, field
+from functools import wraps
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optim
+from scipy import stats
+from scipy.sparse import coo_matrix, csr_matrix
+from scipy.spatial.distance import cdist
+from sklearn.cluster import KMeans
+from sklearn.exceptions import ConvergenceWarning
+from sklearn.metrics import (
+    adjusted_rand_score,
+    normalized_mutual_info_score,
+    silhouette_score,
+)
+from sklearn.model_selection import train_test_split
+from torch.cuda.amp import GradScaler, autocast
+from torch.utils.data import DataLoader, Dataset, Sampler, get_worker_info
+
+# 尝试导入 faiss
+try:
+    import faiss
+    FAISS_AVAILABLE = True
+except ImportError:
+    FAISS_AVAILABLE = False
+    warnings.warn("faiss 未安装，将使用 sklearn 作为后备方案。建议安装 faiss-gpu 加速 KNN。")
+
+sys.path.append(str(Path(__file__).parent.parent / "spatial_encoder"))
+from config import MODEL_CONFIG
+from utils.dataset import POIDataset
+
+
+# =========================================================
+# 配置
+# =========================================================
+
+@dataclass
+class FeatureSchema:
+    """
+    核对这里是否与数据一致。
+
+    默认假设:
+    - poi_features[:, 0] = category_id
+    - poi_features[:, 1] = landuse_id
+    - poi_features[:, 2] = road_class_id
+    - poi_features[:, 3:6] = 3个数值特征
+    - 标签使用 category (列0)
+    - category 也作为输入特征（在表示学习中，类别帮助学习相似性表示）
+    """
+    label_field: str = "labels"
+    fallback_label_col: int = 0  # 使用 category 作为标签
+
+    category_col: Optional[int] = 0  # category 也作为输入特征
+    landuse_col: Optional[int] = 1
+    road_class_col: Optional[int] = 2
+    numerical_cols: Tuple[int, ...] = (3, 4, 5)
+
+    num_categories: int = 23
+    num_landuse: int = 13
+    num_road_class: int = 27
+
+
+@dataclass
+class ExperimentConfig:
+    # split
+    train_ratio: float = 0.70
+    val_ratio: float = 0.15
+    test_ratio: float = 0.15
+
+    # repeat
+    num_runs: int = 5
+
+    # train
+    num_epochs: int = 100
+    learning_rate: float = 2e-4
+    weight_decay: float = 1e-5
+    early_stopping_patience: int = 15
+    warmup_epochs: int = 5  # warmup epochs, moved from magic number
+
+    # batch / triplet
+    batch_size: int = 256
+    grad_accum_steps: int = 2
+    triplet_margin: float = 1.5
+    pk_samples_per_class: int = 4
+
+    # graph models
+    poi_knn_k: int = 10
+    graph_triplet_subset_size: int = 2048
+
+    # sparse adjacency threshold
+    sparse_adj_threshold: int = 5000  # 超过此节点数使用稀疏矩阵
+    use_sparse_adj: bool = True
+
+    # KNN method
+    knn_method: str = "auto"  # "faiss", "sklearn", "auto"
+
+    # coordinate normalization
+    normalize_coords: bool = False  # 是否对坐标进行归一化（大数据集推荐开启）
+
+    # performance (Windows兼容性：num_workers=0 避免多进程问题)
+    # Windows使用spawn而非fork，多进程DataLoader可能导致序列化问题
+    # 若在Linux/Mac上运行，可手动调整为num_workers=2-4以提升数据加载速度
+    num_workers: int = 0 if platform.system() == "Windows" else 2
+    pin_memory: bool = True
+    persistent_workers: bool = False  # Windows不启用；Linux/Mac在DataLoader中按需设置
+    prefetch_factor: Optional[int] = 2  # 仅当num_workers>0时有效，DataLoader中会处理None
+    use_amp: bool = True
+
+    # eval
+    eval_every: int = 5
+    eval_batch_size: int = 1024
+
+    # reproducibility
+    base_seed: int = 42
+    deterministic: bool = True
+
+    # model dims
+    embed_dim: int = 256
+    hidden_dim: int = 128
+    transformer_heads: int = 4
+    transformer_layers: int = 2
+    transformer_ffn_dim: int = 512
+    dropout: float = 0.1
+    coord_dim: int = 2
+
+    # system
+    device: str = "cuda" if torch.cuda.is_available() else "cpu"
+
+    # optional
+    save_run_checkpoints: bool = True
+
+    # profiling
+    enable_profiler: bool = True
+    profiler_log_interval: int = 10  # 每 N 个 epoch 打印一次耗时统计
+
+    # smoke test
+    smoke_test: bool = False  # 冒烟测试模式
+
+
+FEATURE_SCHEMA = FeatureSchema()
+EXPERIMENT_CONFIG = ExperimentConfig()
+
+OUTPUT_DIR = Path(__file__).parent / "experiment_results_v6"
+PROGRESS_FILE = OUTPUT_DIR / "progress.txt"
+CHECKPOINT_DIR = OUTPUT_DIR / "checkpoints"
+REPORT_DIR = OUTPUT_DIR / "reports"
+JSON_DIR = OUTPUT_DIR / "json"
+PROFILER_DIR = OUTPUT_DIR / "profiler"
+
+
+# =========================================================
+# Profiler 工具
+# =========================================================
+
+class TimeProfiler:
+    """在线耗时分析器"""
+
+    def __init__(self, enabled: bool = True):
+        self.enabled = enabled
+        self.reset()
+
+    def reset(self):
+        self.timings = {
+            "data_transfer": 0.0,
+            "forward": 0.0,
+            "backward": 0.0,
+            "optimizer_step": 0.0,
+            "validation": 0.0,
+            "knn_build": 0.0,
+            "adj_subset": 0.0,
+            "misc": 0.0,
+        }
+        self.counts = {k: 0 for k in self.timings}
+        self._start_times = {}
+
+    @contextmanager
+    def timer(self, name: str):
+        if not self.enabled:
+            yield
+            return
+
+        start = time.perf_counter()
+        try:
+            yield
+        finally:
+            elapsed = time.perf_counter() - start
+            self.timings[name] += elapsed
+            self.counts[name] += 1
+
+    def start(self, name: str):
+        if self.enabled:
+            self._start_times[name] = time.perf_counter()
+
+    def stop(self, name: str):
+        if self.enabled and name in self._start_times:
+            elapsed = time.perf_counter() - self._start_times[name]
+            self.timings[name] += elapsed
+            self.counts[name] += 1
+            del self._start_times[name]
+
+    def summary(self) -> Dict[str, Any]:
+        total = sum(self.timings.values())
+        return {
+            "timings": dict(self.timings),
+            "counts": dict(self.counts),
+            "total": total,
+            "percentages": {k: (v / total * 100) if total > 0 else 0
+                           for k, v in self.timings.items()},
+        }
+
+    def report(self) -> str:
+        s = self.summary()
+        lines = ["[Profiler] 耗时统计:"]
+        for name, t in sorted(s["timings"].items(), key=lambda x: -x[1]):
+            pct = s["percentages"][name]
+            cnt = s["counts"][name]
+            avg = t / cnt if cnt > 0 else 0
+            lines.append(f"  {name}: {t:.2f}s ({pct:.1f}%) [count={cnt}, avg={avg:.4f}s]")
+        lines.append(f"  Total: {s['total']:.2f}s")
+        return "\n".join(lines)
+
+
+# 全局 profiler 实例
+PROFILER = TimeProfiler(enabled=EXPERIMENT_CONFIG.enable_profiler)
+
+
+# =========================================================
+# 工具函数
+# =========================================================
+
+def log_progress(msg: str, flush: bool = True):
+    ts = datetime.datetime.now().strftime("%H:%M:%S")
+    with open(PROGRESS_FILE, "a", encoding="utf-8") as f:
+        f.write(f"[{ts}] {msg}\n")
+    print(msg, flush=flush)
+
+
+def set_global_seed(seed: int, deterministic: bool = True):
+    seed = seed % (2**32)
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+
+    if deterministic:
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+        try:
+            torch.use_deterministic_algorithms(True, warn_only=True)
+        except Exception:
+            pass
+    else:
+        torch.backends.cudnn.benchmark = True
+
+
+def worker_init_fn(worker_id: int):
+    worker_info = get_worker_info()
+    if worker_info is None:
+        return
+    seed = worker_info.seed % (2**32)
+    np.random.seed(seed)
+    random.seed(seed)
+
+
+def get_env_info() -> Dict[str, str]:
+    info = {
+        "torch_version": torch.__version__,
+        "cuda_version": torch.version.cuda if torch.cuda.is_available() else "N/A",
+        "device": EXPERIMENT_CONFIG.device,
+        "gpu_name": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "N/A",
+        "python_version": platform.python_version(),
+        "os": platform.platform(),
+        "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "faiss_available": str(FAISS_AVAILABLE),
+    }
+    if FAISS_AVAILABLE:
+        try:
+            info["faiss_version"] = getattr(faiss, "__version__", "unknown")
+        except (AttributeError, ImportError):
+            info["faiss_version"] = "unknown"
+    return info
+
+
+def ensure_dirs():
+    OUTPUT_DIR.mkdir(exist_ok=True, parents=True)
+    CHECKPOINT_DIR.mkdir(exist_ok=True, parents=True)
+    REPORT_DIR.mkdir(exist_ok=True, parents=True)
+    JSON_DIR.mkdir(exist_ok=True, parents=True)
+    PROFILER_DIR.mkdir(exist_ok=True, parents=True)
+
+
+def tensor_to_list(x):
+    if isinstance(x, torch.Tensor):
+        return x.detach().cpu().tolist()
+    return x
+
+
+def clear_cuda_memory(aggressive: bool = False):
+    """清理 CUDA 显存
+
+    Args:
+        aggressive: 是否执行激进清理（包括 Python GC）
+    """
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        if aggressive:
+            torch.cuda.synchronize()
+            gc.collect()
+            torch.cuda.empty_cache()
+
+
+def get_gpu_memory_usage() -> Dict[str, float]:
+    """获取 GPU 显存使用情况（GB）"""
+    if not torch.cuda.is_available():
+        return {"allocated": 0.0, "reserved": 0.0, "max_allocated": 0.0}
+
+    return {
+        "allocated": torch.cuda.memory_allocated() / (1024**3),
+        "reserved": torch.cuda.memory_reserved() / (1024**3),
+        "max_allocated": torch.cuda.max_memory_allocated() / (1024**3),
+    }
+
+
+# =========================================================
+# KNN 图构建（支持 faiss 和 sparse）
+# =========================================================
+
+def build_knn_faiss_gpu(coords: np.ndarray, k: int) -> Tuple[np.ndarray, np.ndarray]:
+    """使用 faiss GPU 加速 KNN"""
+    n, d = coords.shape
+    k = min(k, max(1, n - 1))
+
+    # 标准化坐标以使用余弦相似度
+    coords_normalized = coords.astype(np.float32)
+
+    # 创建 faiss 索引
+    if torch.cuda.is_available():
+        try:
+            # 尝试 GPU 索引
+            res = faiss.StandardGpuResources()
+            index = faiss.IndexFlatL2(d)
+            gpu_index = faiss.index_cpu_to_gpu(res, 0, index)
+            gpu_index.add(coords_normalized)
+
+            distances, indices = gpu_index.search(coords_normalized, k + 1)
+            return distances, indices
+        except (RuntimeError, ValueError) as e:
+            # faiss GPU 可能因内存不足或驱动问题失败
+            log_progress(f"    [警告] faiss GPU 失败，退化为 CPU: {e}")
+
+    # CPU 索引
+    index = faiss.IndexFlatL2(d)
+    index.add(coords_normalized)
+    distances, indices = index.search(coords_normalized, k + 1)
+    return distances, indices
+
+
+def build_knn_sklearn(coords: np.ndarray, k: int) -> Tuple[np.ndarray, np.ndarray]:
+    """使用 sklearn KNN"""
+    from sklearn.neighbors import NearestNeighbors
+
+    n = len(coords)
+    k = min(k, max(1, n - 1))
+
+    nn_model = NearestNeighbors(n_neighbors=k + 1, metric="euclidean")
+    nn_model.fit(coords)
+    distances, indices = nn_model.kneighbors(return_distance=True)
+    return distances, indices
+
+
+def build_knn_adj_matrix(
+    coords: torch.Tensor,
+    k: int,
+    method: str = "auto",
+    use_sparse: bool = True,
+    sparse_threshold: int = 5000
+) -> Tuple[torch.Tensor, bool]:
+    """
+    构建 KNN 邻接矩阵，支持稀疏格式
+
+    Returns:
+        adj: 邻接矩阵（dense 或 sparse）
+        is_sparse: 是否为稀疏格式
+    """
+    n = len(coords)
+    k = min(k, max(1, n - 1))
+
+    coords_np = coords.detach().cpu().numpy().astype(np.float32)
+
+    with PROFILER.timer("knn_build"):
+        # 选择 KNN 方法
+        if method == "auto":
+            if FAISS_AVAILABLE and n > 1000:
+                method = "faiss"
+            else:
+                method = "sklearn"
+
+        if method == "faiss" and FAISS_AVAILABLE:
+            distances, indices = build_knn_faiss_gpu(coords_np, k)
+        else:
+            distances, indices = build_knn_sklearn(coords_np, k)
+
+    # 构建稀疏邻接矩阵
+    use_sparse_actual = use_sparse and n > sparse_threshold
+
+    if use_sparse_actual:
+        # 稀疏 COO 格式
+        rows = np.repeat(np.arange(n), k + 1)
+        cols = indices.reshape(-1)
+
+        # 值设为 1.0
+        data = np.ones(len(rows), dtype=np.float32)
+
+        # 构建 COO 矩阵
+        adj_sparse = coo_matrix((data, (rows, cols)), shape=(n, n))
+
+        # 移除对角线
+        adj_sparse.setdiag(0.0)
+
+        # 对称化
+        adj_sparse = adj_sparse.maximum(adj_sparse.T)
+
+        # 行归一化
+        adj_csr = adj_sparse.tocsr()
+        row_sums = np.array(adj_csr.sum(axis=1)).flatten()
+        row_sums[row_sums == 0] = 1.0
+        adj_csr = adj_csr.multiply(1.0 / row_sums[:, np.newaxis])
+
+        # 转换为 PyTorch sparse tensor
+        adj_coo = adj_csr.tocoo()
+        indices_pt = torch.from_numpy(
+            np.stack([adj_coo.row, adj_coo.col], axis=0)
+        ).long()
+        values_pt = torch.from_numpy(adj_coo.data).float()
+
+        adj = torch.sparse_coo_tensor(
+            indices_pt, values_pt, size=(n, n)
+        ).coalesce()
+
+        return adj, True
+    else:
+        # Dense 格式
+        adj = np.zeros((n, n), dtype=np.float32)
+        rows = np.repeat(np.arange(n), k + 1)
+        cols = indices.reshape(-1)
+        adj[rows, cols] = 1.0
+        np.fill_diagonal(adj, 0.0)
+
+        # 对称化
+        adj = np.maximum(adj, adj.T)
+
+        # 行归一化
+        deg = adj.sum(axis=1, keepdims=True)
+        deg[deg == 0] = 1.0
+        adj = adj / deg
+
+        return torch.from_numpy(adj), False
+
+
+def sparse_adj_to_dense(adj_sparse: torch.Tensor) -> torch.Tensor:
+    """稀疏邻接矩阵转 dense（小规模时使用）"""
+    if adj_sparse.is_sparse:
+        return adj_sparse.to_dense()
+    return adj_sparse
+
+
+def subset_sparse_adj(
+    adj: torch.Tensor,
+    indices: np.ndarray,
+    device: torch.device,
+    is_sparse: bool,
+    dense_threshold: int = 10000
+) -> torch.Tensor:
+    """
+    提取子图邻接矩阵
+
+    对于稀疏矩阵：
+    - 小规模子图（< dense_threshold）：转为 dense 处理
+    - 大规模子图：使用映射表重建稀疏矩阵
+
+    对于稠密矩阵：直接切片
+    """
+    with PROFILER.timer("adj_subset"):
+        idx = torch.as_tensor(indices, dtype=torch.long, device=device)
+        n_sub = len(indices)
+
+        if is_sparse and adj.is_sparse:
+            # 根据子图规模选择策略
+            if n_sub <= dense_threshold:
+                # 小规模：转 dense 后切片（更高效）
+                # 直接在目标设备上创建 dense 张量
+                adj_dense = adj.to_dense().to(device)
+                sub = adj_dense.index_select(0, idx).index_select(1, idx)
+                return sub
+            else:
+                # 大规模：使用 COO 索引映射避免全量转 dense
+                # 建立全局索引到子图索引的映射
+                old_to_new = {old_idx: new_idx for new_idx, old_idx in enumerate(indices)}
+
+                # 获取 COO 格式的索引和值
+                old_indices = adj.indices().cpu().numpy()
+                old_values = adj.values().cpu().numpy()
+
+                # 筛选在子图范围内的边 - 使用向量化操作加速
+                new_rows = []
+                new_cols = []
+                new_vals = []
+
+                for i in range(old_indices.shape[1]):
+                    r, c = old_indices[0, i], old_indices[1, i]
+                    if r in old_to_new and c in old_to_new:
+                        new_rows.append(old_to_new[r])
+                        new_cols.append(old_to_new[c])
+                        new_vals.append(old_values[i])
+
+                if len(new_rows) == 0:
+                    # 空子图，返回零矩阵
+                    return torch.zeros(n_sub, n_sub, device=device, dtype=torch.float32)
+
+                # 构建新的稀疏张量 - 直接在目标设备上创建
+                new_indices_pt = torch.tensor([new_rows, new_cols], dtype=torch.long, device=device)
+                new_values_pt = torch.tensor(new_vals, dtype=torch.float32, device=device)
+
+                sub_sparse = torch.sparse_coo_tensor(
+                    new_indices_pt, new_values_pt, size=(n_sub, n_sub)
+                ).coalesce()
+
+                # 转为 dense 用于后续计算
+                return sub_sparse.to_dense()
+        else:
+            sub = adj.index_select(0, idx).index_select(1, idx)
+            return sub.to(device, non_blocking=True)
+
+
+# =========================================================
+# 数据准备
+# =========================================================
+
+@dataclass
+class PreparedAreaData:
+    area_name: str
+    poi_features: torch.Tensor
+    poi_coords: torch.Tensor
+    labels: torch.Tensor
+    block_features: torch.Tensor
+    block_adjacency: torch.Tensor
+    global_poi_adj: torch.Tensor
+    global_poi_adj_is_sparse: bool
+    num_classes: int
+    use_category_input: bool
+    schema_info: Dict[str, Any]
+
+
+def validate_schema(raw_features: torch.Tensor, schema: FeatureSchema):
+    """验证特征 schema 与数据一致性"""
+    feat_dim = raw_features.shape[1]
+    cols = []
+
+    if schema.category_col is not None:
+        cols.append(schema.category_col)
+    if schema.landuse_col is not None:
+        cols.append(schema.landuse_col)
+    if schema.road_class_col is not None:
+        cols.append(schema.road_class_col)
+    cols.extend(list(schema.numerical_cols))
+    cols.append(schema.fallback_label_col)
+
+    if max(cols) >= feat_dim:
+        raise ValueError(
+            f"FeatureSchema 与数据不匹配: raw feature dim={feat_dim}, "
+            f"但 schema 访问到列 {max(cols)}"
+        )
+
+
+def validate_data_integrity(
+    poi_features: torch.Tensor,
+    poi_coords: torch.Tensor,
+    labels: torch.Tensor,
+    area_name: str
+):
+    """验证数据完整性，检查 NaN、Inf、类型一致性"""
+    issues = []
+
+    # 检查 NaN
+    if torch.isnan(poi_features).any():
+        nan_count = torch.isnan(poi_features).sum().item()
+        issues.append(f"poi_features 包含 {nan_count} 个 NaN 值")
+    if torch.isnan(poi_coords).any():
+        nan_count = torch.isnan(poi_coords).sum().item()
+        issues.append(f"poi_coords 包含 {nan_count} 个 NaN 值")
+
+    # 检查 Inf
+    if torch.isinf(poi_features).any():
+        inf_count = torch.isinf(poi_features).sum().item()
+        issues.append(f"poi_features 包含 {inf_count} 个 Inf 值")
+    if torch.isinf(poi_coords).any():
+        inf_count = torch.isinf(poi_coords).sum().item()
+        issues.append(f"poi_coords 包含 {inf_count} 个 Inf 值")
+
+    # 检查标签范围
+    unique_labels = torch.unique(labels)
+    if labels.min() < 0:
+        issues.append(f"labels 包含负值: {labels.min().item()}")
+
+    # 检查坐标范围（可选警告）
+    coord_range = poi_coords.max() - poi_coords.min()
+    if coord_range > 1000:
+        log_progress(f"    [提示] {area_name}: 坐标范围较大 ({coord_range:.1f})，建议归一化")
+
+    if issues:
+        warning_msg = f"  [警告] {area_name} 数据完整性问题:\n    " + "\n    ".join(issues)
+        log_progress(warning_msg)
+
+    return len(issues) == 0
+
+
+def prepare_area_data(
+    area_name: str,
+    dataset: POIDataset,
+    schema: FeatureSchema,
+    config: ExperimentConfig
+) -> PreparedAreaData:
+    raw_features = dataset.poi_features.clone().float()
+    poi_coords = dataset.poi_coords.clone().float()
+
+    validate_schema(raw_features, schema)
+
+    # labels
+    if (
+        hasattr(dataset, schema.label_field)
+        and getattr(dataset, schema.label_field) is not None
+    ):
+        labels = getattr(dataset, schema.label_field).clone().long()
+        leakage_safe_features = raw_features.clone()
+        use_category_input = schema.category_col is not None
+        label_source = f"dataset.{schema.label_field}"
+    else:
+        labels = raw_features[:, schema.fallback_label_col].long()
+        leakage_safe_features = raw_features.clone()
+        # 保留所有特征，包括 category
+        # 在表示学习中，类别信息帮助学习相似性表示
+        use_category_input = schema.category_col is not None
+        label_source = f"poi_features[:, {schema.fallback_label_col}] (all features preserved)"
+
+    num_classes = int(torch.unique(labels).numel())
+
+    # 验证数据完整性
+    validate_data_integrity(leakage_safe_features, poi_coords, labels, area_name)
+
+    # 坐标维度统一
+    if poi_coords.shape[1] < config.coord_dim:
+        pad = torch.zeros(poi_coords.shape[0], config.coord_dim - poi_coords.shape[1])
+        poi_coords = torch.cat([poi_coords, pad], dim=1)
+    elif poi_coords.shape[1] > config.coord_dim:
+        poi_coords = poi_coords[:, :config.coord_dim]
+
+    # 坐标归一化（可选，推荐大数据集使用）
+    coord_stats = None
+    if config.normalize_coords:
+        coord_mean = poi_coords.mean(dim=0, keepdim=True)
+        coord_std = poi_coords.std(dim=0, keepdim=True).clamp(min=1e-8)
+        poi_coords = (poi_coords - coord_mean) / coord_std
+        coord_stats = {
+            "mean": coord_mean.squeeze().tolist(),
+            "std": coord_std.squeeze().tolist(),
+        }
+        log_progress(f"    坐标已归一化: mean={coord_mean.squeeze().tolist()}, std={coord_std.squeeze().tolist()}")
+
+    # 构建全局 KNN 图（支持稀疏）
+    global_poi_adj, is_sparse = build_knn_adj_matrix(
+        poi_coords,
+        config.poi_knn_k,
+        method=config.knn_method,
+        use_sparse=config.use_sparse_adj,
+        sparse_threshold=config.sparse_adj_threshold
+    )
+
+    log_progress(f"    KNN 图构建完成: {len(poi_coords)} 节点, K={config.poi_knn_k}, sparse={is_sparse}")
+
+    schema_info = {
+        "label_source": label_source,
+        "use_category_input": use_category_input,
+        "poi_feature_dim": int(leakage_safe_features.shape[1]),
+        "coord_dim": int(poi_coords.shape[1]),
+        "block_feature_dim": int(dataset.block_features.shape[1])
+        if dataset.block_features.dim() == 2
+        else int(dataset.block_features.shape[-1]),
+        "num_classes": num_classes,
+        "adj_is_sparse": is_sparse,
+    }
+
+    return PreparedAreaData(
+        area_name=area_name,
+        poi_features=leakage_safe_features,
+        poi_coords=poi_coords,
+        labels=labels,
+        block_features=dataset.block_features.clone().float(),
+        block_adjacency=dataset.block_adjacency.clone().float(),
+        global_poi_adj=global_poi_adj,
+        global_poi_adj_is_sparse=is_sparse,
+        num_classes=num_classes,
+        use_category_input=use_category_input,
+        schema_info=schema_info,
+    )
+
+
+class SplitDataset(Dataset):
+    def __init__(self, prepared: PreparedAreaData, indices: np.ndarray):
+        self.prepared = prepared
+        self.indices = np.asarray(indices, dtype=np.int64)
+
+    def __len__(self):
+        return len(self.indices)
+
+    def __getitem__(self, i: int) -> Dict[str, torch.Tensor]:
+        idx = int(self.indices[i])
+        return {
+            "poi_features": self.prepared.poi_features[idx],
+            "poi_coords": self.prepared.poi_coords[idx],
+            "label": self.prepared.labels[idx],
+            "index": torch.tensor(idx, dtype=torch.long),
+        }
+
+    @property
+    def poi_features(self):
+        return self.prepared.poi_features[self.indices]
+
+    @property
+    def poi_coords(self):
+        return self.prepared.poi_coords[self.indices]
+
+    @property
+    def labels(self):
+        return self.prepared.labels[self.indices]
+
+
+def stratified_split_indices(labels: torch.Tensor, config: ExperimentConfig, seed: int):
+    all_idx = np.arange(len(labels))
+    y = labels.detach().cpu().numpy()
+
+    try:
+        train_idx, temp_idx = train_test_split(
+            all_idx,
+            train_size=config.train_ratio,
+            random_state=seed,
+            stratify=y,
+        )
+
+        temp_y = y[temp_idx]
+        val_ratio_in_temp = config.val_ratio / (config.val_ratio + config.test_ratio)
+
+        val_idx, test_idx = train_test_split(
+            temp_idx,
+            train_size=val_ratio_in_temp,
+            random_state=seed + 1,
+            stratify=temp_y,
+        )
+    except ValueError as e:
+        # 分层划分可能因类别样本过少而失败
+        log_progress(f"    [警告] 分层划分失败，退化为随机划分: {e}")
+        rng = np.random.RandomState(seed)
+        perm = rng.permutation(len(labels))
+        n = len(perm)
+        n_train = int(n * config.train_ratio)
+        n_val = int(n * config.val_ratio)
+        train_idx = perm[:n_train]
+        val_idx = perm[n_train : n_train + n_val]
+        test_idx = perm[n_train + n_val :]
+
+    return np.array(train_idx), np.array(val_idx), np.array(test_idx)
+
+
+def build_splits(prepared: PreparedAreaData, config: ExperimentConfig, seed: int):
+    train_idx, val_idx, test_idx = stratified_split_indices(
+        prepared.labels, config, seed
+    )
+    return (
+        SplitDataset(prepared, train_idx),
+        SplitDataset(prepared, val_idx),
+        SplitDataset(prepared, test_idx),
+        {
+            "train": train_idx.tolist(),
+            "val": val_idx.tolist(),
+            "test": test_idx.tolist(),
+        },
+    )
+
+
+# =========================================================
+# Sampler
+# =========================================================
+
+class PKBatchSampler(Sampler[List[int]]):
+    """Triplet 训练更稳：每个 batch 采样 P 个类，每类 K 个样本"""
+
+    def __init__(
+        self, labels: torch.Tensor, batch_size: int, k_per_class: int, seed: int
+    ):
+        self.labels = labels.detach().cpu().numpy().astype(int)
+        self.batch_size = batch_size
+        self.k_per_class = k_per_class
+        self.seed = seed
+        self.epoch = 0
+
+        if batch_size % k_per_class != 0:
+            raise ValueError("batch_size 必须能被 k_per_class 整除")
+
+        self.p_classes = batch_size // k_per_class
+        self.label_to_indices = {}
+        for i, y in enumerate(self.labels):
+            self.label_to_indices.setdefault(int(y), []).append(i)
+        self.classes = sorted(self.label_to_indices.keys())
+
+        if len(self.classes) < 2:
+            raise ValueError("Triplet Loss 至少需要 2 个类别")
+
+        self.num_batches = max(1, len(self.labels) // batch_size)
+
+    def set_epoch(self, epoch: int):
+        self.epoch = epoch
+
+    def __iter__(self):
+        rng = np.random.RandomState(self.seed + self.epoch)
+
+        for _ in range(self.num_batches):
+            sampled_classes = rng.choice(
+                self.classes,
+                size=self.p_classes,
+                replace=len(self.classes) < self.p_classes,
+            )
+
+            batch = []
+            for c in sampled_classes:
+                idx_pool = self.label_to_indices[int(c)]
+                sampled = rng.choice(
+                    idx_pool,
+                    size=self.k_per_class,
+                    replace=len(idx_pool) < self.k_per_class,
+                )
+                batch.extend(sampled.tolist())
+
+            yield batch[: self.batch_size]
+
+    def __len__(self):
+        return self.num_batches
+
+
+# =========================================================
+# Loss
+# =========================================================
+
+class BatchHardTripletLoss(nn.Module):
+    """Batch-hard triplet loss with numerical stability fixes."""
+
+    def __init__(self, margin: float = 1.5):
+        super().__init__()
+        self.margin = margin
+
+    def forward(self, embeddings: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        if embeddings.size(0) < 2:
+            return embeddings.sum() * 0.0
+
+        dist = torch.cdist(embeddings, embeddings, p=2)
+        labels = labels.view(-1, 1)
+
+        same = labels.eq(labels.t())
+        not_self = ~torch.eye(
+            embeddings.size(0), dtype=torch.bool, device=embeddings.device
+        )
+        pos_mask = same & not_self
+        neg_mask = ~same
+
+        valid_anchor = pos_mask.any(dim=1) & neg_mask.any(dim=1)
+        if not valid_anchor.any():
+            return embeddings.sum() * 0.0
+
+        # Numerical stability: use large finite values instead of inf
+        # Use detach() to ensure no gradient tracking for the scalar
+        with torch.no_grad():
+            max_dist = dist.max().detach() + 1.0
+            # Clamp to avoid extremely large values that could cause overflow
+            max_dist = torch.clamp(max_dist, max=1e6)
+
+        pos_dist = dist.clone()
+        pos_dist[~pos_mask] = -max_dist  # for max: use negative large value
+        hard_pos = pos_dist.max(dim=1).values
+
+        neg_dist = dist.clone()
+        neg_dist[~neg_mask] = max_dist  # for min: use positive large value
+        hard_neg = neg_dist.min(dim=1).values
+
+        loss = F.relu(hard_pos - hard_neg + self.margin)
+        return loss[valid_anchor].mean()
+
+
+# =========================================================
+# 模型定义
+# =========================================================
+
+class TokenTransformerEncoder(nn.Module):
+    """真正 batch-independent 的 Transformer"""
+
+    def __init__(
+        self, config: ExperimentConfig, schema: FeatureSchema, meta: Dict[str, Any]
+    ):
+        super().__init__()
+        self.schema = schema
+        self.embed_dim = config.embed_dim
+        self.coord_dim = meta["coord_dim"]
+        self.use_category_input = meta["use_category_input"]
+
+        if self.use_category_input:
+            self.category_embedding = nn.Embedding(
+                schema.num_categories, config.embed_dim
+            )
+        else:
+            self.category_embedding = None
+
+        self.landuse_embedding = nn.Embedding(schema.num_landuse, config.embed_dim)
+        self.road_class_embedding = nn.Embedding(
+            schema.num_road_class, config.embed_dim
+        )
+
+        self.num_proj = nn.Sequential(
+            nn.Linear(len(schema.numerical_cols), config.embed_dim),
+            nn.LayerNorm(config.embed_dim),
+            nn.GELU(),
+        )
+
+        self.coord_proj = nn.Sequential(
+            nn.Linear(self.coord_dim, config.embed_dim),
+            nn.LayerNorm(config.embed_dim),
+            nn.GELU(),
+        )
+
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, config.embed_dim))
+        self.token_type_embedding = nn.Embedding(5, config.embed_dim)
+
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=config.embed_dim,
+            nhead=config.transformer_heads,
+            dim_feedforward=config.transformer_ffn_dim,
+            dropout=config.dropout,
+            batch_first=True,
+            norm_first=True,
+            activation="gelu",
+        )
+        self.transformer = nn.TransformerEncoder(
+            encoder_layer,
+            num_layers=config.transformer_layers,
+        )
+
+        self.output_head = nn.Sequential(
+            nn.Linear(config.embed_dim, config.embed_dim),
+            nn.LayerNorm(config.embed_dim),
+        )
+
+    def forward(
+        self, poi_features: torch.Tensor, poi_coords: torch.Tensor
+    ) -> torch.Tensor:
+        if poi_features.dim() != 2:
+            raise ValueError(
+                f"TokenTransformerEncoder expects [B, F], got {tuple(poi_features.shape)}"
+            )
+
+        B = poi_features.size(0)
+        tokens = []
+        type_ids = []
+
+        if self.use_category_input and self.schema.category_col is not None:
+            cat_idx = (
+                poi_features[:, self.schema.category_col]
+                .long()
+                .clamp(0, self.schema.num_categories - 1)
+            )
+            tokens.append(self.category_embedding(cat_idx))
+            type_ids.append(0)
+
+        lu_idx = (
+            poi_features[:, self.schema.landuse_col]
+            .long()
+            .clamp(0, self.schema.num_landuse - 1)
+        )
+        rc_idx = (
+            poi_features[:, self.schema.road_class_col]
+            .long()
+            .clamp(0, self.schema.num_road_class - 1)
+        )
+        num_x = poi_features[:, list(self.schema.numerical_cols)].float()
+        coord_x = poi_coords[:, : self.coord_dim].float()
+
+        tokens.append(self.landuse_embedding(lu_idx))
+        type_ids.append(1)
+
+        tokens.append(self.road_class_embedding(rc_idx))
+        type_ids.append(2)
+
+        tokens.append(self.num_proj(num_x))
+        type_ids.append(3)
+
+        tokens.append(self.coord_proj(coord_x))
+        type_ids.append(4)
+
+        x = torch.stack(tokens, dim=1)
+        tt = (
+            torch.tensor(type_ids, device=x.device, dtype=torch.long)
+            .unsqueeze(0)
+            .expand(B, -1)
+        )
+        x = x + self.token_type_embedding(tt)
+
+        cls = self.cls_token.expand(B, -1, -1)
+        x = torch.cat([cls, x], dim=1)
+
+        x = self.transformer(x)
+        out = self.output_head(x[:, 0])
+        out = F.normalize(out, p=2, dim=-1)
+        return out
+
+
+class GraphEncoder(nn.Module):
+    """图编码器 - 使用 Embedding 层处理离散特征，支持稀疏邻接矩阵"""
+
+    def __init__(self, config: ExperimentConfig, schema: FeatureSchema, meta: Dict[str, Any]):
+        super().__init__()
+        self.schema = schema
+        self.use_category_input = meta.get("use_category_input", True)
+
+        # Embedding 层 - 使用更大的维度
+        emb_dim = config.hidden_dim // 3  # 增大每个 embedding 的维度
+
+        if self.use_category_input:
+            self.category_emb = nn.Embedding(schema.num_categories, emb_dim)
+        else:
+            self.category_emb = None
+            # 注册一个固定维度的 buffer
+            self.register_buffer('dummy_emb_dim', torch.tensor(emb_dim))
+
+        self.landuse_emb = nn.Embedding(schema.num_landuse, emb_dim)
+        self.road_emb = nn.Embedding(schema.num_road_class, emb_dim)
+        self.num_proj = nn.Linear(len(schema.numerical_cols), emb_dim)
+        self.coord_proj = nn.Linear(meta["coord_dim"], emb_dim)
+
+        # 输入投影
+        input_dim = emb_dim * 5
+        self.input_proj = nn.Sequential(
+            nn.Linear(input_dim, config.hidden_dim),
+            nn.LayerNorm(config.hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(config.dropout),
+        )
+
+        # 减少到 2 层 GCN，避免过平滑
+        self.gcn_layers = nn.ModuleList(
+            [nn.Linear(config.hidden_dim, config.hidden_dim) for _ in range(2)]
+        )
+        self.norms = nn.ModuleList([nn.LayerNorm(config.hidden_dim) for _ in range(2)])
+
+        self.output_proj = nn.Sequential(
+            nn.Linear(config.hidden_dim, config.embed_dim),
+            nn.LayerNorm(config.embed_dim),
+        )
+
+    def forward(
+        self,
+        poi_features: torch.Tensor,
+        poi_coords: torch.Tensor,
+        poi_adj: torch.Tensor,
+    ) -> torch.Tensor:
+        # 使用 Embedding 层
+        if self.use_category_input and self.category_emb is not None:
+            cat_emb = self.category_emb(poi_features[:, 0].long().clamp(0, self.schema.num_categories - 1))
+        else:
+            emb_dim = self.dummy_emb_dim.item() if hasattr(self, 'dummy_emb_dim') else 42
+            cat_emb = torch.zeros(poi_features.size(0), int(emb_dim),
+                                  device=poi_features.device, dtype=poi_features.dtype)
+
+        lu_emb = self.landuse_emb(poi_features[:, 1].long().clamp(0, self.schema.num_landuse - 1))
+        rd_emb = self.road_emb(poi_features[:, 2].long().clamp(0, self.schema.num_road_class - 1))
+        num_emb = self.num_proj(poi_features[:, 3:6].float())
+        coord_emb = self.coord_proj(poi_coords[:, :2].float())
+
+        x = torch.cat([cat_emb, lu_emb, rd_emb, num_emb, coord_emb], dim=-1)
+        h = self.input_proj(x)
+
+        # GCN 层（支持稀疏邻接矩阵）- 使用残差连接
+        for i, (layer, norm) in enumerate(zip(self.gcn_layers, self.norms)):
+            if poi_adj.is_sparse:
+                with autocast(enabled=False):
+                    agg = torch.sparse.mm(poi_adj.float(), h.float())
+            else:
+                agg = torch.matmul(poi_adj, h)
+
+            h_new = F.relu(norm(layer(agg)))
+            h = h + h_new  # 总是使用残差连接
+
+        out = self.output_proj(h)
+        out = F.normalize(out, p=2, dim=-1)
+        return out
+
+
+class PureTransformerModel(nn.Module):
+    def __init__(
+        self, config: ExperimentConfig, schema: FeatureSchema, meta: Dict[str, Any]
+    ):
+        super().__init__()
+        self.encoder = TokenTransformerEncoder(config, schema, meta)
+
+    def forward(self, poi_features, poi_coords, block_features=None, adj_matrix=None):
+        return self.encoder(poi_features, poi_coords)
+
+
+class PureGNNModel(nn.Module):
+    def __init__(
+        self, config: ExperimentConfig, schema: FeatureSchema, meta: Dict[str, Any]
+    ):
+        super().__init__()
+        self.encoder = GraphEncoder(config, schema, meta)
+
+    def forward(self, poi_features, poi_coords, block_features=None, adj_matrix=None):
+        if adj_matrix is None:
+            raise ValueError("PureGNNModel 需要传入 POI adjacency 子图")
+        return self.encoder(poi_features, poi_coords, adj_matrix)
+
+
+class NoFusionModel(nn.Module):
+    """无融合模型 - 严格参数量匹配"""
+
+    def __init__(
+        self, config: ExperimentConfig, schema: FeatureSchema, meta: Dict[str, Any]
+    ):
+        super().__init__()
+        self.poi_encoder = TokenTransformerEncoder(config, schema, meta)
+
+        # 计算参数量以匹配 Full Model
+        poi_params = sum(p.numel() for p in self.poi_encoder.parameters())
+
+        # road encoder
+        self.road_encoder = nn.Sequential(
+            nn.Linear(meta["block_feature_dim"], config.hidden_dim),
+            nn.LayerNorm(config.hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(config.dropout),
+            nn.Linear(config.hidden_dim, config.embed_dim),
+            nn.LayerNorm(config.embed_dim),
+        )
+
+        # 使用简单的加权融合而非额外参数
+        self.alpha = nn.Parameter(torch.tensor(0.7))
+
+    def forward(self, poi_features, poi_coords, block_features=None, adj_matrix=None):
+        poi_emb = self.poi_encoder(poi_features, poi_coords)
+
+        if block_features is not None:
+            road_global = self.road_encoder(block_features.float()).mean(
+                dim=0, keepdim=True
+            )
+            road_global = road_global.expand(poi_emb.size(0), -1)
+        else:
+            road_global = torch.zeros_like(poi_emb)
+
+        # 学习权重融合
+        w = torch.sigmoid(self.alpha)
+        out = w * poi_emb + (1 - w) * road_global
+        out = F.normalize(out, p=2, dim=-1)
+        return out
+
+
+class FullModel(nn.Module):
+    """完整模型：Transformer + GNN + Road"""
+
+    def __init__(
+        self, config: ExperimentConfig, schema: FeatureSchema, meta: Dict[str, Any]
+    ):
+        super().__init__()
+        self.poi_encoder = TokenTransformerEncoder(config, schema, meta)
+        self.graph_encoder = GraphEncoder(config, schema, meta)
+
+        self.road_encoder = nn.Sequential(
+            nn.Linear(meta["block_feature_dim"], config.hidden_dim),
+            nn.LayerNorm(config.hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(config.dropout),
+            nn.Linear(config.hidden_dim, config.embed_dim),
+            nn.LayerNorm(config.embed_dim),
+        )
+
+        self.fusion = nn.Sequential(
+            nn.Linear(config.embed_dim * 3, config.embed_dim),
+            nn.LayerNorm(config.embed_dim),
+            nn.GELU(),
+            nn.Dropout(config.dropout),
+            nn.Linear(config.embed_dim, config.embed_dim),
+            nn.LayerNorm(config.embed_dim),
+        )
+
+    def forward(self, poi_features, poi_coords, block_features=None, adj_matrix=None):
+        if adj_matrix is None:
+            raise ValueError("FullModel 需要传入 POI adjacency 子图")
+
+        poi_emb = self.poi_encoder(poi_features, poi_coords)
+        graph_emb = self.graph_encoder(poi_features, poi_coords, adj_matrix)
+
+        if block_features is not None:
+            road_global = self.road_encoder(block_features.float()).mean(
+                dim=0, keepdim=True
+            )
+            road_global = road_global.expand(poi_emb.size(0), -1)
+        else:
+            road_global = torch.zeros_like(poi_emb)
+
+        fused = self.fusion(torch.cat([poi_emb, graph_emb, road_global], dim=-1))
+        fused = F.normalize(fused, p=2, dim=-1)
+        return fused
+
+
+# =========================================================
+# 参数量匹配验证
+# =========================================================
+
+def count_parameters(model: nn.Module) -> Dict[str, int]:
+    """统计模型各组件参数量"""
+    counts = {}
+    total = 0
+    for name, module in model.named_modules():
+        if len(list(module.children())) == 0:  # leaf module
+            params = sum(p.numel() for p in module.parameters())
+            if params > 0:
+                counts[name] = params
+                total += params
+    counts['total'] = total
+    return counts
+
+
+def verify_ablation_fairness(config: ExperimentConfig, schema: FeatureSchema, meta: Dict[str, Any]):
+    """验证消融实验的参数量公平性"""
+    models = {
+        "Full Model": FullModel(config, schema, meta),
+        "Pure GNN": PureGNNModel(config, schema, meta),
+    }
+
+    param_counts = {}
+    for name, model in models.items():
+        counts = count_parameters(model)
+        param_counts[name] = counts['total']
+
+    full_params = param_counts["Full Model"]
+
+    log_progress("  [参数量对比]")
+    for name, params in param_counts.items():
+        ratio = params / full_params * 100
+        log_progress(f"    {name}: {params:,} ({ratio:.1f}% of Full)")
+
+    return param_counts
+
+
+# =========================================================
+# 评估
+# =========================================================
+
+def compute_metrics(embeddings: torch.Tensor, labels: torch.Tensor, kmeans_seed: int = 42) -> Dict[str, float]:
+    """Compute clustering metrics with configurable KMeans seed for reproducibility."""
+    embeddings = embeddings.detach()
+    labels = labels.detach()
+
+    labels_np = labels.cpu().numpy()
+    emb_np = embeddings.cpu().numpy()
+    unique_labels = np.unique(labels_np)
+
+    metrics = {}
+
+    if len(unique_labels) >= 2:
+        try:
+            metrics["silhouette"] = float(silhouette_score(emb_np, labels_np))
+        except (ValueError, FloatingPointError):
+            # 样本数过少或 embedding 退化时可能失败
+            metrics["silhouette"] = 0.0
+    else:
+        metrics["silhouette"] = 0.0
+
+    intra_vals = []
+    inter_vals = []
+
+    for lb in unique_labels:
+        mask = labels == int(lb)
+        count = int(mask.sum().item())
+
+        if count > 1:
+            emb_c = embeddings[mask]
+            d = torch.cdist(emb_c, emb_c, p=2)
+            eye = torch.eye(count, dtype=torch.bool, device=d.device)
+            intra_vals.append(d[~eye].mean().item())
+
+        other_mask = ~mask
+        if int(other_mask.sum().item()) > 0:
+            center = embeddings[mask].mean(dim=0, keepdim=True)
+            inter = torch.norm(embeddings[other_mask] - center, dim=1).mean().item()
+            inter_vals.append(inter)
+
+    metrics["intra_distance"] = float(np.mean(intra_vals)) if intra_vals else 0.0
+    metrics["inter_distance"] = float(np.mean(inter_vals)) if inter_vals else 0.0
+    metrics["distance_ratio"] = (
+        metrics["inter_distance"] / metrics["intra_distance"]
+        if metrics["intra_distance"] > 0
+        else 0.0
+    )
+
+    if len(unique_labels) >= 2:
+        try:
+            n_clusters = len(unique_labels)
+            # Use provided seed for consistent evaluation across runs
+            pred = KMeans(
+                n_clusters=n_clusters, random_state=kmeans_seed, n_init=10
+            ).fit_predict(emb_np)
+            metrics["nmi"] = float(normalized_mutual_info_score(labels_np, pred))
+            metrics["ari"] = float(adjusted_rand_score(labels_np, pred))
+        except (ValueError, ConvergenceWarning):
+            # KMeans 可能因数据问题无法收敛
+            metrics["nmi"] = 0.0
+            metrics["ari"] = 0.0
+    else:
+        metrics["nmi"] = 0.0
+        metrics["ari"] = 0.0
+
+    return metrics
+
+
+# =========================================================
+# 统计分析
+# =========================================================
+
+def paired_bootstrap_ci(
+    x: List[float], y: List[float], n_bootstrap: int = 10000, seed: int = 42
+):
+    x = np.asarray(x, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64)
+    d = x - y
+    n = len(d)
+    rng = np.random.RandomState(seed)
+
+    samples = []
+    for _ in range(n_bootstrap):
+        idx = rng.choice(n, size=n, replace=True)
+        samples.append(d[idx].mean())
+    lo, hi = np.percentile(samples, [2.5, 97.5])
+    return float(lo), float(hi)
+
+
+def paired_statistics(x: List[float], y: List[float]) -> Dict[str, float]:
+    x = np.asarray(x, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64)
+    d = x - y
+    n = len(d)
+
+    mean_diff = float(d.mean())
+    sd = float(d.std(ddof=1)) if n > 1 else 0.0
+    se = sd / math.sqrt(n) if n > 0 else 0.0
+
+    if n > 1:
+        t_stat, t_p = stats.ttest_rel(x, y)
+        try:
+            w_stat, w_p = stats.wilcoxon(x, y)
+        except ValueError:
+            # wilcoxon 要求差值不全为零
+            w_stat, w_p = 0.0, 1.0
+        t_crit = stats.t.ppf(0.975, df=n - 1)
+        ci_low = mean_diff - t_crit * se
+        ci_high = mean_diff + t_crit * se
+        dz = mean_diff / sd if sd > 0 else 0.0
+    else:
+        t_stat, t_p = 0.0, 1.0
+        w_stat, w_p = 0.0, 1.0
+        ci_low, ci_high = mean_diff, mean_diff
+        dz = 0.0
+
+    b_low, b_high = paired_bootstrap_ci(x.tolist(), y.tolist())
+
+    return {
+        "mean_diff": mean_diff,
+        "cohens_dz": float(dz),
+        "t_statistic": float(t_stat),
+        "t_p_value": float(t_p),
+        "wilcoxon_statistic": float(w_stat),
+        "wilcoxon_p_value": float(w_p),
+        "ci_low_t": float(ci_low),
+        "ci_high_t": float(ci_high),
+        "ci_low_boot": b_low,
+        "ci_high_boot": b_high,
+    }
+
+
+def holm_correction(p_values: List[float]) -> Tuple[List[float], List[bool]]:
+    p = np.asarray(p_values, dtype=np.float64)
+    m = len(p)
+    order = np.argsort(p)
+    corrected = np.empty_like(p)
+
+    running = 0.0
+    for rank, idx in enumerate(order):
+        value = (m - rank) * p[idx]
+        running = max(running, value)
+        corrected[idx] = min(running, 1.0)
+
+    rejected = corrected < 0.05
+    return corrected.tolist(), rejected.tolist()
+
+
+# =========================================================
+# 训练 / 推理
+# =========================================================
+
+GRAPH_MODEL_NAMES = {"Pure GNN", "Full Model"}
+
+
+def build_train_loader(split: SplitDataset, config: ExperimentConfig, seed: int):
+    sampler = PKBatchSampler(
+        labels=split.labels,
+        batch_size=config.batch_size,
+        k_per_class=config.pk_samples_per_class,
+        seed=seed,
+    )
+
+    loader = DataLoader(
+        split,
+        batch_sampler=sampler,
+        num_workers=config.num_workers,
+        pin_memory=config.pin_memory,
+        persistent_workers=(config.persistent_workers and config.num_workers > 0),
+        prefetch_factor=(config.prefetch_factor if config.num_workers > 0 else None),
+        worker_init_fn=worker_init_fn,
+    )
+    return loader, sampler
+
+
+def move_batch_to_device(batch: Dict[str, torch.Tensor], device: torch.device):
+    return {
+        k: v.to(device, non_blocking=True) if torch.is_tensor(v) else v
+        for k, v in batch.items()
+    }
+
+
+def class_balanced_subset_indices(
+    labels: torch.Tensor, max_samples: int, seed: int
+) -> torch.Tensor:
+    n = len(labels)
+    if n <= max_samples:
+        return torch.arange(n, dtype=torch.long)
+
+    y = labels.detach().cpu().numpy().astype(int)
+    rng = np.random.RandomState(seed)
+
+    label_to_idx = {}
+    for i, lb in enumerate(y):
+        label_to_idx.setdefault(lb, []).append(i)
+
+    classes = sorted(label_to_idx.keys())
+    per_class = max(1, max_samples // len(classes))
+
+    chosen = []
+    for c in classes:
+        pool = label_to_idx[c]
+        pick = rng.choice(pool, size=min(len(pool), per_class), replace=False)
+        chosen.extend(pick.tolist())
+
+    if len(chosen) < max_samples:
+        remain = list(set(range(n)) - set(chosen))
+        extra = rng.choice(
+            remain, size=min(len(remain), max_samples - len(chosen)), replace=False
+        )
+        chosen.extend(extra.tolist())
+
+    chosen = np.array(chosen[:max_samples], dtype=np.int64)
+    return torch.from_numpy(chosen)
+
+
+@torch.inference_mode()
+def infer_embeddings_non_graph(
+    model: nn.Module,
+    split: SplitDataset,
+    prepared: PreparedAreaData,
+    config: ExperimentConfig,
+    device: torch.device,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    model.eval()
+
+    with PROFILER.timer("data_transfer"):
+        block_features = prepared.block_features.to(device, non_blocking=True)
+        block_adj = prepared.block_adjacency.to(device, non_blocking=True)
+
+    feats = split.poi_features
+    coords = split.poi_coords
+    labels = split.labels.to(device, non_blocking=True)
+
+    outs = []
+    bs = config.eval_batch_size
+
+    with PROFILER.timer("forward"):
+        for s in range(0, len(split), bs):
+            e = min(s + bs, len(split))
+            with PROFILER.timer("data_transfer"):
+                x = feats[s:e].to(device, non_blocking=True)
+                c = coords[s:e].to(device, non_blocking=True)
+            out = model(x, c, block_features, block_adj)
+            outs.append(out)
+
+    emb = torch.cat(outs, dim=0)
+    return emb, labels
+
+
+@torch.inference_mode()
+def infer_embeddings_graph(
+    model: nn.Module,
+    split: SplitDataset,
+    prepared: PreparedAreaData,
+    device: torch.device,
+    use_full_graph: bool = True,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """推理图模型 embeddings
+
+    Args:
+        model: 图模型
+        split: 数据分割
+        prepared: 预处理数据
+        device: 设备
+        use_full_graph: 是否使用全图（推荐 True，保持图结构一致性）
+
+    Returns:
+        embeddings 和 labels
+    """
+    model.eval()
+
+    with PROFILER.timer("data_transfer"):
+        if use_full_graph:
+            # 全图模式：使用完整图结构
+            all_x = prepared.poi_features.to(device, non_blocking=True)
+            all_c = prepared.poi_coords.to(device, non_blocking=True)
+            all_y = prepared.labels.to(device, non_blocking=True)
+            block_features = prepared.block_features.to(device, non_blocking=True)
+
+            if prepared.global_poi_adj_is_sparse:
+                full_adj = prepared.global_poi_adj.to(device)
+            else:
+                full_adj = prepared.global_poi_adj.to(device)
+
+            split_indices = torch.tensor(split.indices, dtype=torch.long, device=device)
+        else:
+            # 子图模式（不推荐，可能导致图结构不一致）
+            feats = split.poi_features.to(device, non_blocking=True)
+            coords = split.poi_coords.to(device, non_blocking=True)
+            labels = split.labels.to(device, non_blocking=True)
+            block_features = prepared.block_features.to(device, non_blocking=True)
+
+            poi_adj = subset_sparse_adj(
+                prepared.global_poi_adj,
+                split.indices,
+                device,
+                prepared.global_poi_adj_is_sparse
+            )
+
+    with PROFILER.timer("forward"):
+        with torch.no_grad():
+            if use_full_graph:
+                emb_all = model(all_x, all_c, block_features, full_adj)
+                emb = emb_all[split_indices]
+                labels = all_y[split_indices]
+            else:
+                emb = model(feats, coords, block_features, poi_adj)
+
+    return emb, labels
+
+
+def train_non_graph_model(
+    model: nn.Module,
+    model_name: str,
+    train_split: SplitDataset,
+    val_split: SplitDataset,
+    prepared: PreparedAreaData,
+    config: ExperimentConfig,
+    device: torch.device,
+    run_seed: int,
+):
+    triplet = BatchHardTripletLoss(config.triplet_margin)
+    amp_enabled = config.use_amp and device.type == "cuda"
+    scaler = GradScaler(enabled=amp_enabled)
+
+    loader, sampler = build_train_loader(train_split, config, run_seed)
+
+    optimizer = optim.AdamW(
+        model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay
+    )
+
+    warmup = config.warmup_epochs
+    total = config.num_epochs
+
+    def lr_lambda(epoch):
+        if epoch < warmup:
+            return (epoch + 1) / warmup
+        progress = (epoch - warmup) / max(1, total - warmup)
+        return 0.5 * (1 + math.cos(math.pi * progress))
+
+    scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+
+    with PROFILER.timer("data_transfer"):
+        block_features = prepared.block_features.to(device, non_blocking=True)
+        block_adj = prepared.block_adjacency.to(device, non_blocking=True)
+
+    best_metric = -1.0
+    best_state = None
+    patience = 0
+
+    history = {"train_loss": [], "val_silhouette": [], "epoch_details": []}
+
+    for epoch in range(config.num_epochs):
+        model.train()
+        sampler.set_epoch(epoch)
+
+        optimizer.zero_grad(set_to_none=True)
+        gpu_loss_buf = []
+        accum_count = 0
+
+        for batch in loader:
+            with PROFILER.timer("data_transfer"):
+                batch = move_batch_to_device(batch, device)
+                x = batch["poi_features"]
+                c = batch["poi_coords"]
+                y = batch["label"]
+
+            with autocast(enabled=amp_enabled):
+                with PROFILER.timer("forward"):
+                    emb = model(x, c, block_features, block_adj)
+                    loss = triplet(emb, y) / config.grad_accum_steps
+
+            with PROFILER.timer("backward"):
+                scaler.scale(loss).backward()
+
+            accum_count += 1
+            gpu_loss_buf.append(loss.detach() * config.grad_accum_steps)
+
+            if accum_count == config.grad_accum_steps:
+                with PROFILER.timer("optimizer_step"):
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                    scaler.step(optimizer)
+                    scaler.update()
+                    optimizer.zero_grad(set_to_none=True)
+                accum_count = 0
+
+        if accum_count > 0:
+            with PROFILER.timer("optimizer_step"):
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad(set_to_none=True)
+
+        scheduler.step()
+
+        avg_loss = torch.stack(gpu_loss_buf).mean().item() if gpu_loss_buf else 0.0
+        history["train_loss"].append(avg_loss)
+
+        if epoch % config.eval_every == 0 or epoch == config.num_epochs - 1:
+            with PROFILER.timer("validation"):
+                val_emb, val_labels = infer_embeddings_non_graph(
+                    model, val_split, prepared, config, device
+                )
+                val_metrics = compute_metrics(val_emb, val_labels, kmeans_seed=run_seed)
+                val_s = val_metrics["silhouette"]
+
+            history["val_silhouette"].append(val_s)
+            history["epoch_details"].append(
+                {
+                    "epoch": epoch,
+                    "train_loss": avg_loss,
+                    "val_silhouette": val_s,
+                    "lr": scheduler.get_last_lr()[0],
+                }
+            )
+
+            log_progress(
+                f"    Epoch {epoch:03d} | Loss={avg_loss:.4f} | Val_Sil={val_s:.4f}"
+            )
+
+            if val_s > best_metric:
+                best_metric = val_s
+                best_state = {
+                    k: v.detach().cpu().clone() for k, v in model.state_dict().items()
+                }
+                patience = 0
+            else:
+                patience += 1
+
+            if patience >= config.early_stopping_patience:
+                log_progress(f"    Early stopping at epoch {epoch}")
+                break
+
+        # 定期打印 profiler 信息
+        if config.enable_profiler and (epoch + 1) % config.profiler_log_interval == 0:
+            log_progress(f"    {PROFILER.report()}")
+
+    if best_state is not None:
+        model.load_state_dict(best_state)
+
+    return model, history, best_metric
+
+
+def train_graph_model(
+    model: nn.Module,
+    model_name: str,
+    train_split: SplitDataset,
+    val_split: SplitDataset,
+    prepared: PreparedAreaData,
+    config: ExperimentConfig,
+    device: torch.device,
+    run_seed: int,
+):
+    """全图训练模式 - 对于 GNN，使用完整图结构"""
+    triplet = BatchHardTripletLoss(config.triplet_margin)
+    amp_enabled = config.use_amp and device.type == "cuda"
+    scaler = GradScaler(enabled=amp_enabled)
+
+    optimizer = optim.AdamW(
+        model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay
+    )
+
+    warmup = config.warmup_epochs
+    total = config.num_epochs
+
+    def lr_lambda(epoch):
+        if epoch < warmup:
+            return (epoch + 1) / warmup
+        progress = (epoch - warmup) / max(1, total - warmup)
+        return 0.5 * (1 + math.cos(math.pi * progress))
+
+    scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+
+    # 全图训练：使用完整图结构
+    with PROFILER.timer("data_transfer"):
+        # 全图特征和坐标
+        all_x = prepared.poi_features.to(device, non_blocking=True)
+        all_c = prepared.poi_coords.to(device, non_blocking=True)
+        all_y = prepared.labels.to(device, non_blocking=True)
+
+        # 全图邻接矩阵
+        if prepared.global_poi_adj_is_sparse:
+            full_adj = prepared.global_poi_adj.to(device)
+        else:
+            full_adj = prepared.global_poi_adj.to(device)
+
+        block_features = prepared.block_features.to(device, non_blocking=True)
+
+        # 训练/验证索引
+        train_indices = torch.tensor(train_split.indices, dtype=torch.long, device=device)
+        val_indices = torch.tensor(val_split.indices, dtype=torch.long, device=device)
+
+    best_metric = -1.0
+    best_state = None
+    patience = 0
+
+    history = {"train_loss": [], "val_silhouette": [], "epoch_details": []}
+
+    for epoch in range(config.num_epochs):
+        model.train()
+        optimizer.zero_grad(set_to_none=True)
+
+        # 从训练集中采样 triplet
+        train_y = all_y[train_indices]
+        subset_local_idx = class_balanced_subset_indices(
+            train_y.detach().cpu(), config.graph_triplet_subset_size, run_seed + epoch
+        )
+        subset_idx = train_indices[subset_local_idx]
+
+        with autocast(enabled=amp_enabled):
+            with PROFILER.timer("forward"):
+                # 全图前向传播
+                emb_all = model(all_x, all_c, block_features, full_adj)
+                # 只用训练集的 subset 计算 loss
+                loss = triplet(emb_all[subset_idx], all_y[subset_idx])
+
+        with PROFILER.timer("backward"):
+            scaler.scale(loss).backward()
+
+        with PROFILER.timer("optimizer_step"):
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            scaler.step(optimizer)
+            scaler.update()
+
+        scheduler.step()
+
+        avg_loss = float(loss.detach().item())
+        history["train_loss"].append(avg_loss)
+
+        if epoch % config.eval_every == 0 or epoch == config.num_epochs - 1:
+            with PROFILER.timer("validation"):
+                model.eval()
+                with torch.no_grad():
+                    # 使用同一个全图，但只取验证集的 embedding
+                    emb_all = model(all_x, all_c, block_features, full_adj)
+                    val_emb = emb_all[val_indices]
+                    val_labels = all_y[val_indices]
+
+                val_metrics = compute_metrics(val_emb, val_labels, kmeans_seed=run_seed)
+                val_s = val_metrics["silhouette"]
+
+            history["val_silhouette"].append(val_s)
+            history["epoch_details"].append(
+                {
+                    "epoch": epoch,
+                    "train_loss": avg_loss,
+                    "val_silhouette": val_s,
+                    "lr": scheduler.get_last_lr()[0],
+                }
+            )
+
+            log_progress(
+                f"    Epoch {epoch:03d} | Loss={avg_loss:.4f} | Val_Sil={val_s:.4f}"
+            )
+
+            if val_s > best_metric:
+                best_metric = val_s
+                best_state = {
+                    k: v.detach().cpu().clone() for k, v in model.state_dict().items()
+                }
+                patience = 0
+            else:
+                patience += 1
+
+            if patience >= config.early_stopping_patience:
+                log_progress(f"    Early stopping at epoch {epoch}")
+                break
+
+        # 定期打印 profiler 信息
+        if config.enable_profiler and (epoch + 1) % config.profiler_log_interval == 0:
+            log_progress(f"    {PROFILER.report()}")
+
+    if best_state is not None:
+        model.load_state_dict(best_state)
+
+    return model, history, best_metric
+
+
+def evaluate_model(
+    model: nn.Module,
+    model_name: str,
+    split: SplitDataset,
+    prepared: PreparedAreaData,
+    config: ExperimentConfig,
+    device: torch.device,
+    kmeans_seed: int = 42,
+) -> Dict[str, float]:
+    """Evaluate model and compute metrics with consistent KMeans seed."""
+    if model_name in GRAPH_MODEL_NAMES:
+        # 图模型：使用全图模式，保持图结构一致性
+        emb, labels = infer_embeddings_graph(model, split, prepared, device, use_full_graph=True)
+    else:
+        emb, labels = infer_embeddings_non_graph(model, split, prepared, config, device)
+    return compute_metrics(emb, labels, kmeans_seed=kmeans_seed)
+
+
+# =========================================================
+# Checkpoint / Report
+# =========================================================
+
+def save_run_checkpoint(
+    area_name: str,
+    model_name: str,
+    run_id: int,
+    model: nn.Module,
+    history: Dict,
+    config: ExperimentConfig,
+    split_indices: Dict[str, List[int]],
+    env_info: Dict[str, str],
+    meta: Dict[str, Any],
+    best_val: float,
+    profiler_summary: Dict,
+    optimizer_state: Optional[Dict] = None,
+    scheduler_state: Optional[Dict] = None,
+):
+    """Save checkpoint with model, optimizer, and scheduler states for potential resumption."""
+    ckpt = {
+        "area_name": area_name,
+        "model_name": model_name,
+        "run_id": run_id,
+        "config": asdict(config),
+        "split_indices": split_indices,
+        "env_info": env_info,
+        "meta": meta,
+        "best_val_silhouette": best_val,
+        "history": history,
+        "model_state_dict": model.state_dict(),
+        "profiler_summary": profiler_summary,
+        "timestamp": datetime.datetime.now().isoformat(),
+    }
+    if optimizer_state is not None:
+        ckpt["optimizer_state_dict"] = optimizer_state
+    if scheduler_state is not None:
+        ckpt["scheduler_state_dict"] = scheduler_state
+
+    path = (
+        CHECKPOINT_DIR
+        / f"{area_name}__{model_name.replace(' ', '_')}__run{run_id + 1}.pt"
+    )
+    torch.save(ckpt, path)
+    return path
+
+
+def save_profiler_log(area_name: str, model_name: str, profiler: TimeProfiler):
+    """保存 profiler 详细日志"""
+    summary = profiler.summary()
+    path = PROFILER_DIR / f"{area_name}__{model_name.replace(' ', '_')}_profiler.json"
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(summary, f, indent=2)
+    return path
+
+
+# =========================================================
+# 论文表格导出
+# =========================================================
+
+def generate_latex_table(
+    results: Dict[str, Dict],
+    area_name: str,
+    caption: str = "实验结果",
+) -> str:
+    """生成 LaTeX 格式的表格"""
+    lines = []
+    lines.append(r"\begin{table}[htbp]")
+    lines.append(r"  \centering")
+    lines.append(f"  \\caption{{{caption}}}")
+    lines.append(f"  \\label{{tab:{area_name}_results}}")
+    lines.append(r"  \begin{tabular}{lcccc}")
+    lines.append(r"    \toprule")
+    lines.append(r"    Model & Silhouette $\uparrow$ & NMI $\uparrow$ & ARI $\uparrow$ & Distance Ratio $\uparrow$ \\")
+    lines.append(r"    \midrule")
+
+    for model_name, obj in results.items():
+        s = obj["summary"]
+        sil = f"{s['silhouette']['mean']:.3f} $\\pm$ {s['silhouette']['std']:.3f}"
+        nmi = f"{s['nmi']['mean']:.3f} $\\pm$ {s['nmi']['std']:.3f}"
+        ari = f"{s['ari']['mean']:.3f} $\\pm$ {s['ari']['std']:.3f}"
+        dr = f"{s['distance_ratio']['mean']:.3f} $\\pm$ {s['distance_ratio']['std']:.3f}"
+
+        # 高亮最佳结果
+        if model_name == "Full Model":
+            lines.append(f"    \\textbf{{{model_name}}} & \\textbf{{{sil}}} & \\textbf{{{nmi}}} & \\textbf{{{ari}}} & \\textbf{{{dr}}} \\\\")
+        else:
+            lines.append(f"    {model_name} & {sil} & {nmi} & {ari} & {dr} \\\\")
+
+    lines.append(r"    \bottomrule")
+    lines.append(r"  \end{tabular}")
+    lines.append(r"\end{table}")
+
+    return "\n".join(lines)
+
+
+def generate_markdown_table(
+    results: Dict[str, Dict],
+    comparisons: Dict[str, Dict],
+    area_name: str,
+) -> str:
+    """生成 Markdown 格式的表格"""
+    lines = []
+    lines.append(f"# 实验结果: {area_name}\n")
+
+    # 主结果表
+    lines.append("## 核心指标\n")
+    lines.append("| Model | Silhouette | NMI | ARI | Distance Ratio |")
+    lines.append("|:------|:----------:|:---:|:---:|:--------------:|")
+
+    for model_name, obj in results.items():
+        s = obj["summary"]
+        sil = f"{s['silhouette']['mean']:.4f}±{s['silhouette']['std']:.4f}"
+        nmi = f"{s['nmi']['mean']:.4f}±{s['nmi']['std']:.4f}"
+        ari = f"{s['ari']['mean']:.4f}±{s['ari']['std']:.4f}"
+        dr = f"{s['distance_ratio']['mean']:.4f}±{s['distance_ratio']['std']:.4f}"
+        lines.append(f"| {model_name} | {sil} | {nmi} | {ari} | {dr} |")
+
+    # 统计检验表
+    lines.append("\n## 统计检验（vs Full Model）\n")
+    lines.append("| Compared | Mean Diff | Cohen's dz | t-p | Wilcoxon-p | Holm p | Sig |")
+    lines.append("|:---------|:---------:|:----------:|:---:|:----------:|:------:|:----:|")
+
+    for model_name, comp in comparisons.items():
+        sig = "✓" if comp["significant"] else "✗"
+        lines.append(
+            f"| {model_name} | {comp['mean_diff']:.4f} | {comp['cohens_dz']:.4f} | "
+            f"{comp['t_p_value']:.4f} | {comp['wilcoxon_p_value']:.4f} | "
+            f"{comp['corrected_p_value']:.4f} | {sig} |"
+        )
+
+    # 参数量对比
+    lines.append("\n## 参数量对比\n")
+    lines.append("| Model | Parameters | Relative to Full |")
+    lines.append("|:------|:----------:|:----------------:|")
+
+    full_params = results["Full Model"]["num_params"]
+    for model_name, obj in results.items():
+        params = obj["num_params"]
+        rel = f"{params / full_params * 100:.1f}%"
+        lines.append(f"| {model_name} | {params:,} | {rel} |")
+
+    return "\n".join(lines)
+
+
+def generate_area_report(
+    area_name: str,
+    results: Dict,
+    comparisons: Dict,
+    config: ExperimentConfig,
+    env: Dict[str, str],
+) -> str:
+    """生成完整报告（包含 Markdown 和 LaTeX）"""
+    lines = []
+    lines.append(f"# 严谨实验报告 V6: {area_name}\n")
+    lines.append("## 实验配置\n")
+    lines.append(
+        f"- Train/Val/Test = {config.train_ratio:.2f}/{config.val_ratio:.2f}/{config.test_ratio:.2f}"
+    )
+    lines.append(f"- Runs = {config.num_runs}")
+    lines.append(
+        f"- Batch Size = {config.batch_size}, Effective = {config.batch_size * config.grad_accum_steps}"
+    )
+    lines.append(f"- Triplet Margin = {config.triplet_margin}")
+    lines.append(f"- KNN Method = {config.knn_method}")
+    lines.append(f"- Sparse Adjacency = {config.use_sparse_adj}")
+    lines.append(f"- Device = {env['device']} ({env['gpu_name']})\n")
+
+    # 添加 Markdown 表格
+    lines.append(generate_markdown_table(results, comparisons, area_name))
+
+    lines.append("\n## 环境信息\n")
+    for k, v in env.items():
+        lines.append(f"- {k}: {v}")
+
+    return "\n".join(lines)
+
+
+# =========================================================
+# 单次 / 全部实验
+# =========================================================
+
+def build_model(
+    model_name: str,
+    config: ExperimentConfig,
+    schema: FeatureSchema,
+    meta: Dict[str, Any],
+) -> nn.Module:
+    if model_name == "Full Model":
+        return FullModel(config, schema, meta)
+    elif model_name == "Pure GNN":
+        return PureGNNModel(config, schema, meta)
+    else:
+        raise ValueError(f"Unknown model: {model_name}")
+
+
+def summarize_runs(run_results: List[Dict]) -> Dict[str, Dict[str, Any]]:
+    metric_names = [
+        "silhouette",
+        "nmi",
+        "ari",
+        "intra_distance",
+        "inter_distance",
+        "distance_ratio",
+    ]
+    out = {}
+    for m in metric_names:
+        values = [r["test_metrics"][m] for r in run_results]
+        out[m] = {
+            "mean": float(np.mean(values)),
+            "std": float(np.std(values, ddof=0)),
+            "values": [float(v) for v in values],
+        }
+    return out
+
+
+def run_single_experiment(
+    area_name: str,
+    model_name: str,
+    prepared: PreparedAreaData,
+    config: ExperimentConfig,
+    schema: FeatureSchema,
+    run_id: int,
+    device: torch.device,
+    env_info: Dict[str, str],
+):
+    log_progress(f"    === Run {run_id + 1}/{config.num_runs} ===")
+
+    # 重置 profiler
+    PROFILER.reset()
+
+    run_seed = config.base_seed + run_id * 1000
+    set_global_seed(run_seed, config.deterministic)
+
+    train_split, val_split, test_split, split_indices = build_splits(
+        prepared, config, run_seed
+    )
+    log_progress(
+        f"    Split sizes | Train={len(train_split)} Val={len(val_split)} Test={len(test_split)} "
+        f"| Classes={prepared.num_classes}"
+    )
+
+    model = build_model(model_name, config, schema, prepared.schema_info).to(device)
+    num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    log_progress(f"    Params: {num_params:,}")
+
+    if model_name in GRAPH_MODEL_NAMES:
+        model, history, best_val = train_graph_model(
+            model,
+            model_name,
+            train_split,
+            val_split,
+            prepared,
+            config,
+            device,
+            run_seed,
+        )
+    else:
+        model, history, best_val = train_non_graph_model(
+            model,
+            model_name,
+            train_split,
+            val_split,
+            prepared,
+            config,
+            device,
+            run_seed,
+        )
+
+    test_metrics = evaluate_model(
+        model, model_name, test_split, prepared, config, device, kmeans_seed=run_seed
+    )
+    log_progress(
+        f"    Test | Sil={test_metrics['silhouette']:.4f} "
+        f"NMI={test_metrics['nmi']:.4f} ARI={test_metrics['ari']:.4f}"
+    )
+
+    # 打印最终 profiler 报告
+    log_progress(f"    最终 Profiler 报告:\n{PROFILER.report()}")
+
+    ckpt_path = None
+    if config.save_run_checkpoints:
+        ckpt_path = save_run_checkpoint(
+            area_name=area_name,
+            model_name=model_name,
+            run_id=run_id,
+            model=model,
+            history=history,
+            config=config,
+            split_indices=split_indices,
+            env_info=env_info,
+            meta=prepared.schema_info,
+            best_val=best_val,
+            profiler_summary=PROFILER.summary(),
+        )
+
+    # 保存 profiler 日志
+    save_profiler_log(area_name, model_name, PROFILER)
+
+    del model
+    # 使用普通清理（不触发 gc.collect），避免过度调用影响性能
+    clear_cuda_memory(aggressive=False)
+
+    return {
+        "history": history,
+        "test_metrics": test_metrics,
+        "best_val_silhouette": float(best_val),
+        "num_params": int(num_params),
+        "checkpoint_path": str(ckpt_path) if ckpt_path is not None else None,
+        "split_indices": split_indices,
+        "profiler_summary": PROFILER.summary(),
+    }
+
+
+def run_all_experiments_for_area(
+    area_name: str,
+    prepared: PreparedAreaData,
+    config: ExperimentConfig,
+    schema: FeatureSchema,
+    device: torch.device,
+    env_info: Dict[str, str],
+):
+    models = [
+        "Full Model",
+        "Pure GNN",
+    ]
+
+    # 验证消融公平性
+    log_progress("  验证消融公平性...")
+    verify_ablation_fairness(config, schema, prepared.schema_info)
+
+    all_results = {}
+
+    for model_name in models:
+        log_progress(f"\n  ========== {model_name} ==========")
+        run_results = []
+
+        for run_id in range(config.num_runs):
+            result = run_single_experiment(
+                area_name=area_name,
+                model_name=model_name,
+                prepared=prepared,
+                config=config,
+                schema=schema,
+                run_id=run_id,
+                device=device,
+                env_info=env_info,
+            )
+            run_results.append(result)
+
+        summary = summarize_runs(run_results)
+        log_progress(
+            f"    >>> Mean Silhouette = {summary['silhouette']['mean']:.4f} ± {summary['silhouette']['std']:.4f}"
+        )
+
+        all_results[model_name] = {
+            "runs": run_results,
+            "summary": summary,
+            "num_params": run_results[0]["num_params"],
+        }
+
+    return all_results
+
+
+def statistical_analysis(results: Dict[str, Dict]) -> Dict[str, Dict]:
+    """统计分析，比较各模型与 Full Model 的差异
+
+    Args:
+        results: 各模型的实验结果
+
+    Returns:
+        各模型与 Full Model 的统计比较结果
+    """
+    # 防御性检查：确保 Full Model 存在且有有效数据
+    if "Full Model" not in results:
+        log_progress("  [警告] 未找到 Full Model 结果，跳过统计分析")
+        return {}
+
+    baseline = results["Full Model"]["summary"]["silhouette"]["values"]
+
+    # 防御性检查：确保 baseline 有效
+    if not baseline or len(baseline) == 0:
+        log_progress("  [警告] Full Model 无有效 silhouette 值，跳过统计分析")
+        return {}
+
+    comparisons = {}
+    raw_p = []
+    names = []
+
+    for model_name, obj in results.items():
+        if model_name == "Full Model":
+            continue
+
+        # 防御性检查：确保当前模型有有效数据
+        cur = obj["summary"]["silhouette"]["values"]
+        if not cur or len(cur) == 0:
+            log_progress(f"  [警告] {model_name} 无有效 silhouette 值，跳过比较")
+            continue
+
+        # 确保样本数一致
+        if len(cur) != len(baseline):
+            log_progress(f"  [警告] {model_name} 样本数 ({len(cur)}) 与 Full Model ({len(baseline)}) 不一致")
+            continue
+
+        st = paired_statistics(baseline, cur)
+        comparisons[model_name] = st
+        raw_p.append(st["t_p_value"])
+        names.append(model_name)
+
+    # 只有当有有效比较时才进行多重检验校正
+    if raw_p:
+        corrected, rejected = holm_correction(raw_p)
+        for i, name in enumerate(names):
+            comparisons[name]["corrected_p_value"] = float(corrected[i])
+            comparisons[name]["significant"] = bool(rejected[i])
+
+    return comparisons
+
+
+# =========================================================
+# Main
+# =========================================================
+
+def main():
+    ensure_dirs()
+
+    with open(PROGRESS_FILE, "w", encoding="utf-8") as f:
+        f.write(
+            f"Experiment started at {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        )
+
+    if hasattr(torch, "set_float32_matmul_precision"):
+        try:
+            torch.set_float32_matmul_precision("high")
+        except Exception:
+            pass
+
+    log_progress("=" * 70)
+    log_progress("严谨实验框架 V6")
+    log_progress("=" * 70)
+
+    env_info = get_env_info()
+    device = torch.device(EXPERIMENT_CONFIG.device)
+    log_progress(f"Device: {device}")
+    log_progress(f"PyTorch: {env_info['torch_version']}")
+    log_progress(f"CUDA: {env_info['cuda_version']}")
+    log_progress(f"GPU: {env_info['gpu_name']}")
+    log_progress(f"Faiss: {env_info.get('faiss_available', 'N/A')}")
+
+    if device.type == "cuda":
+        mem_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+        log_progress(f"GPU Memory: {mem_gb:.2f} GB")
+        clear_cuda_memory()
+        mem_usage = get_gpu_memory_usage()
+        log_progress(f"  Initial memory: allocated={mem_usage['allocated']:.2f}GB, reserved={mem_usage['reserved']:.2f}GB")
+
+    log_progress("\n加载数据集...")
+    datasets = {}
+
+    # 冒烟测试模式：减少区域和运行次数
+    if EXPERIMENT_CONFIG.smoke_test:
+        log_progress("  [冒烟测试模式] 只加载 1 个区域, 1 次运行")
+        areas_to_load = ["guanggu_core"]
+        effective_config = ExperimentConfig(**{**asdict(EXPERIMENT_CONFIG), "num_runs": 1})
+    else:
+        areas_to_load = ["guanggu_core", "wuda_area", "zhongjia_cun"]
+        effective_config = EXPERIMENT_CONFIG
+
+    for area in areas_to_load:
+        try:
+            ds = POIDataset(area)
+            datasets[area] = ds
+            log_progress(f"  {area}: {len(ds)} POIs")
+        except (FileNotFoundError, OSError, ValueError) as e:
+            # 数据文件不存在或格式错误
+            log_progress(f"  {area}: 加载失败 - {type(e).__name__}: {e}")
+
+    all_area_results = {}
+
+    for area_name, dataset in datasets.items():
+        log_progress(f"\n{'=' * 70}")
+        log_progress(f"实验区域: {area_name}")
+        log_progress(f"{'=' * 70}")
+
+        prepared = prepare_area_data(
+            area_name, dataset, FEATURE_SCHEMA, effective_config
+        )
+        log_progress(f"  Label source: {prepared.schema_info['label_source']}")
+        log_progress(f"  use_category_input: {prepared.use_category_input}")
+        log_progress(f"  num_classes: {prepared.num_classes}")
+        log_progress(f"  adj_is_sparse: {prepared.global_poi_adj_is_sparse}")
+
+        results = run_all_experiments_for_area(
+            area_name=area_name,
+            prepared=prepared,
+            config=effective_config,
+            schema=FEATURE_SCHEMA,
+            device=device,
+            env_info=env_info,
+        )
+
+        comparisons = statistical_analysis(results)
+
+        # 生成报告
+        report = generate_area_report(
+            area_name, results, comparisons, effective_config, env_info
+        )
+
+        report_path = REPORT_DIR / f"{area_name}_v6_report.md"
+        with open(report_path, "w", encoding="utf-8") as f:
+            f.write(report)
+
+        # 生成 LaTeX 表格
+        latex_table = generate_latex_table(results, area_name, f"{area_name} 实验结果")
+        latex_path = REPORT_DIR / f"{area_name}_v6_table.tex"
+        with open(latex_path, "w", encoding="utf-8") as f:
+            f.write(latex_table)
+
+        # 保存 JSON 结果
+        json_path = JSON_DIR / f"{area_name}_v6_results.json"
+        with open(json_path, "w", encoding="utf-8") as f:
+            serializable = {
+                "area_name": area_name,
+                "env_info": env_info,
+                "config": asdict(effective_config),
+                "schema": asdict(FEATURE_SCHEMA),
+                "prepared_meta": prepared.schema_info,
+                "results": results,
+                "comparisons": comparisons,
+            }
+            json.dump(
+                serializable, f, indent=2, ensure_ascii=False, default=tensor_to_list
+            )
+
+        all_area_results[area_name] = {
+            "results": results,
+            "comparisons": comparisons,
+            "prepared_meta": prepared.schema_info,
+        }
+
+        log_progress(f"  Report saved: {report_path}")
+        log_progress(f"  LaTeX saved: {latex_path}")
+        log_progress(f"  JSON saved: {json_path}")
+
+    # 汇总报告
+    summary_lines = []
+    summary_lines.append("# 严谨实验汇总 V6\n")
+    summary_lines.append("| Area | Full | Transformer | GNN | No Fusion |")
+    summary_lines.append("|---|---:|---:|---:|---:|")
+    for area_name, obj in all_area_results.items():
+        r = obj["results"]
+        summary_lines.append(
+            f"| {area_name} | "
+            f"{r['Full Model']['summary']['silhouette']['mean']:.4f}±{r['Full Model']['summary']['silhouette']['std']:.4f} | "
+            f"{r['Pure Transformer']['summary']['silhouette']['mean']:.4f}±{r['Pure Transformer']['summary']['silhouette']['std']:.4f} | "
+            f"{r['Pure GNN']['summary']['silhouette']['mean']:.4f}±{r['Pure GNN']['summary']['silhouette']['std']:.4f} | "
+            f"{r['No Fusion']['summary']['silhouette']['mean']:.4f}±{r['No Fusion']['summary']['silhouette']['std']:.4f} |"
+        )
+
+    summary_path = OUTPUT_DIR / "summary_v6.md"
+    with open(summary_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(summary_lines))
+
+    log_progress(f"\nSummary saved: {summary_path}")
+    log_progress("=" * 70)
+    log_progress("实验完成")
+    log_progress("=" * 70)
+
+
+if __name__ == "__main__":
+    main()

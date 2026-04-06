@@ -48,6 +48,39 @@ export const SSE_EVENT_SCHEMAS = Object.freeze({
     },
     additionalProperties: true
   }),
+  thinking: withEventMeta({
+    type: 'object',
+    properties: {
+      status: { type: 'string' },
+      message: { type: 'string' }
+    },
+    additionalProperties: true
+  }),
+  reasoning: withEventMeta({
+    type: 'object',
+    required: ['content'],
+    properties: {
+      content: { type: 'string' }
+    },
+    additionalProperties: true
+  }),
+  intent_preview: withEventMeta({
+    type: 'object',
+    properties: {
+      rawAnchor: { type: ['string', 'null'] },
+      normalizedAnchor: { type: ['string', 'null'] },
+      displayAnchor: { type: ['string', 'null'] },
+      targetCategory: { type: ['string', 'null'] },
+      spatialRelation: { type: ['string', 'null'] },
+      confidence: { type: 'number' },
+      needsClarification: { type: 'boolean' },
+      clarificationHint: { type: ['string', 'null'] },
+      isAbbreviation: { type: 'boolean' },
+      parserModel: { type: ['string', 'null'] },
+      parserProvider: { type: ['string', 'null'] }
+    },
+    additionalProperties: true
+  }),
   progress: withEventMeta({
     type: 'object',
     required: ['progress'],
@@ -103,6 +136,13 @@ export const SSE_EVENT_SCHEMAS = Object.freeze({
     required: ['message'],
     properties: {
       message: { type: 'string' }
+    },
+    additionalProperties: true
+  }),
+  done: withEventMeta({
+    type: 'object',
+    properties: {
+      duration_ms: { type: 'number' }
     },
     additionalProperties: true
   }),

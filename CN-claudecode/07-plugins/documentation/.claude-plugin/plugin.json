@@ -1,0 +1,9 @@
+{
+  "name": "documentation",
+  "version": "1.0.0",
+  "description": "全面的文档生成和维护",
+  "author": {
+    "name": "社区"
+  },
+  "license": "MIT"
+}

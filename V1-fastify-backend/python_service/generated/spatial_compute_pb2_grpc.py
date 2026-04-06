@@ -39,6 +39,11 @@ class SpatialComputeServiceStub(object):
                 request_serializer=spatial__compute__pb2.ComputeRequest.SerializeToString,
                 response_deserializer=spatial__compute__pb2.ComputeEvent.FromString,
                 _registered_method=True)
+        self.SpatialSearch = channel.unary_unary(
+                '/spatialcompute.SpatialComputeService/SpatialSearch',
+                request_serializer=spatial__compute__pb2.SpatialSearchRequest.SerializeToString,
+                response_deserializer=spatial__compute__pb2.SpatialSearchResponse.FromString,
+                _registered_method=True)
 
 
 class SpatialComputeServiceServicer(object):
@@ -51,6 +56,13 @@ class SpatialComputeServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def SpatialSearch(self, request, context):
+        """空间检索服务：PostGIS 空间过滤 + 向量相似度计算
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_SpatialComputeServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -58,6 +70,11 @@ def add_SpatialComputeServiceServicer_to_server(servicer, server):
                     servicer.ComputeSpatial,
                     request_deserializer=spatial__compute__pb2.ComputeRequest.FromString,
                     response_serializer=spatial__compute__pb2.ComputeEvent.SerializeToString,
+            ),
+            'SpatialSearch': grpc.unary_unary_rpc_method_handler(
+                    servicer.SpatialSearch,
+                    request_deserializer=spatial__compute__pb2.SpatialSearchRequest.FromString,
+                    response_serializer=spatial__compute__pb2.SpatialSearchResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -87,6 +104,33 @@ class SpatialComputeService(object):
             '/spatialcompute.SpatialComputeService/ComputeSpatial',
             spatial__compute__pb2.ComputeRequest.SerializeToString,
             spatial__compute__pb2.ComputeEvent.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SpatialSearch(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/spatialcompute.SpatialComputeService/SpatialSearch',
+            spatial__compute__pb2.SpatialSearchRequest.SerializeToString,
+            spatial__compute__pb2.SpatialSearchResponse.FromString,
             options,
             channel_credentials,
             insecure,

@@ -103,6 +103,18 @@ export function normalizeRefinedResultEvidence(payload) {
   const root = pickObject(payload) || {}
   const results = pickObject(root.results) || root
 
+  const evidenceView = pickObject(
+    results.evidence_view,
+    results.evidenceView,
+    root.evidence_view,
+    root.evidenceView
+  )
+  const toolCalls = pickArray(
+    root.tool_calls,
+    root.toolCalls,
+    results.tool_calls,
+    results.toolCalls
+  )
   const boundary = results.boundary ?? root.boundary ?? null
   const spatialClusters =
     pickObject(results.spatial_clusters, results.spatialClusters, root.spatial_clusters, root.spatialClusters) ||
@@ -124,6 +136,7 @@ export function normalizeRefinedResultEvidence(payload) {
 
   const hotspotCount = Array.isArray(spatialClusters?.hotspots) ? spatialClusters.hotspots.length : 0
   const hasEvidence = Boolean(
+    evidenceView ||
     boundary ||
       hotspotCount > 0 ||
       vernacularRegions.length > 0 ||
@@ -136,6 +149,8 @@ export function normalizeRefinedResultEvidence(payload) {
     vernacularRegions,
     fuzzyRegions,
     stats,
+    evidenceView,
+    toolCalls,
     intent,
     hasEvidence
   }

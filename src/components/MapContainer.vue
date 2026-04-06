@@ -179,6 +179,7 @@ import { Style, Fill, Stroke, Circle as CircleStyle, RegularShape, Text as TextS
 
 import { useRegions, REGION_COLORS, MAX_REGIONS } from '../composables/useRegions';
 import { nicheLabel } from '../utils/aiBoundaryMeta';
+import { readCoordinatePair, readCoordSys } from '../utils/aiMapRender.js';
 import { useProjection } from '../composables/map/useProjection';
 import { usePopupAnchor } from '../composables/map/usePopupAnchor';
 import { useDeckBridge } from '../composables/map/useDeckBridge';
@@ -739,9 +740,12 @@ function rebuildPoiOlFeatures() {
   rawToOlMap.clear();
   const poiCoordSys = import.meta.env.VITE_POI_COORD_SYS || 'gcj02';
   for (const f of (props.poiFeatures || [])) {
-    let [lon, lat] = f.geometry.coordinates;
+    const coordinates = readCoordinatePair(f);
+    if (!coordinates) continue;
+    let [lon, lat] = coordinates;
+    const featureCoordSys = readCoordSys(f, poiCoordSys) || poiCoordSys;
     // 注释说明
-    [lon, lat] = toGcj02IfNeeded(lon, lat, poiCoordSys);
+    [lon, lat] = toGcj02IfNeeded(lon, lat, featureCoordSys);
     const feat = new Feature({
       geometry: new Point(fromLonLat([lon, lat])),
       __raw: f,
@@ -758,33 +762,7 @@ function rebuildPoiOlFeatures() {
 let hasLocatedOnce = false;
 
 function resolveFlyToLonLat(target) {
-  if (!target) return null;
-
-  if (Array.isArray(target) && target.length >= 2) {
-    const lon = Number(target[0]);
-    const lat = Number(target[1]);
-    if (Number.isFinite(lon) && Number.isFinite(lat)) {
-      return [lon, lat];
-    }
-    return null;
-  }
-
-  if (Array.isArray(target?.geometry?.coordinates)) {
-    const lon = Number(target.geometry.coordinates[0]);
-    const lat = Number(target.geometry.coordinates[1]);
-    if (Number.isFinite(lon) && Number.isFinite(lat)) {
-      return [lon, lat];
-    }
-    return null;
-  }
-
-  const lon = Number(target.lon ?? target.lng ?? target.longitude);
-  const lat = Number(target.lat ?? target.latitude);
-  if (Number.isFinite(lon) && Number.isFinite(lat)) {
-    return [lon, lat];
-  }
-
-  return null;
+  return readCoordinatePair(target);
 }
 
 function flyTo(target, options = {}) {
@@ -797,7 +775,8 @@ function flyTo(target, options = {}) {
   if (!lonLat) return;
 
   let [lon, lat] = lonLat;
-  [lon, lat] = toGcj02IfNeeded(lon, lat, poiCoordSys);
+  const targetCoordSys = readCoordSys(target, poiCoordSys) || poiCoordSys;
+  [lon, lat] = toGcj02IfNeeded(lon, lat, targetCoordSys);
   const center = fromLonLat([lon, lat]);
 
   const isPoiFeature = Array.isArray(target?.geometry?.coordinates);
@@ -1335,16 +1314,27 @@ function showHighlights(features, options = {}) {
   }
 
   // deck.gl 相关说明
-  const deckData = features.map(raw => {
-    let [lon, lat] = raw.geometry.coordinates;
-    [lon, lat] = toGcj02IfNeeded(lon, lat, poiCoordSys);
-    return {
-      lon,
-      lat,
-      groupIndex: raw.properties._groupIndex || 0,
-      raw,
-    };
-  });
+  const deckData = features
+    .map((raw) => {
+      const coordinates = readCoordinatePair(raw);
+      if (!coordinates) return null;
+
+      let [lon, lat] = coordinates;
+      const featureCoordSys = readCoordSys(raw, poiCoordSys) || poiCoordSys;
+      [lon, lat] = toGcj02IfNeeded(lon, lat, featureCoordSys);
+      return {
+        lon,
+        lat,
+        groupIndex: raw?.properties?._groupIndex || 0,
+        raw,
+      };
+    })
+    .filter(Boolean);
+
+  if (!deckData.length) {
+    clearHighlights();
+    return;
+  }
   
 
   highlightData.value = deckData;

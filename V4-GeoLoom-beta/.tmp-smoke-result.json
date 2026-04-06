@@ -1,0 +1,29 @@
+{
+  "provider_ready": true,
+  "llm_provider": "minimax-anthropic-compatible",
+  "llm_model": "MiniMax-M2.7",
+  "degraded_dependencies": [
+    "short_term_memory",
+    "spatial_encoder",
+    "spatial_vector",
+    "route_distance"
+  ],
+  "smoke_results": [
+    {
+      "query": "武汉大学附近有哪些咖啡店？",
+      "answer": "我还没有定位到明确锚点，请补充更具体的地点。",
+      "query_type": "nearby_poi",
+      "tool_calls": 1,
+      "session_id": "smoke_session_phase82",
+      "duration_ms": 7336
+    },
+    {
+      "query": "武汉大学最近的地铁站是什么？",
+      "answer": "我还没有定位到明确锚点，请补充更具体的地点。",
+      "query_type": "nearest_station",
+      "tool_calls": 1,
+      "session_id": "smoke_session_phase82",
+      "duration_ms": 8114
+    }
+  ]
+}

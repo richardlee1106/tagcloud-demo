@@ -1,0 +1,23 @@
+{
+  "name": "v3-geoencoder-rag",
+  "version": "1.0.0",
+  "description": "V3 GeoEncoder RAG - 独立的空间智能后端服务",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "dev": "node --watch server.js",
+    "start": "node server.js",
+    "python": "cd python && python grpc_server.py",
+    "test": "python scripts/testing/test_optimized_performance.py",
+    "build-cache": "node scripts/cache/build_embedding_cache.js"
+  },
+  "dependencies": {
+    "fastify": "^5.2.0",
+    "@fastify/cors": "^10.0.1",
+    "pg": "^8.13.0",
+    "dotenv": "^16.4.5"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

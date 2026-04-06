@@ -1,0 +1,32 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - img [ref=e7]
+      - generic [ref=e18]:
+        - generic [ref=e19]:
+          - generic [ref=e20]: GeoLoom-RAG
+          - generic [ref=e21]: 地理认知探索
+        - generic [ref=e22]:
+          - text: v1.0
+          - generic [ref=e23]: (beta)
+    - generic [ref=e28]:
+      - generic [ref=e30] [cursor=pointer]:
+        - img [ref=e32]
+        - generic:
+          - combobox [ref=e35]
+          - generic [ref=e36]: 空间选区
+        - img [ref=e39]
+      - button [ref=e41] [cursor=pointer]:
+        - img [ref=e42]
+      - button [ref=e44] [cursor=pointer]:
+        - img [ref=e45]
+      - button [ref=e50] [cursor=pointer]:
+        - img [ref=e51]
+      - button [ref=e55] [cursor=pointer]:
+        - img [ref=e56]
+      - button [ref=e58] [cursor=pointer]:
+        - img [ref=e59]
+      - button "地图叙事" [ref=e62] [cursor=pointer]:
+        - img [ref=e63]
+        - text: 地图叙事
+  - main [ref=e65]

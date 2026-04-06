@@ -29,14 +29,17 @@ function createSseResponse(chunks, headers = {}) {
 }
 
 const originalFetch = globalThis.fetch
+const originalBackendVersion = import.meta.env.VITE_BACKEND_VERSION
 
 afterEach(() => {
   globalThis.fetch = originalFetch
+  import.meta.env.VITE_BACKEND_VERSION = originalBackendVersion
   vi.restoreAllMocks()
 })
 
 describe('sendChatMessageStream model timing log', () => {
   it('prints [ModelTiming] from stats/refined_result once for identical payload', async () => {
+    import.meta.env.VITE_BACKEND_VERSION = ''
     const onChunk = vi.fn()
     const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => {})
 

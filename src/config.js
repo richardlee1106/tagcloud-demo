@@ -1,11 +1,32 @@
-// API Base URL 配置
-// 开发环境默认直连本机后端，避免代理/IPv6 解析差异导致的 502。
-// 如需改端口，可设置 VITE_DEV_API_BASE，例如: http://127.0.0.1:3300
-// 生产环境仍通过 Vercel Rewrite 代理。
-const DEV_API_BASE_DEFAULT = 'http://127.0.0.1:3200'
+// 前后端 API Base URL 配置
+// 默认情况下，空间/类别链路跟随主后端；
+// 只有显式设置 VITE_SPATIAL_*_API_BASE 时才拆分到独立空间后端。
+const DEV_AI_API_BASE_DEFAULT = 'http://127.0.0.1:3200'
+const DEV_SPATIAL_API_BASE_DEFAULT = 'http://127.0.0.1:3200'
+const PROD_AI_API_BASE_DEFAULT = '/proxy-api'
+const PROD_SPATIAL_API_BASE_DEFAULT = '/proxy-api'
 
-export const API_BASE_URL = import.meta.env.DEV
-  ? (import.meta.env.VITE_DEV_API_BASE || DEV_API_BASE_DEFAULT)
-  : '/proxy-api'
+export function resolveApiBaseUrls(env = {}, isDev = false) {
+  const aiBase = isDev
+    ? (env.VITE_AI_DEV_API_BASE || env.VITE_DEV_API_BASE || DEV_AI_API_BASE_DEFAULT)
+    : (env.VITE_AI_PROD_API_BASE || env.VITE_PROD_API_BASE || PROD_AI_API_BASE_DEFAULT)
 
-export default API_BASE_URL;
+  const spatialBase = isDev
+    ? (env.VITE_SPATIAL_DEV_API_BASE || env.VITE_DEV_API_BASE || aiBase || DEV_SPATIAL_API_BASE_DEFAULT)
+    : (env.VITE_SPATIAL_PROD_API_BASE || env.VITE_PROD_API_BASE || aiBase || PROD_SPATIAL_API_BASE_DEFAULT)
+
+  return {
+    aiBase,
+    spatialBase
+  }
+}
+
+const resolvedApiBases = resolveApiBaseUrls(import.meta.env, import.meta.env.DEV)
+
+export const AI_API_BASE_URL = resolvedApiBases.aiBase
+export const SPATIAL_API_BASE_URL = resolvedApiBases.spatialBase
+
+// 兼容旧调用方：默认导出仍表示 AI 基址。
+export const API_BASE_URL = AI_API_BASE_URL
+
+export default API_BASE_URL

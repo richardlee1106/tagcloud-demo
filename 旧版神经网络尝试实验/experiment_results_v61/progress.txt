@@ -1,0 +1,120 @@
+
+V6.1 算法增强架构启动 | 对比学习 + 边特征注入
+目标: 84w+ 复杂场景高精度表征
+硬件: Windows | PyTorch: 2.12.0.dev20260312+cu128 (sm_120 优化版)
+  Architecture: Blackwell (RTX 50 series)
+  Note: Using PTX JIT compilation for sm_120 compatibility
+  FAISS-GPU: Not available (will use CPU)
+============================================================
+
+[guanggu_core] Processing...
+  Using FAISS-CPU for KNN build
+  torch.compile disabled for stability
+  Model parameters: 0.49M
+  Device: cuda
+  GPU Memory allocated: 0.02 GB
+  [Training Mode] Full Graph Training (V6 style)
+  Epoch   5 | Loss: 0.9361 | Sil: 0.7751
+  Epoch  10 | Loss: 0.8576 | Sil: 0.8949
+  Epoch  15 | Loss: 0.8334 | Sil: 0.9374
+  Epoch  20 | Loss: 0.8172 | Sil: 0.9579
+  Epoch  25 | Loss: 0.8040 | Sil: 0.9694
+  Epoch  30 | Loss: 0.8039 | Sil: 0.9763
+  Epoch  35 | Loss: 0.7986 | Sil: 0.9811
+  Epoch  40 | Loss: 0.8009 | Sil: 0.9843
+  Epoch  45 | Loss: 0.8045 | Sil: 0.9867
+  Epoch  50 | Loss: 0.7947 | Sil: 0.9885
+  Epoch  55 | Loss: 0.7923 | Sil: 0.9900
+  Epoch  60 | Loss: 0.7901 | Sil: 0.9910
+  Epoch  65 | Loss: 0.8045 | Sil: 0.9919
+  Epoch  70 | Loss: 0.8052 | Sil: 0.9927
+  Epoch  75 | Loss: 0.7968 | Sil: 0.9931
+  Epoch  80 | Loss: 0.7969 | Sil: 0.9939
+  Epoch  85 | Loss: 0.8011 | Sil: 0.9941
+  Epoch  90 | Loss: 0.7876 | Sil: 0.9945
+  Epoch  95 | Loss: 0.7929 | Sil: 0.9949
+  Epoch 100 | Loss: 0.7890 | Sil: 0.9954
+[Profiler] 总耗时: 1.62s | 峰值显存: 2.12 GB
+  - evaluation     :     1.30s ( 80.1%)
+  - data_transfer  :     0.16s ( 10.0%)
+  - knn_build      :     0.16s (  9.9%)
+  - sampling       :     0.00s (  0.0%)
+  - forward        :     0.00s (  0.0%)
+  - backward       :     0.00s (  0.0%)
+  - optimizer      :     0.00s (  0.0%)
+
+[wuda_area] Processing...
+  Using FAISS-CPU for KNN build
+  torch.compile disabled for stability
+  Model parameters: 0.49M
+  Device: cuda
+  GPU Memory allocated: 0.07 GB
+  [Training Mode] Full Graph Training (V6 style)
+  Epoch   5 | Loss: 1.0708 | Sil: 0.5523
+  Epoch  10 | Loss: 0.9117 | Sil: 0.7586
+  Epoch  15 | Loss: 0.8592 | Sil: 0.8454
+  Epoch  20 | Loss: 0.8329 | Sil: 0.8913
+  Epoch  25 | Loss: 0.8113 | Sil: 0.9193
+  Epoch  30 | Loss: 0.8045 | Sil: 0.9376
+  Epoch  35 | Loss: 0.7962 | Sil: 0.9501
+  Epoch  40 | Loss: 0.7881 | Sil: 0.9591
+  Epoch  45 | Loss: 0.7866 | Sil: 0.9658
+  Epoch  50 | Loss: 0.7844 | Sil: 0.9709
+  Epoch  55 | Loss: 0.7844 | Sil: 0.9748
+  Epoch  60 | Loss: 0.7818 | Sil: 0.9779
+  Epoch  65 | Loss: 0.7801 | Sil: 0.9804
+  Epoch  70 | Loss: 0.7771 | Sil: 0.9825
+  Epoch  75 | Loss: 0.7752 | Sil: 0.9842
+  Epoch  80 | Loss: 0.7752 | Sil: 0.9854
+  Epoch  85 | Loss: 0.7724 | Sil: 0.9867
+  Epoch  90 | Loss: 0.7753 | Sil: 0.9877
+  Epoch  95 | Loss: 0.7731 | Sil: 0.9886
+  Epoch 100 | Loss: 0.7724 | Sil: 0.9895
+[Profiler] 总耗时: 0.67s | 峰值显存: 2.12 GB
+  - evaluation     :     0.62s ( 91.8%)
+  - knn_build      :     0.05s (  8.0%)
+  - data_transfer  :     0.00s (  0.2%)
+  - sampling       :     0.00s (  0.0%)
+  - forward        :     0.00s (  0.0%)
+  - backward       :     0.00s (  0.0%)
+  - optimizer      :     0.00s (  0.0%)
+
+[zhongjia_cun] Processing...
+  Using FAISS-CPU for KNN build
+  torch.compile disabled for stability
+  Model parameters: 0.49M
+  Device: cuda
+  GPU Memory allocated: 0.08 GB
+  [Training Mode] Full Graph Training (V6 style)
+  Epoch   5 | Loss: 0.8840 | Sil: 0.8413
+  Epoch  10 | Loss: 0.8204 | Sil: 0.9297
+  Epoch  15 | Loss: 0.7975 | Sil: 0.9592
+  Epoch  20 | Loss: 0.7881 | Sil: 0.9730
+  Epoch  25 | Loss: 0.7815 | Sil: 0.9805
+  Epoch  30 | Loss: 0.7785 | Sil: 0.9852
+  Epoch  35 | Loss: 0.7758 | Sil: 0.9882
+  Epoch  40 | Loss: 0.7760 | Sil: 0.9903
+  Epoch  45 | Loss: 0.7765 | Sil: 0.9918
+  Epoch  50 | Loss: 0.7734 | Sil: 0.9930
+  Epoch  55 | Loss: 0.7698 | Sil: 0.9938
+  Epoch  60 | Loss: 0.7745 | Sil: 0.9944
+  Epoch  65 | Loss: 0.7718 | Sil: 0.9948
+  Epoch  70 | Loss: 0.7745 | Sil: 0.9954
+  Epoch  75 | Loss: 0.7707 | Sil: 0.9956
+  Epoch  80 | Loss: 0.7694 | Sil: 0.9962
+  Epoch  85 | Loss: 0.7678 | Sil: 0.9965
+  Epoch  90 | Loss: 0.7713 | Sil: 0.9967
+  Epoch  95 | Loss: 0.7732 | Sil: 0.9970
+  Epoch 100 | Loss: 0.7708 | Sil: 0.9972
+[Profiler] 总耗时: 2.04s | 峰值显存: 2.73 GB
+  - evaluation     :     1.76s ( 86.3%)
+  - knn_build      :     0.28s ( 13.6%)
+  - data_transfer  :     0.00s (  0.1%)
+  - sampling       :     0.00s (  0.0%)
+  - forward        :     0.00s (  0.0%)
+  - backward       :     0.00s (  0.0%)
+  - optimizer      :     0.00s (  0.0%)
+
+报告已保存到: D:\AAA_Edu\TagCloud\vite-project\scripts\experiment_results_v61\reports
+  - summary_v61.md
+  - FINAL_CONCLUSION_REPORT.md

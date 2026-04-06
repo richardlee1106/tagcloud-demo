@@ -10,6 +10,9 @@ package spatialcompute;
 service SpatialComputeService {
   // 单次请求返回事件流：STAGE / PROGRESS / PARTIAL / FINAL / ERROR
   rpc ComputeSpatial(ComputeRequest) returns (stream ComputeEvent);
+
+  // 空间检索服务：PostGIS 空间过滤 + 向量相似度计算
+  rpc SpatialSearch(SpatialSearchRequest) returns (SpatialSearchResponse);
 }
 
 message ComputeRequest {
@@ -59,4 +62,57 @@ message ComputeEvent {
 
   // 事件时间戳（毫秒）
   int64 ts = 3;
+}
+
+// ────────────────────────────────────────────────────────────
+// SpatialSearch RPC: 空间检索 + 向量相似度
+// ────────────────────────────────────────────────────────────
+
+message SpatialSearchRequest {
+  // 锚点经纬度 (武汉市中心默认: 114.305, 30.593)
+  double anchor_lon = 1;
+  double anchor_lat = 2;
+
+  // 检索半径（米）
+  double radius = 3;
+
+  // 查询向量 (352 维)
+  repeated float query_embedding = 4;
+
+  // 类别过滤
+  repeated string categories = 5;
+
+  // 目标区域类型 (0-5: 居住/商业/工业/教育/公共/自然)
+  int32 target_region = 6;
+
+  // 区域过滤模式: boost | strict
+  string region_filter_mode = 7;
+
+  // 返回数量
+  int32 top_k = 8;
+
+  // 权重配置
+  double spatial_weight = 9;
+  double semantic_weight = 10;
+  double region_weight = 11;
+}
+
+message SpatialSearchResult {
+  int64 id = 1;
+  string name = 2;
+  string category = 3;
+  int32 region_label = 4;
+  double lon = 5;
+  double lat = 6;
+  double distance_m = 7;
+  double semantic_score = 8;
+  double fused_score = 9;
+}
+
+message SpatialSearchResponse {
+  bool success = 1;
+  string error = 2;
+  int32 total_count = 3;
+  int64 duration_ms = 4;
+  repeated SpatialSearchResult results = 5;
 }

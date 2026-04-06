@@ -32,17 +32,17 @@
         </div>
         <div class="logo-type">
           <div class="logo-main-row">
-            <span class="logo-text">GeoLoom<span class="logo-accent">-RAG</span></span>
-            <span class="logo-subtitle">地理认知探索</span>
+            <span class="logo-text">{{ brandTitle }}<span class="logo-accent">{{ brandAccent }}</span></span>
+            <span class="logo-subtitle">{{ brandSubtitle }}</span>
           </div>
-          <div class="version-badge">v1.0 <span class="beta-tag">(beta)</span></div>
+          <div class="version-badge">{{ brandVersion }} <span class="beta-tag">(beta)</span></div>
         </div>
       </div>
 
       <!-- 绝对定位锚点击-->
       
       <!-- 锚点1：数据发(右对齐至屏幕中线 50%) -->
-      <div class="layout-anchor-center-left">
+      <div v-if="!isV4Mode" class="layout-anchor-center-left">
         <ControlPanel ref="controlPanelRefMap"
                       panel-type="map"
                       @data-loaded="handleDataLoaded"
@@ -133,6 +133,7 @@
                           :weight-enabled="weightEnabled"
                           :show-weight-value="showWeightValue"
                           :global-analysis-enabled="globalAnalysisEnabled"
+                          :show-controls="!isV4Mode"
                           @polygon-completed="handlePolygonCompleted" 
                           @map-ready="handleMapReady"
                           @hover-feature="handleFeatureHover"
@@ -212,7 +213,8 @@
                   @ai-spatial-clusters="handleAiSpatialClusters"
                   @ai-vernacular-regions="handleAiVernacularRegions"
                   @ai-fuzzy-regions="handleAiFuzzyRegions"
-                  @ai-analysis-stats="handleAiAnalysisStats" />
+                  @ai-analysis-stats="handleAiAnalysisStats"
+                  @clear-chat-state="handleClearAiChatState" />
         </div>
       </section>
     </main>
@@ -222,7 +224,7 @@
           <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
         </svg>
       </div>
-      <span class="ai-fab-text">GeoAI 助手</span>
+      <span class="ai-fab-text">{{ aiFabText }}</span>
       <div class="ai-fab-badge" v-if="selectedFeatures.length > 0">{{ selectedFeatures.length }}</div>
     </div>
   </div>
@@ -248,10 +250,16 @@ const MapContainer = defineAsyncComponent({
 const AiChat = defineAsyncComponent(() => import('./components/AiChat.vue'));
 import { semanticSearch } from './utils/aiService';
 import { normalizeAiEvidencePayload } from './utils/aiEvidencePayload';
-import { API_BASE_URL } from './config';
+import { normalizeAiMapFeature } from './utils/aiMapRender.js';
+import { SPATIAL_API_BASE_URL } from './config';
 import { useRegions } from './composables/useRegions';
 
 const router = useRouter();
+const isV4Mode = String(import.meta.env.VITE_BACKEND_VERSION || '').trim().toLowerCase() === 'v4';
+
+if (typeof document !== 'undefined') {
+  document.title = isV4Mode ? 'GeoLoom V4 | 空间问答工作台' : 'GeoLoom-RAG | 地理认知探索';
+}
 
 // 多选区管理
 const { regions, getRegionsContext } = useRegions();
@@ -297,6 +305,11 @@ const splitPercentage1 = ref(65); // 默认展开比例：Map 65% / AI 35%
 const isDragging1 = ref(false);
 const hSplitPercent = ref(50); // 已不再使用但保留以防依赖错误
 const isTagDrawerExpanded = ref(false); // 移动端标签云抽屉展开状态
+const brandTitle = computed(() => 'GeoLoom');
+const brandAccent = computed(() => (isV4Mode ? '-V4' : '-RAG'));
+const brandSubtitle = computed(() => (isV4Mode ? '空间问答工作台' : '地理认知探索'));
+const brandVersion = computed(() => (isV4Mode ? 'v4.0' : 'v1.0'));
+const aiFabText = computed(() => (isV4Mode ? 'GeoLoom V4' : 'GeoAI 助手'));
 
 // 地图面板样式（AI展开时为三列横向布局的第一列）
 const mapPanelStyle = computed(() => {
@@ -742,7 +755,7 @@ async function fetchManualFilteredFeatures(categories = [], options = {}) {
   const requestLimit = Number.isFinite(Number(options.limit)) ? Number(options.limit) : 20000;
 
   const fetchByPayload = async (payload) => {
-    const response = await fetch(`${API_BASE_URL}/api/spatial/fetch`, {
+    const response = await fetch(`${SPATIAL_API_BASE_URL}/api/spatial/fetch`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -1577,48 +1590,36 @@ const handleClearSearch = () => {
  * 处理 AI 标签云的"渲染至地图事件
  * @param {Array} pois - 从标签云传来的POI 数组
  */
-function handleRenderPoisToMap(pois) {
-  if (!pois || pois.length === 0) {
+function handleRenderPoisToMap(payload) {
+  const rawPois = Array.isArray(payload)
+    ? payload
+    : Array.isArray(payload?.pois)
+      ? payload.pois
+      : [];
+  const anchorFeature = payload && !Array.isArray(payload) ? payload.anchorFeature || null : null;
+
+  if (!rawPois.length) {
     ElNotification.warning({ title: '提示', message: '没有可渲染的 POI 数据', offset: 80 });
     return;
   }
   
-  console.log('[App] AI 标签云渲染 POI 到地图', pois.length);
+  console.log('[App] AI 标签云渲染 POI 到地图', rawPois.length, anchorFeature ? '(含检索锚点)' : '');
   
-  // 个 POI 数据转换为GeoJSON Feature 格式（如果需要）
-  const features = pois.map(poi => {
-    // 如果已经是GeoJSON Feature 格式
-    if (poi.type === 'Feature' && poi.geometry) {
-      return poi;
-    }
-    
-    // 如果是后端返回的简化格式，转换为GeoJSON
-    const lon = poi.lon || poi.longitude || poi.geometry?.coordinates?.[0];
-    const lat = poi.lat || poi.latitude || poi.geometry?.coordinates?.[1];
-    
-    if (!lon || !lat) {
-      console.warn('[App] POI 缂哄皯鍧愭爣:', poi.name);
-      return null;
-    }
-    
-    return {
-      type: 'Feature',
-      geometry: {
-        type: 'Point',
-        coordinates: [lon, lat]
-      },
-      properties: {
-        名称: poi.name || poi.名称 || '未知',
-        澶х被: poi.type || poi.澶х被 || '',
-        灏忕被: poi.灏忕被 || poi.category || '',
-        // 保留原始属
-        ...poi.properties,
-        // 标记来源
-        _source: 'ai_tagcloud'
-      }
-    };
-  }).filter(Boolean);
-  
+  // AI 侧返回的 POI 结构不稳定，这里统一归一化成可渲染的 Feature。
+  const features = rawPois
+    .map((poi) => normalizeAiMapFeature(poi, {
+      defaultSource: 'ai_tagcloud',
+      fallbackCoordSys: poiCoordSys
+    }))
+    .filter(Boolean);
+
+  const normalizedAnchorFeature = anchorFeature
+    ? normalizeAiMapFeature(anchorFeature, {
+        defaultSource: 'ai_anchor',
+        fallbackCoordSys: poiCoordSys
+      })
+    : null;
+
   if (features.length === 0) {
     ElNotification.warning({ title: '提示', message: 'POI 数据格式无效', offset: 80 });
     return;
@@ -1626,10 +1627,12 @@ function handleRenderPoisToMap(pois) {
   
   // 更新标签云数据
   tagData.value = features;
+
+  const mapFeatures = normalizedAnchorFeature ? [...features, normalizedAnchorFeature] : features;
   
   // 渲染到地图并自适应视野
   if (mapComponent.value) {
-    mapComponent.value.showHighlights(features, { fitView: true });
+    mapComponent.value.showHighlights(mapFeatures, { fitView: true });
   }
   
   // 通知子组件有搜索结果
@@ -1639,18 +1642,30 @@ function handleRenderPoisToMap(pois) {
   
   ElNotification.success({ 
     title: '渲染成功', 
-    message: `已将 ${features.length} 个 POI 渲染到地图`, 
+    message: normalizedAnchorFeature
+      ? `已将 ${features.length} 个 POI 渲染到地图，并带上检索锚点`
+      : `已将 ${features.length} 个 POI 渲染到地图`, 
     offset: 80 
   });
 }
 
-const latestAiEvidence = ref({
-  boundary: null,
-  spatialClusters: null,
-  vernacularRegions: null,
-  fuzzyRegions: null,
-  stats: null
-});
+const AI_CHAT_RESULT_SOURCES = new Set(['ai_tagcloud', 'ai_anchor', 'evidence_locate']);
+
+function createEmptyAiEvidence() {
+  return {
+    boundary: null,
+    spatialClusters: null,
+    vernacularRegions: null,
+    fuzzyRegions: null,
+    stats: null
+  };
+}
+
+function isAiChatFeature(feature) {
+  return AI_CHAT_RESULT_SOURCES.has(String(feature?.properties?._source || '').trim());
+}
+
+const latestAiEvidence = ref(createEmptyAiEvidence());
 
 function renderAiEvidenceToMap({ clear = false } = {}) {
   const mapApi = mapComponent.value;
@@ -1832,6 +1847,22 @@ function handleAiFuzzyRegions(fuzzyRegions) {
 function handleAiAnalysisStats(stats) {
   latestAiEvidence.value.stats = stats || null;
   renderAiEvidenceToMap({ clear: false });
+}
+
+function handleClearAiChatState() {
+  tagData.value = Array.isArray(tagData.value)
+    ? tagData.value.filter((feature) => !isAiChatFeature(feature))
+    : [];
+  latestAiEvidence.value = createEmptyAiEvidence();
+
+  mapComponent.value?.clearHighlights?.();
+  mapComponent.value?.clearAiEvidenceBoundaries?.();
+
+  controlPanelRefTag.value?.setSearchResult?.(false);
+  controlPanelRefMobile.value?.setSearchResult?.(false);
+  controlPanelRefMap.value?.setSearchResult?.(false);
+
+  console.log('[App] Cleared AI chat visual state');
 }
 
 /**

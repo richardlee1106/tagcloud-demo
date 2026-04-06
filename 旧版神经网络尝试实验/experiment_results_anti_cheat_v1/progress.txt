@@ -1,0 +1,285 @@
+Experiment started at 2026-03-14 15:38:33
+[15:38:33] ======================================================================
+[15:38:33] 防作弊实验框架 V1
+[15:38:33] ======================================================================
+[15:38:33] 
+[15:38:33] 核心改进：
+[15:38:33]   1. 标签来源：KMeans 空间聚类（彻底杜绝标签泄露）
+[15:38:33]   2. 输入特征：移除 category（原泄露源头）
+[15:38:33]   3. 评估目标：真正测试空间感知能力
+[15:38:33] 
+[15:38:33] Device: cuda
+[15:38:33] PyTorch: 2.12.0.dev20260312+cu128
+[15:38:33] CUDA: 12.8
+[15:38:33] GPU: NVIDIA GeForce RTX 5060 Laptop GPU
+[15:38:33] GPU Memory: 7.96 GB
+[15:38:33] 
+加载数据集...
+[15:38:33]   [冒烟测试模式] 只加载 1 个区域, 1 次运行
+[15:38:34]   guanggu_core: 13399 POIs
+[15:38:34] 
+======================================================================
+[15:38:34] 实验区域: guanggu_core
+[15:38:34] ======================================================================
+[15:38:36]     [KMeans] 生成 15 个空间聚类标签
+[15:38:36]     [KMeans] 标签分布: [ 493  760  710 2524  531  860  570  803  713 1016  885  254 1147 1332
+  801]
+[15:38:36]     移除 category 特征: 6 → 5 维
+[15:38:36]     [警告] faiss GPU 失败（可能未安装faiss-gpu），退化为 CPU: module 'faiss' has no attribute 'StandardGpuResources'
+[15:38:36]     KNN 图构建完成: 13399 节点, K=10, sparse=True
+[15:38:36]   Label source: KMeans 空间聚类（防作弊）
+[15:38:36]   use_category_input: False
+[15:38:36]   num_classes: 15
+[15:38:36]   验证消融公平性...
+[15:38:36]   [参数量对比]
+[15:38:36]     Full Model: 1,128,758 (100.0% of Full)
+[15:38:36]     Pure GNN: 90,934 (8.1% of Full)
+[15:38:36] 
+  ========== Full Model ==========
+[15:38:36]     === Run 1/1 ===
+[15:38:37]     Split sizes | Train=9379 Val=2010 Test=2010 | Classes=15
+[15:38:37]     Params: 1,523,766
+[15:38:39]     Epoch 000 | Loss=1.8585 | Val_Sil=-0.0211
+[15:38:41]     Epoch 005 | Loss=1.7151 | Val_Sil=-0.0316
+[15:38:41]     [Profiler] 耗时统计:
+  forward: 1.31s (34.4%) [count=10, avg=0.1309s]
+  validation: 1.06s (27.9%) [count=2, avg=0.5301s]
+  optimizer_step: 0.99s (26.1%) [count=10, avg=0.0993s]
+  backward: 0.43s (11.4%) [count=10, avg=0.0435s]
+  data_transfer: 0.01s (0.1%) [count=1, avg=0.0051s]
+  knn_build: 0.00s (0.0%) [count=0, avg=0.0000s]
+  kmeans_labels: 0.00s (0.0%) [count=0, avg=0.0000s]
+  adj_subset: 0.00s (0.0%) [count=0, avg=0.0000s]
+  misc: 0.00s (0.0%) [count=0, avg=0.0000s]
+  Total: 3.80s
+[15:38:42]     Epoch 010 | Loss=1.6714 | Val_Sil=-0.0546
+[15:38:43]     Epoch 015 | Loss=1.6449 | Val_Sil=-0.0852
+[15:38:44]     [Profiler] 耗时统计:
+  validation: 2.13s (33.1%) [count=4, avg=0.5319s]
+  optimizer_step: 1.96s (30.4%) [count=20, avg=0.0978s]
+  forward: 1.73s (26.8%) [count=20, avg=0.0864s]
+  backward: 0.62s (9.6%) [count=20, avg=0.0310s]
+  data_transfer: 0.01s (0.1%) [count=1, avg=0.0051s]
+  knn_build: 0.00s (0.0%) [count=0, avg=0.0000s]
+  kmeans_labels: 0.00s (0.0%) [count=0, avg=0.0000s]
+  adj_subset: 0.00s (0.0%) [count=0, avg=0.0000s]
+  misc: 0.00s (0.0%) [count=0, avg=0.0000s]
+  Total: 6.44s
+[15:38:45]     Epoch 020 | Loss=1.6230 | Val_Sil=-0.0988
+[15:38:46]     Epoch 025 | Loss=1.6107 | Val_Sil=-0.1104
+[15:38:47]     [Profiler] 耗时统计:
+  validation: 3.19s (35.3%) [count=6, avg=0.5315s]
+  optimizer_step: 2.92s (32.3%) [count=30, avg=0.0973s]
+  forward: 2.12s (23.5%) [count=30, avg=0.0708s]
+  backward: 0.80s (8.9%) [count=30, avg=0.0267s]
+  data_transfer: 0.01s (0.1%) [count=1, avg=0.0051s]
+  knn_build: 0.00s (0.0%) [count=0, avg=0.0000s]
+  kmeans_labels: 0.00s (0.0%) [count=0, avg=0.0000s]
+  adj_subset: 0.00s (0.0%) [count=0, avg=0.0000s]
+  misc: 0.00s (0.0%) [count=0, avg=0.0000s]
+  Total: 9.04s
+[15:38:47]     Epoch 030 | Loss=1.6027 | Val_Sil=-0.1145
+[15:38:49]     Epoch 035 | Loss=1.5952 | Val_Sil=-0.1174
+[15:38:50]     [Profiler] 耗时统计:
+  validation: 4.44s (37.3%) [count=8, avg=0.5553s]
+  optimizer_step: 3.90s (32.8%) [count=40, avg=0.0976s]
+  forward: 2.55s (21.5%) [count=40, avg=0.0638s]
+  backward: 1.00s (8.4%) [count=40, avg=0.0249s]
+  data_transfer: 0.01s (0.0%) [count=1, avg=0.0051s]
+  knn_build: 0.00s (0.0%) [count=0, avg=0.0000s]
+  kmeans_labels: 0.00s (0.0%) [count=0, avg=0.0000s]
+  adj_subset: 0.00s (0.0%) [count=0, avg=0.0000s]
+  misc: 0.00s (0.0%) [count=0, avg=0.0000s]
+  Total: 11.90s
+[15:38:50]     Epoch 040 | Loss=1.5893 | Val_Sil=-0.1204
+[15:38:51]     Epoch 045 | Loss=1.5873 | Val_Sil=-0.1240
+[15:38:52]     [Profiler] 耗时统计:
+  validation: 5.42s (37.8%) [count=10, avg=0.5418s]
+  optimizer_step: 4.78s (33.4%) [count=50, avg=0.0957s]
+  forward: 2.93s (20.5%) [count=50, avg=0.0587s]
+  backward: 1.18s (8.2%) [count=50, avg=0.0235s]
+  data_transfer: 0.01s (0.0%) [count=1, avg=0.0051s]
+  knn_build: 0.00s (0.0%) [count=0, avg=0.0000s]
+  kmeans_labels: 0.00s (0.0%) [count=0, avg=0.0000s]
+  adj_subset: 0.00s (0.0%) [count=0, avg=0.0000s]
+  misc: 0.00s (0.0%) [count=0, avg=0.0000s]
+  Total: 14.32s
+[15:38:53]     Epoch 050 | Loss=1.5817 | Val_Sil=-0.1247
+[15:38:54]     Epoch 055 | Loss=1.5809 | Val_Sil=-0.1228
+[15:38:54]     [Profiler] 耗时统计:
+  validation: 6.35s (38.0%) [count=12, avg=0.5294s]
+  optimizer_step: 5.68s (34.0%) [count=60, avg=0.0947s]
+  forward: 3.32s (19.9%) [count=60, avg=0.0553s]
+  backward: 1.36s (8.1%) [count=60, avg=0.0226s]
+  data_transfer: 0.01s (0.0%) [count=1, avg=0.0051s]
+  knn_build: 0.00s (0.0%) [count=0, avg=0.0000s]
+  kmeans_labels: 0.00s (0.0%) [count=0, avg=0.0000s]
+  adj_subset: 0.00s (0.0%) [count=0, avg=0.0000s]
+  misc: 0.00s (0.0%) [count=0, avg=0.0000s]
+  Total: 16.72s
+[15:38:55]     Epoch 060 | Loss=1.5798 | Val_Sil=-0.1194
+[15:38:56]     Epoch 065 | Loss=1.5785 | Val_Sil=-0.1162
+[15:38:57]     [Profiler] 耗时统计:
+  validation: 7.29s (38.1%) [count=14, avg=0.5208s]
+  optimizer_step: 6.59s (34.4%) [count=70, avg=0.0941s]
+  forward: 3.71s (19.4%) [count=70, avg=0.0530s]
+  backward: 1.53s (8.0%) [count=70, avg=0.0219s]
+  data_transfer: 0.01s (0.0%) [count=1, avg=0.0051s]
+  knn_build: 0.00s (0.0%) [count=0, avg=0.0000s]
+  kmeans_labels: 0.00s (0.0%) [count=0, avg=0.0000s]
+  adj_subset: 0.00s (0.0%) [count=0, avg=0.0000s]
+  misc: 0.00s (0.0%) [count=0, avg=0.0000s]
+  Total: 19.12s
+[15:38:58]     Epoch 070 | Loss=1.5780 | Val_Sil=-0.1134
+[15:38:59]     Epoch 075 | Loss=1.5753 | Val_Sil=-0.1111
+[15:38:59]     Early stopping at epoch 75
+[15:38:59]     Test | Sil=-0.0194 NMI=0.2815 ARI=0.1270
+[15:38:59]     最终 Profiler 报告:
+[Profiler] 耗时统计:
+  validation: 8.23s (39.3%) [count=16, avg=0.5145s]
+  optimizer_step: 7.13s (34.0%) [count=76, avg=0.0938s]
+  forward: 3.95s (18.9%) [count=77, avg=0.0513s]
+  backward: 1.63s (7.8%) [count=76, avg=0.0215s]
+  data_transfer: 0.01s (0.0%) [count=2, avg=0.0037s]
+  knn_build: 0.00s (0.0%) [count=0, avg=0.0000s]
+  kmeans_labels: 0.00s (0.0%) [count=0, avg=0.0000s]
+  adj_subset: 0.00s (0.0%) [count=0, avg=0.0000s]
+  misc: 0.00s (0.0%) [count=0, avg=0.0000s]
+  Total: 20.95s
+[15:38:59]     >>> Mean Silhouette = -0.0194 ± 0.0000
+[15:38:59] 
+  ========== Pure GNN ==========
+[15:38:59]     === Run 1/1 ===
+[15:38:59]     Split sizes | Train=9379 Val=2010 Test=2010 | Classes=15
+[15:38:59]     Params: 90,934
+[15:39:00]     Epoch 000 | Loss=1.9432 | Val_Sil=0.0103
+[15:39:00]     Epoch 005 | Loss=1.8679 | Val_Sil=0.0128
+[15:39:00]     [Profiler] 耗时统计:
+  validation: 0.91s (82.2%) [count=2, avg=0.4573s]
+  backward: 0.11s (9.7%) [count=10, avg=0.0108s]
+  forward: 0.06s (5.7%) [count=10, avg=0.0063s]
+  optimizer_step: 0.02s (2.2%) [count=10, avg=0.0025s]
+  data_transfer: 0.00s (0.2%) [count=1, avg=0.0018s]
+  knn_build: 0.00s (0.0%) [count=0, avg=0.0000s]
+  kmeans_labels: 0.00s (0.0%) [count=0, avg=0.0000s]
+  adj_subset: 0.00s (0.0%) [count=0, avg=0.0000s]
+  misc: 0.00s (0.0%) [count=0, avg=0.0000s]
+  Total: 1.11s
+[15:39:01]     Epoch 010 | Loss=1.7789 | Val_Sil=0.0126
+[15:39:01]     Epoch 015 | Loss=1.7239 | Val_Sil=0.0105
+[15:39:02]     [Profiler] 耗时统计:
+  validation: 1.81s (82.5%) [count=4, avg=0.4521s]
+  backward: 0.21s (9.6%) [count=20, avg=0.0105s]
+  forward: 0.13s (5.8%) [count=20, avg=0.0063s]
+  optimizer_step: 0.05s (2.1%) [count=20, avg=0.0023s]
+  data_transfer: 0.00s (0.1%) [count=1, avg=0.0018s]
+  knn_build: 0.00s (0.0%) [count=0, avg=0.0000s]
+  kmeans_labels: 0.00s (0.0%) [count=0, avg=0.0000s]
+  adj_subset: 0.00s (0.0%) [count=0, avg=0.0000s]
+  misc: 0.00s (0.0%) [count=0, avg=0.0000s]
+  Total: 2.19s
+[15:39:02]     Epoch 020 | Loss=1.6867 | Val_Sil=0.0083
+[15:39:03]     Epoch 025 | Loss=1.6620 | Val_Sil=0.0074
+[15:39:03]     [Profiler] 耗时统计:
+  validation: 2.69s (82.7%) [count=6, avg=0.4482s]
+  backward: 0.31s (9.5%) [count=30, avg=0.0103s]
+  forward: 0.19s (5.7%) [count=30, avg=0.0062s]
+  optimizer_step: 0.07s (2.1%) [count=30, avg=0.0022s]
+  data_transfer: 0.00s (0.1%) [count=1, avg=0.0018s]
+  knn_build: 0.00s (0.0%) [count=0, avg=0.0000s]
+  kmeans_labels: 0.00s (0.0%) [count=0, avg=0.0000s]
+  adj_subset: 0.00s (0.0%) [count=0, avg=0.0000s]
+  misc: 0.00s (0.0%) [count=0, avg=0.0000s]
+  Total: 3.25s
+[15:39:03]     Epoch 030 | Loss=1.6433 | Val_Sil=0.0074
+[15:39:04]     Epoch 035 | Loss=1.6313 | Val_Sil=0.0074
+[15:39:04]     [Profiler] 耗时统计:
+  validation: 3.56s (82.6%) [count=8, avg=0.4455s]
+  backward: 0.40s (9.4%) [count=40, avg=0.0101s]
+  forward: 0.25s (5.8%) [count=40, avg=0.0063s]
+  optimizer_step: 0.09s (2.2%) [count=40, avg=0.0023s]
+  data_transfer: 0.00s (0.0%) [count=1, avg=0.0018s]
+  knn_build: 0.00s (0.0%) [count=0, avg=0.0000s]
+  kmeans_labels: 0.00s (0.0%) [count=0, avg=0.0000s]
+  adj_subset: 0.00s (0.0%) [count=0, avg=0.0000s]
+  misc: 0.00s (0.0%) [count=0, avg=0.0000s]
+  Total: 4.31s
+[15:39:04]     Epoch 040 | Loss=1.6185 | Val_Sil=0.0077
+[15:39:05]     Epoch 045 | Loss=1.6131 | Val_Sil=0.0082
+[15:39:05]     [Profiler] 耗时统计:
+  validation: 4.44s (82.6%) [count=10, avg=0.4444s]
+  backward: 0.50s (9.3%) [count=50, avg=0.0100s]
+  forward: 0.31s (5.8%) [count=50, avg=0.0063s]
+  optimizer_step: 0.12s (2.1%) [count=50, avg=0.0023s]
+  data_transfer: 0.00s (0.0%) [count=1, avg=0.0018s]
+  knn_build: 0.00s (0.0%) [count=0, avg=0.0000s]
+  kmeans_labels: 0.00s (0.0%) [count=0, avg=0.0000s]
+  adj_subset: 0.00s (0.0%) [count=0, avg=0.0000s]
+  misc: 0.00s (0.0%) [count=0, avg=0.0000s]
+  Total: 5.38s
+[15:39:05]     Epoch 050 | Loss=1.6053 | Val_Sil=0.0088
+[15:39:06]     Epoch 055 | Loss=1.6017 | Val_Sil=0.0091
+[15:39:06]     [Profiler] 耗时统计:
+  validation: 5.33s (82.5%) [count=12, avg=0.4442s]
+  backward: 0.60s (9.3%) [count=60, avg=0.0100s]
+  forward: 0.38s (5.9%) [count=60, avg=0.0063s]
+  optimizer_step: 0.14s (2.2%) [count=60, avg=0.0024s]
+  data_transfer: 0.00s (0.0%) [count=1, avg=0.0018s]
+  knn_build: 0.00s (0.0%) [count=0, avg=0.0000s]
+  kmeans_labels: 0.00s (0.0%) [count=0, avg=0.0000s]
+  adj_subset: 0.00s (0.0%) [count=0, avg=0.0000s]
+  misc: 0.00s (0.0%) [count=0, avg=0.0000s]
+  Total: 6.46s
+[15:39:07]     Epoch 060 | Loss=1.5974 | Val_Sil=0.0095
+[15:39:07]     Epoch 065 | Loss=1.5943 | Val_Sil=0.0098
+[15:39:07]     [Profiler] 耗时统计:
+  validation: 6.22s (82.5%) [count=14, avg=0.4443s]
+  backward: 0.71s (9.4%) [count=70, avg=0.0101s]
+  forward: 0.44s (5.9%) [count=70, avg=0.0063s]
+  optimizer_step: 0.17s (2.2%) [count=70, avg=0.0024s]
+  data_transfer: 0.00s (0.0%) [count=1, avg=0.0018s]
+  knn_build: 0.00s (0.0%) [count=0, avg=0.0000s]
+  kmeans_labels: 0.00s (0.0%) [count=0, avg=0.0000s]
+  adj_subset: 0.00s (0.0%) [count=0, avg=0.0000s]
+  misc: 0.00s (0.0%) [count=0, avg=0.0000s]
+  Total: 7.54s
+[15:39:08]     Epoch 070 | Loss=1.5924 | Val_Sil=0.0100
+[15:39:08]     Epoch 075 | Loss=1.5906 | Val_Sil=0.0101
+[15:39:08]     [Profiler] 耗时统计:
+  validation: 7.09s (82.5%) [count=16, avg=0.4434s]
+  backward: 0.81s (9.4%) [count=80, avg=0.0101s]
+  forward: 0.50s (5.9%) [count=80, avg=0.0063s]
+  optimizer_step: 0.19s (2.2%) [count=80, avg=0.0024s]
+  data_transfer: 0.00s (0.0%) [count=1, avg=0.0018s]
+  knn_build: 0.00s (0.0%) [count=0, avg=0.0000s]
+  kmeans_labels: 0.00s (0.0%) [count=0, avg=0.0000s]
+  adj_subset: 0.00s (0.0%) [count=0, avg=0.0000s]
+  misc: 0.00s (0.0%) [count=0, avg=0.0000s]
+  Total: 8.60s
+[15:39:09]     Epoch 080 | Loss=1.5891 | Val_Sil=0.0102
+[15:39:09]     Early stopping at epoch 80
+[15:39:09]     Test | Sil=0.0123 NMI=0.3067 ARI=0.1568
+[15:39:09]     最终 Profiler 报告:
+[Profiler] 耗时统计:
+  validation: 7.54s (83.2%) [count=17, avg=0.4436s]
+  backward: 0.82s (9.0%) [count=81, avg=0.0101s]
+  forward: 0.51s (5.6%) [count=82, avg=0.0062s]
+  optimizer_step: 0.19s (2.1%) [count=81, avg=0.0024s]
+  data_transfer: 0.00s (0.0%) [count=2, avg=0.0019s]
+  knn_build: 0.00s (0.0%) [count=0, avg=0.0000s]
+  kmeans_labels: 0.00s (0.0%) [count=0, avg=0.0000s]
+  adj_subset: 0.00s (0.0%) [count=0, avg=0.0000s]
+  misc: 0.00s (0.0%) [count=0, avg=0.0000s]
+  Total: 9.07s
+[15:39:09]     >>> Mean Silhouette = 0.0123 ± 0.0000
+[15:39:10]     Plot saved: D:\AAA_Edu\TagCloud\vite-project\scripts\experiment_results_anti_cheat_v1\plots\guanggu_core_convergence_and_clusters.png
+[15:39:10]     Bar chart saved: D:\AAA_Edu\TagCloud\vite-project\scripts\experiment_results_anti_cheat_v1\plots\guanggu_core_model_comparison.png
+[15:39:10]   Report saved: D:\AAA_Edu\TagCloud\vite-project\scripts\experiment_results_anti_cheat_v1\reports\guanggu_core_anti_cheat_v1_report.md
+[15:39:10]   LaTeX saved: D:\AAA_Edu\TagCloud\vite-project\scripts\experiment_results_anti_cheat_v1\reports\guanggu_core_anti_cheat_v1_table.tex
+[15:39:10]   JSON saved: D:\AAA_Edu\TagCloud\vite-project\scripts\experiment_results_anti_cheat_v1\json\guanggu_core_anti_cheat_v1_results.json
+[15:39:10] 
+Summary saved: D:\AAA_Edu\TagCloud\vite-project\scripts\experiment_results_anti_cheat_v1\summary_v1.md
+[15:39:10] Final report saved: D:\AAA_Edu\TagCloud\vite-project\scripts\experiment_results_anti_cheat_v1\FINAL_CONCLUSION_REPORT.md
+[15:39:10] ======================================================================
+[15:39:10] 实验完成
+[15:39:10] ======================================================================

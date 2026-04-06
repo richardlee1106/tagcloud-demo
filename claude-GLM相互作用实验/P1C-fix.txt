@@ -1,0 +1,39 @@
+任务名称：P1C-Fix 集成多方案方向训练 + 功能区对比学习
+
+关键问题：
+  P1C小规模验证中 DirAcc 从 68.41% 暴跌到 19.40%，
+  原因是训练脚本未继承 P0 的多方案方向训练配置。
+  需要将 P0 方向训练 + P1 对比学习合并到同一个训练脚本中。
+
+具体要求：
+  基于 experiment_p0_multi_scheme_direction.py（P0方向训练脚本），
+  在其中集成 RegionContrastiveLoss，形成统一训练入口。
+
+需要保持 P0 的所有方向训练参数：
+  - neighbor_dir_weight = 0.6
+  - global_dir_weight = 0.4
+  - direction_weight = 2.0
+  - use_focal = True
+  - focal_gamma = 2.0
+
+需要新增 P1 的功能区对比学习：
+  - region_weight = 0.3
+  - RegionContrastiveLoss(temperature=0.07, memory_size=2048)
+  - class_weights = {0:0.3, 1:1.5, 2:1.0, 3:1.0, 4:1.0, 5:1.0}
+  - 使用合并后的6类标签
+
+最终损失函数应为：
+  L_total = 3.0 * L_distance 
+          + 1.0 * L_reconstruct 
+          + 2.0 * L_direction（含 neighbor 0.6 + global 0.4）
+          + 0.3 * L_region（对比学习）
+
+先跑小规模验证：
+  python experiment_p1c_integrated.py --sample 0.1 --epochs 30 --batch 16384
+
+汇报给 Claude 的指标（必须包含以下全部）：
+  1. Region F1（目标 >30%）
+  2. DirAcc（目标 >60%，不能低于 P0 的 68.41% 太多）
+  3. Pearson（目标 >0.98）
+  4. Region Sep（观察趋势）
+  5. Overlap@K（观察趋势）

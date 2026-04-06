@@ -24,19 +24,25 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x15spatial_compute.proto\x12\x0espatialcompute\"\xc7\x01\n\x0e\x43omputeRequest\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12\x12\n\nquery_type\x18\x02 \x01(\t\x12\x17\n\x0fspatial_context\x18\x03 \x01(\t\x12\x12\n\ncategories\x18\x04 \x03(\t\x12\r\n\x05hints\x18\x05 \x01(\t\x12\x0c\n\x04mode\x18\x06 \x01(\t\x12\x17\n\x0f\x63\x61ndidates_json\x18\x07 \x01(\t\x12\x19\n\x11\x65xecution_profile\x18\x08 \x01(\t\x12\x0f\n\x07\x64ry_run\x18\t \x01(\x08\"T\n\x0c\x43omputeEvent\x12\'\n\x04type\x18\x01 \x01(\x0e\x32\x19.spatialcompute.EventType\x12\x0f\n\x07payload\x18\x02 \x01(\t\x12\n\n\x02ts\x18\x03 \x01(\x03*c\n\tEventType\x12\x1a\n\x16\x45VENT_TYPE_UNSPECIFIED\x10\x00\x12\t\n\x05STAGE\x10\x01\x12\x0c\n\x08PROGRESS\x10\x02\x12\x0b\n\x07PARTIAL\x10\x03\x12\t\n\x05\x46INAL\x10\x04\x12\t\n\x05\x45RROR\x10\x05\x32i\n\x15SpatialComputeService\x12P\n\x0e\x43omputeSpatial\x12\x1e.spatialcompute.ComputeRequest\x1a\x1c.spatialcompute.ComputeEvent0\x01\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x15spatial_compute.proto\x12\x0espatialcompute\"\xc7\x01\n\x0e\x43omputeRequest\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12\x12\n\nquery_type\x18\x02 \x01(\t\x12\x17\n\x0fspatial_context\x18\x03 \x01(\t\x12\x12\n\ncategories\x18\x04 \x03(\t\x12\r\n\x05hints\x18\x05 \x01(\t\x12\x0c\n\x04mode\x18\x06 \x01(\t\x12\x17\n\x0f\x63\x61ndidates_json\x18\x07 \x01(\t\x12\x19\n\x11\x65xecution_profile\x18\x08 \x01(\t\x12\x0f\n\x07\x64ry_run\x18\t \x01(\x08\"T\n\x0c\x43omputeEvent\x12\'\n\x04type\x18\x01 \x01(\x0e\x32\x19.spatialcompute.EventType\x12\x0f\n\x07payload\x18\x02 \x01(\t\x12\n\n\x02ts\x18\x03 \x01(\x03\"\x85\x02\n\x14SpatialSearchRequest\x12\x12\n\nanchor_lon\x18\x01 \x01(\x01\x12\x12\n\nanchor_lat\x18\x02 \x01(\x01\x12\x0e\n\x06radius\x18\x03 \x01(\x01\x12\x17\n\x0fquery_embedding\x18\x04 \x03(\x02\x12\x12\n\ncategories\x18\x05 \x03(\t\x12\x15\n\rtarget_region\x18\x06 \x01(\x05\x12\x1a\n\x12region_filter_mode\x18\x07 \x01(\t\x12\r\n\x05top_k\x18\x08 \x01(\x05\x12\x16\n\x0espatial_weight\x18\t \x01(\x01\x12\x17\n\x0fsemantic_weight\x18\n \x01(\x01\x12\x15\n\rregion_weight\x18\x0b \x01(\x01\"\xb2\x01\n\x13SpatialSearchResult\x12\n\n\x02id\x18\x01 \x01(\x03\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x10\n\x08\x63\x61tegory\x18\x03 \x01(\t\x12\x14\n\x0cregion_label\x18\x04 \x01(\x05\x12\x0b\n\x03lon\x18\x05 \x01(\x01\x12\x0b\n\x03lat\x18\x06 \x01(\x01\x12\x12\n\ndistance_m\x18\x07 \x01(\x01\x12\x16\n\x0esemantic_score\x18\x08 \x01(\x01\x12\x13\n\x0b\x66used_score\x18\t \x01(\x01\"\x97\x01\n\x15SpatialSearchResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\r\n\x05\x65rror\x18\x02 \x01(\t\x12\x13\n\x0btotal_count\x18\x03 \x01(\x05\x12\x13\n\x0b\x64uration_ms\x18\x04 \x01(\x03\x12\x34\n\x07results\x18\x05 \x03(\x0b\x32#.spatialcompute.SpatialSearchResult*c\n\tEventType\x12\x1a\n\x16\x45VENT_TYPE_UNSPECIFIED\x10\x00\x12\t\n\x05STAGE\x10\x01\x12\x0c\n\x08PROGRESS\x10\x02\x12\x0b\n\x07PARTIAL\x10\x03\x12\t\n\x05\x46INAL\x10\x04\x12\t\n\x05\x45RROR\x10\x05\x32\xc7\x01\n\x15SpatialComputeService\x12P\n\x0e\x43omputeSpatial\x12\x1e.spatialcompute.ComputeRequest\x1a\x1c.spatialcompute.ComputeEvent0\x01\x12\\\n\rSpatialSearch\x12$.spatialcompute.SpatialSearchRequest\x1a%.spatialcompute.SpatialSearchResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'spatial_compute_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_EVENTTYPE']._serialized_start=329
-  _globals['_EVENTTYPE']._serialized_end=428
+  _globals['_EVENTTYPE']._serialized_start=928
+  _globals['_EVENTTYPE']._serialized_end=1027
   _globals['_COMPUTEREQUEST']._serialized_start=42
   _globals['_COMPUTEREQUEST']._serialized_end=241
   _globals['_COMPUTEEVENT']._serialized_start=243
   _globals['_COMPUTEEVENT']._serialized_end=327
-  _globals['_SPATIALCOMPUTESERVICE']._serialized_start=430
-  _globals['_SPATIALCOMPUTESERVICE']._serialized_end=535
+  _globals['_SPATIALSEARCHREQUEST']._serialized_start=330
+  _globals['_SPATIALSEARCHREQUEST']._serialized_end=591
+  _globals['_SPATIALSEARCHRESULT']._serialized_start=594
+  _globals['_SPATIALSEARCHRESULT']._serialized_end=772
+  _globals['_SPATIALSEARCHRESPONSE']._serialized_start=775
+  _globals['_SPATIALSEARCHRESPONSE']._serialized_end=926
+  _globals['_SPATIALCOMPUTESERVICE']._serialized_start=1030
+  _globals['_SPATIALCOMPUTESERVICE']._serialized_end=1229
 # @@protoc_insertion_point(module_scope)

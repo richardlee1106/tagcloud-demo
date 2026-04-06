@@ -16,6 +16,8 @@ from grpc_health.v1 import health_pb2
 from grpc_health.v1 import health_pb2_grpc
 
 from pipeline.spatial_pipeline import SpatialPipeline
+from services.spatial_search import get_spatial_search_service
+from services.llm_service import get_llm_service
 
 BASE_DIR = Path(__file__).resolve().parent
 PROTO_DIR = BASE_DIR.parent / "proto"
@@ -214,6 +216,112 @@ class HealthServicer(health_pb2_grpc.HealthServicer):
             time.sleep(1)
 
 
+class SpatialSearchServicer(spatial_compute_pb2_grpc.SpatialComputeServiceServicer):
+    """空间检索 gRPC 服务"""
+
+    def __init__(self) -> None:
+        self._service = None
+
+    def _get_service(self):
+        """懒加载空间检索服务"""
+        if self._service is None:
+            self._service = get_spatial_search_service()
+        return self._service
+
+    def SpatialSearch(self, request, context):  # noqa: N802
+        """处理空间检索请求"""
+        import time
+
+        start_time = time.time()
+        service = self._get_service()
+
+        try:
+            # 解析请求
+            anchor = (request.anchor_lon, request.anchor_lat)
+            radius = float(request.radius) if request.radius > 0 else 1000.0
+            query_embedding = list(request.query_embedding) if request.query_embedding else None
+            categories = list(request.categories) if request.categories else None
+            target_region = request.target_region if request.target_region >= 0 else None
+            region_filter_mode = request.region_filter_mode or "boost"
+            top_k = request.top_k if request.top_k > 0 else 20
+
+            # 执行检索
+            results = service.search(
+                anchor=anchor,
+                radius=radius,
+                query_embedding=query_embedding,
+                categories=categories,
+                target_region=target_region,
+                region_filter_mode=region_filter_mode,
+                top_k=top_k,
+                spatial_weight=request.spatial_weight if request.spatial_weight > 0 else 0.6,
+                semantic_weight=request.semantic_weight if request.semantic_weight > 0 else 0.4,
+                region_weight=request.region_weight if request.region_weight > 0 else 0.15,
+            )
+
+            # 构建响应
+            duration_ms = int((time.time() - start_time) * 1000)
+
+            response = spatial_compute_pb2.SpatialSearchResponse(
+                success=True,
+                error="",
+                total_count=len(results),
+                duration_ms=duration_ms,
+            )
+
+            for r in results:
+                response.results.append(spatial_compute_pb2.SpatialSearchResult(
+                    id=r.id,
+                    name=r.name,
+                    category=r.category,
+                    region_label=r.region_label,
+                    lon=r.lon,
+                    lat=r.lat,
+                    distance_m=r.distance_m,
+                    semantic_score=r.semantic_score,
+                    fused_score=r.fused_score,
+                ))
+
+            print(
+                json.dumps({
+                    "ts": int(time.time() * 1000),
+                    "level": "info",
+                    "event": "spatial_search_complete",
+                    "anchor": f"{anchor[0]:.4f},{anchor[1]:.4f}",
+                    "radius": radius,
+                    "categories": categories,
+                    "results": len(results),
+                    "duration_ms": duration_ms,
+                }, ensure_ascii=False),
+                flush=True
+            )
+
+            return response
+
+        except Exception as exc:
+            duration_ms = int((time.time() - start_time) * 1000)
+            error_message = str(exc)
+
+            print(
+                json.dumps({
+                    "ts": int(time.time() * 1000),
+                    "level": "error",
+                    "event": "spatial_search_error",
+                    "error": error_message,
+                    "duration_ms": duration_ms,
+                }, ensure_ascii=False),
+                flush=True
+            )
+
+            return spatial_compute_pb2.SpatialSearchResponse(
+                success=False,
+                error=error_message,
+                total_count=0,
+                duration_ms=duration_ms,
+                results=[],
+            )
+
+
 def serve() -> None:
     host = os.getenv("SPATIAL_GRPC_HOST", "0.0.0.0")
     port = int(os.getenv("SPATIAL_GRPC_PORT", "50051"))
@@ -238,6 +346,7 @@ def serve() -> None:
         options=server_options,
     )
     spatial_compute_pb2_grpc.add_SpatialComputeServiceServicer_to_server(SpatialComputeService(), server)
+    spatial_compute_pb2_grpc.add_SpatialComputeServiceServicer_to_server(SpatialSearchServicer(), server)
     health_pb2_grpc.add_HealthServicer_to_server(HealthServicer(), server)
     server.add_insecure_port(f"{host}:{port}")
     server.start()

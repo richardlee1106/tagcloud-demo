@@ -86,4 +86,28 @@ describe('SpatialEvidenceCard intent templates', () => {
       [114.32, 30.57]
     ]).toContainEqual(events[0][0])
   })
+
+  it('keeps macro evidence widgets stable when extra encoder stats are attached', async () => {
+    const wrapper = mount(SpatialEvidenceCard, { props: createProps() })
+
+    await wrapper.setProps({
+      analysisStats: {
+        ...createProps().analysisStats,
+        boundary_signal_model: 'encoder_region_fused_v1',
+        encoder_region_predicted_count: 12,
+        encoder_region_high_confidence_count: 10,
+        encoder_region_purity: 0.83,
+        vector_constraint_source: 'road_blocks',
+        vector_constraint_selected_count: 4
+      }
+    })
+
+    const cardTitles = wrapper.findAll('.template-title').map((node) => node.text())
+
+    expect(cardTitles).toContain('热点区域')
+    expect(cardTitles).toContain('主导业态')
+    expect(cardTitles).toContain('业态辐射覆盖')
+    expect(wrapper.text()).toContain('重叠指数：71%')
+    expect(wrapper.text()).toContain('辐射覆盖：77%')
+  })
 })

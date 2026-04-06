@@ -210,17 +210,17 @@ async function generateEmbedding(text) {
 async function findInPOI(term, mode = 'fuzzy', viewportCenter = null) {
   let sql;
   let params;
-  
+
   if (mode === 'exact') {
     if (viewportCenter) {
       // 精确匹配 + 按离视野中心距离排序
       sql = `
-        SELECT 
+        SELECT
           name,
           ST_X(geom) AS lon,
           ST_Y(geom) AS lat,
           ST_Distance(
-            geom::geography, 
+            geom::geography,
             ST_SetSRID(ST_MakePoint($2, $3), 4326)::geography
           ) AS dist
         FROM pois
@@ -231,7 +231,7 @@ async function findInPOI(term, mode = 'fuzzy', viewportCenter = null) {
       params = [term, viewportCenter.lon, viewportCenter.lat];
     } else {
       sql = `
-        SELECT 
+        SELECT
           name,
           ST_X(geom) AS lon,
           ST_Y(geom) AS lat
@@ -242,43 +242,41 @@ async function findInPOI(term, mode = 'fuzzy', viewportCenter = null) {
       params = [term];
     }
   } else {
-    // 模糊匹配
+    // 模糊匹配（只匹配name列，pois表没有address列）
     if (viewportCenter) {
       // 模糊匹配 + 视野偏好：优先相似度，其次距离
       sql = `
-        SELECT 
+        SELECT
           name,
           ST_X(geom) AS lon,
           ST_Y(geom) AS lat,
           similarity(name, $1) AS sim,
           ST_Distance(
-            geom::geography, 
+            geom::geography,
             ST_SetSRID(ST_MakePoint($3, $4), 4326)::geography
           ) AS dist
         FROM pois
         WHERE name ILIKE $2
-           OR address ILIKE $2
         ORDER BY sim DESC, dist ASC, length(name) ASC
         LIMIT 1
       `;
       params = [term, `%${term}%`, viewportCenter.lon, viewportCenter.lat];
     } else {
       sql = `
-        SELECT 
+        SELECT
           name,
           ST_X(geom) AS lon,
           ST_Y(geom) AS lat,
           similarity(name, $1) AS sim
         FROM pois
         WHERE name ILIKE $2
-           OR address ILIKE $2
         ORDER BY sim DESC, length(name) ASC
         LIMIT 1
       `;
       params = [term, `%${term}%`];
     }
   }
-  
+
   try {
     const result = await query(sql, params);
     if (result.rows.length > 0) {
@@ -291,7 +289,7 @@ async function findInPOI(term, mode = 'fuzzy', viewportCenter = null) {
   } catch (err) {
     console.error('[Geocoder] POI 查询失败:', err.message);
   }
-  
+
   return null;
 }
 

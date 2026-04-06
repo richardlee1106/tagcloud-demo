@@ -33,6 +33,18 @@ benchmark/
 *.vbs
 start-*.bat
 stop-*.bat
+*.npy
+# === Models (large binary files) ===
+spatial_encoder/saved_models/
+spatial_encoder/v26_GLM/saved_models/
+spatial_encoder/v26_GLM/p1d_output/
+*.pt
+*.bin
+*.safetensors
+
+# === V3 GeoEncoder RAG local artifacts ===
+V3-GeoEncoder-RAG/cache/
+V3-GeoEncoder-RAG/logs/
 
 # === IDE ===
 .vscode/*
@@ -71,3 +83,6 @@ CLAUDE.md
 .tmp_dev_err.txt
 src/*.garbled.bak
 nul
+
+# === Local Git Worktrees ===
+.worktrees/

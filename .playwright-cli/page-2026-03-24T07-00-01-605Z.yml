@@ -1,0 +1,91 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - img [ref=e7]
+      - generic [ref=e18]:
+        - generic [ref=e19]:
+          - generic [ref=e20]: GeoLoom-RAG
+          - generic [ref=e21]: 地理认知探索
+        - generic [ref=e22]:
+          - text: v1.0
+          - generic [ref=e23]: (beta)
+    - generic [ref=e28]:
+      - generic [ref=e30] [cursor=pointer]:
+        - img [ref=e32]
+        - generic:
+          - combobox [ref=e35]
+          - generic [ref=e36]: 空间选区
+        - img [ref=e39]
+      - button [ref=e41] [cursor=pointer]:
+        - img [ref=e42]
+      - button [ref=e44] [cursor=pointer]:
+        - img [ref=e45]
+      - button [ref=e50] [cursor=pointer]:
+        - img [ref=e51]
+      - button [ref=e55] [cursor=pointer]:
+        - img [ref=e56]
+      - button [ref=e58] [cursor=pointer]:
+        - img [ref=e59]
+      - button "地图叙事" [ref=e62] [cursor=pointer]:
+        - img [ref=e63]
+        - text: 地图叙事
+  - main [ref=e65]:
+    - generic [ref=e75]:
+      - generic [ref=e76]:
+        - generic [ref=e77]: 实时过滤
+        - generic [ref=e78]:
+          - switch
+          - generic [ref=e82] [cursor=pointer]: 关闭
+      - generic [ref=e84]:
+        - generic [ref=e85]: 热力图
+        - generic [ref=e86]:
+          - switch
+          - generic [ref=e90] [cursor=pointer]: 关闭
+      - generic [ref=e93]:
+        - generic [ref=e94]: 标签权重
+        - generic [ref=e95]:
+          - switch
+          - generic [ref=e99] [cursor=pointer]: 关闭
+      - generic [ref=e101]:
+        - generic [ref=e102]: 显示权重
+        - generic [ref=e103]:
+          - switch [disabled]
+          - generic [ref=e107]: 关闭
+      - generic [ref=e110]:
+        - generic [ref=e111]: 全域感知
+        - generic [ref=e112]:
+          - switch [checked] [disabled]
+          - generic [ref=e116]: 开启
+      - generic [ref=e119]: GeoLoom-RAG 全域感知已启用
+    - generic [ref=e122]:
+      - generic [ref=e124]:
+        - generic [ref=e125]:
+          - img [ref=e127]
+          - generic [ref=e129]:
+            - generic [ref=e130]: GeoAI 助手
+            - generic [ref=e131]: 在线
+        - generic [ref=e132]:
+          - button "清空" [ref=e133] [cursor=pointer]:
+            - img [ref=e134]
+          - button "保存" [ref=e136] [cursor=pointer]:
+            - img [ref=e137]
+          - button "Force recompute on next query (skip cache)" [ref=e139] [cursor=pointer]:
+            - img [ref=e140]
+          - button "收起" [ref=e143] [cursor=pointer]:
+            - img [ref=e144]
+      - generic [ref=e148]:
+        - heading "欢迎使用地名标签云智能分析助手" [level=3] [ref=e149]
+        - paragraph [ref=e150]: 我具备地理感知能力，可以帮您分析选中区域内的 POI 数据，并提供地理分析与洞察参考。
+        - generic [ref=e151]:
+          - button "🔎 30秒看懂这片区" [ref=e152] [cursor=pointer]
+          - button "📍 找开店机会点" [ref=e153] [cursor=pointer]
+          - button "⚖️ 相邻片区对比" [ref=e154] [cursor=pointer]
+          - button "🚇 15分钟可达性" [ref=e155] [cursor=pointer]
+          - button "📊 商业内卷风险" [ref=e156] [cursor=pointer]
+          - button "🧠 AI 提问示例" [ref=e157] [cursor=pointer]
+      - generic [ref=e158]:
+        - generic [ref=e159]:
+          - textbox "询问关于选中区域 POI 的问题..." [ref=e160]
+          - button [disabled] [ref=e161]:
+            - img [ref=e162]
+        - generic [ref=e164]: 按 Enter 发送，Shift+Enter 换行

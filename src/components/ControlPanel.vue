@@ -3,13 +3,14 @@
     <div v-if="isMapPanel" class="left-controls" :class="{ 'full-width': isMapPanel }">
       <div class="select-group">
         <!-- 当前选中路径展示 -->
-        <div class="current-category-display" v-if="selectedCategoryPath.length > 0">
+        <div class="current-category-display" v-if="!isV4Mode && selectedCategoryPath.length > 0">
           <span class="category-tag">{{ getCategoryLabel(selectedCategoryPath) }}</span>
         </div>
       </div>
     </div>
 
     <!-- POI 类别选择抽屉 -->
+    <template v-if="!isV4Mode">
     <el-drawer
       v-model="categoryDrawerVisible"
       title="POI 语义分类选择"
@@ -48,6 +49,7 @@
         </div>
       </div>
     </el-drawer>
+    </template>
 
     <!-- 语义查询弹窗 -->
     <el-dialog
@@ -77,6 +79,7 @@
     <!-- 移动端顶部栏 -->
     <div class="mobile-top-bar mobile-only">
       <el-cascader
+        v-if="!isV4Mode"
         v-model="selectedCategoryPath"
         :options="categoryOptions"
         :props="{ multiple: true, checkStrictly: true }"
@@ -313,7 +316,7 @@
         </el-tooltip>
 
         <!-- 侧边栏触发按钮 (移动到右侧) -->
-        <el-tooltip content="选择 POI 类别" placement="bottom">
+        <el-tooltip v-if="!isV4Mode" content="选择 POI 类别" placement="bottom">
           <button 
             class="primary-btn icon-btn" 
             :class="{ 'active': categoryDrawerVisible }"
@@ -377,7 +380,8 @@
 import { ref, computed, watch, onBeforeUnmount, onMounted } from 'vue';
 import { ElNotification } from 'element-plus';
 import DataLoaderWorker from '../workers/dataLoader.worker.js?worker';
-import { API_BASE_URL } from '../config';
+import { SPATIAL_API_BASE_URL } from '../config';
+import { fetchCategoryCatalogTree } from '../utils/categoryCatalogClient.js';
 
 const emit = defineEmits(['data-loaded', 'data-removed', 'run-algorithm', 'toggle-draw', 'debug-show', 'reset', 'search', 'clear-search', 'update:currentAlgorithm', 'save-result', 'loading-change', 'vector-polygon-uploaded', 'category-change', 'go-narrative', 'update:filterEnabled', 'update:heatmapEnabled', 'update:weightEnabled', 'update:showWeightValue', 'update:globalAnalysisEnabled']);
 // const selectedGroup = ref(''); // Replace with array path
@@ -423,6 +427,7 @@ const getCategoryLabel = (paths) => {
 
 const isMapPanel = computed(() => props.panelType === 'map');
 const isTagPanel = computed(() => props.panelType === 'tag');
+const isV4Mode = String(import.meta.env.VITE_BACKEND_VERSION || '').trim().toLowerCase() === 'v4';
 
 // 之前是硬编码的 groups，现在改为从 catalog.json 加载
 const categoryOptions = ref([]);
@@ -430,33 +435,18 @@ const categoryOptions = ref([]);
 // 全量分类数据（包含3级）
 const fullCategoryOptions = ref([]);
 
-// 加载分类目录
+// 加载分类目录：以数据库 public.pois 为唯一事实来源。
 onMounted(async () => {
-  try {
-    let fullData = null;
-    try {
-      const staticRes = await fetch('/split_data/catalog_full.json');
-      if (staticRes.ok) {
-        fullData = await staticRes.json();
-        console.log('✅ Loaded catalog from static file');
-      }
-    } catch (e) {
-      console.warn('Static catalog not found, trying API...');
-    }
-    
-    // 如果静态加载失败，再尝试 API
-    if (!fullData) {
-      const res = await fetch(`${API_BASE_URL}/api/category/tree`);
-      if (res.ok) {
-        fullData = (await res.json()).reverse();
-      } else {
-        throw new Error('All catalog sources failed');
-      }
-    } else {
-       fullData = fullData.reverse(); 
-    }
+  if (isV4Mode) {
+    fullCategoryOptions.value = [];
+    categoryOptions.value = [];
+    return;
+  }
 
-    if (fullData) {
+  try {
+    const fullData = await fetchCategoryCatalogTree(fetch, SPATIAL_API_BASE_URL);
+
+    if (Array.isArray(fullData)) {
       fullCategoryOptions.value = fullData;
       // 仅供 UI 显示的选项
       categoryOptions.value = fullData.map(l1 => ({
@@ -689,7 +679,7 @@ const handleCascaderChange = () => {
       category: item.category,
       name: fullName,
       limit: 500000,
-      baseUrl: API_BASE_URL,
+      baseUrl: SPATIAL_API_BASE_URL,
       bounds: searchBounds,
       geometry: searchGeometry
     });

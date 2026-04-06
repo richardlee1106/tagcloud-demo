@@ -1,0 +1,12 @@
+# Qwen3.5-9B Planner 推理模型
+# 创建命令:
+#   ollama create qwen3.5-9b-claude-4.6-opus-reasoning-distilled-v2 -f Modelfile-planner-qwen3.5-9b
+
+FROM D:/models/Jackrong/Qwen3.5-9B-Claude-4.6-Opus-Reasoning-Distilled-v2-GGUF/Qwen3.5-9B.Q4_K_M.gguf
+
+PARAMETER stop <|endoftext|>
+PARAMETER stop <|im_start|>
+PARAMETER stop <|im_end|>
+PARAMETER temperature 0
+PARAMETER num_ctx 8192
+PARAMETER num_predict 4096

@@ -1,0 +1,157 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - img [ref=e7]
+      - generic [ref=e18]:
+        - generic [ref=e19]:
+          - generic [ref=e20]: GeoLoom-RAG
+          - generic [ref=e21]: 地理认知探索
+        - generic [ref=e22]:
+          - text: v1.0
+          - generic [ref=e23]: (beta)
+    - generic [ref=e28]:
+      - generic [ref=e30] [cursor=pointer]:
+        - img [ref=e32]
+        - generic:
+          - combobox [ref=e35]
+          - generic [ref=e36]: 空间选区
+        - img [ref=e39]
+      - button [ref=e41] [cursor=pointer]:
+        - img [ref=e42]
+      - button [ref=e44] [cursor=pointer]:
+        - img [ref=e45]
+      - button [ref=e50] [cursor=pointer]:
+        - img [ref=e51]
+      - button [ref=e55] [cursor=pointer]:
+        - img [ref=e56]
+      - button [ref=e58] [cursor=pointer]:
+        - img [ref=e59]
+      - button "地图叙事" [ref=e62] [cursor=pointer]:
+        - img [ref=e63]
+        - text: 地图叙事
+  - main [ref=e65]:
+    - generic [ref=e75]:
+      - generic [ref=e76]:
+        - generic [ref=e77]: 实时过滤
+        - generic [ref=e78]:
+          - switch
+          - generic [ref=e82] [cursor=pointer]: 关闭
+      - generic [ref=e84]:
+        - generic [ref=e85]: 热力图
+        - generic [ref=e86]:
+          - switch
+          - generic [ref=e90] [cursor=pointer]: 关闭
+      - generic [ref=e93]:
+        - generic [ref=e94]: 标签权重
+        - generic [ref=e95]:
+          - switch
+          - generic [ref=e99] [cursor=pointer]: 关闭
+      - generic [ref=e101]:
+        - generic [ref=e102]: 显示权重
+        - generic [ref=e103]:
+          - switch [disabled]
+          - generic [ref=e107]: 关闭
+      - generic [ref=e110]:
+        - generic [ref=e111]: 全域感知
+        - generic [ref=e112]:
+          - switch [checked] [disabled]
+          - generic [ref=e116]: 开启
+      - generic [ref=e119]: GeoLoom-RAG 全域感知已启用
+    - generic [ref=e122]:
+      - generic [ref=e124]:
+        - generic [ref=e125]:
+          - img [ref=e127]
+          - generic [ref=e129]:
+            - generic [ref=e130]: GeoAI 助手
+            - generic [ref=e131]: 在线
+        - generic [ref=e132]:
+          - button "清空" [ref=e133] [cursor=pointer]:
+            - img [ref=e134]
+          - button "保存" [ref=e136] [cursor=pointer]:
+            - img [ref=e137]
+          - button "Force recompute on next query (skip cache)" [ref=e139] [cursor=pointer]:
+            - img [ref=e140]
+          - button "收起" [ref=e143] [cursor=pointer]:
+            - img [ref=e144]
+      - generic [ref=e149]:
+        - generic [ref=e150]:
+          - generic:
+            - generic [ref=e153]: GeoAI 空间智能助手
+            - heading "把“附近有什么”“哪里更合适”这类空间问题讲清楚" [level=3] [ref=e154]
+            - paragraph [ref=e155]: 我会先理解地点、空间关系和需求，再结合当前地图上下文，给你更像分析结论的回答，而不只是返回一串结果。
+            - generic [ref=e156]:
+              - generic [ref=e157]: 地点锚点识别
+              - generic [ref=e158]: 附近检索排序
+              - generic [ref=e159]: 片区对比分析
+              - generic [ref=e160]: 选址机会判断
+          - generic [ref=e161]:
+            - generic [ref=e162]: 当前会话上下文
+            - strong [ref=e163]: 已接入地图状态，可直接发起空间问题
+            - generic [ref=e164]:
+              - generic [ref=e165]:
+                - generic [ref=e166]: 当前 POI
+                - generic [ref=e167]: 未圈选
+              - generic [ref=e168]:
+                - generic [ref=e169]: 分析范围
+                - generic [ref=e170]: 当前范围
+              - generic [ref=e171]:
+                - generic [ref=e172]: 推理链路
+                - generic [ref=e173]: V3 流式
+              - generic [ref=e174]:
+                - generic [ref=e175]: 类别过滤
+                - generic [ref=e176]: 未限定
+            - generic [ref=e177]:
+              - generic [ref=e178]: 推荐问法结构
+              - paragraph [ref=e179]: 地点 + 空间关系 + 需求，例如“武汉大学附近有哪些咖啡店？”
+        - generic [ref=e180]:
+          - generic [ref=e181]:
+            - generic [ref=e182]:
+              - text: 场景入口
+              - heading "从这些任务开始" [level=4] [ref=e183]
+            - paragraph [ref=e184]: 点击卡片即可直接发起，也可以改成你自己的自然语言问法。
+          - generic [ref=e185]:
+            - button "片区速读 快速读懂这片区 先做全局扫描，快速看主导业态、活力热点、异常信号和最值得关注的机会。 立即发起" [ref=e186] [cursor=pointer]:
+              - generic [ref=e187]: 片区速读
+              - strong [ref=e188]: 快速读懂这片区
+              - generic [ref=e189]: 先做全局扫描，快速看主导业态、活力热点、异常信号和最值得关注的机会。
+              - generic [ref=e190]: 立即发起
+            - button "周边检索 附近有什么值得关注 适合围绕学校、商圈、地铁站来查咖啡店、商超、地铁站与生活配套。 立即发起" [ref=e191] [cursor=pointer]:
+              - generic [ref=e192]: 周边检索
+              - strong [ref=e193]: 附近有什么值得关注
+              - generic [ref=e194]: 适合围绕学校、商圈、地铁站来查咖啡店、商超、地铁站与生活配套。
+              - generic [ref=e195]: 立即发起
+            - button "选址机会 这里适合开什么店 从供给密度、竞争关系和周边需求判断，更适合优先布局哪类业态。 立即发起" [ref=e196] [cursor=pointer]:
+              - generic [ref=e197]: 选址机会
+              - strong [ref=e198]: 这里适合开什么店
+              - generic [ref=e199]: 从供给密度、竞争关系和周边需求判断，更适合优先布局哪类业态。
+              - generic [ref=e200]: 立即发起
+            - button "空间对比 和另一片区比一比 比较两块区域的人气、业态结构、功能分工和商业机会差异。 立即发起" [ref=e201] [cursor=pointer]:
+              - generic [ref=e202]: 空间对比
+              - strong [ref=e203]: 和另一片区比一比
+              - generic [ref=e204]: 比较两块区域的人气、业态结构、功能分工和商业机会差异。
+              - generic [ref=e205]: 立即发起
+            - button "配套检查 周边配套够不够 快速判断交通、生活服务、餐饮和休闲娱乐是否均衡，哪里还短板明显。 立即发起" [ref=e206] [cursor=pointer]:
+              - generic [ref=e207]: 配套检查
+              - strong [ref=e208]: 周边配套够不够
+              - generic [ref=e209]: 快速判断交通、生活服务、餐饮和休闲娱乐是否均衡，哪里还短板明显。
+              - generic [ref=e210]: 立即发起
+            - button "提问灵感 给我几个高质量问法 生成更容易触发空间检索、空间推理和结构化回答的自然语言问题。 立即发起" [ref=e211] [cursor=pointer]:
+              - generic [ref=e212]: 提问灵感
+              - strong [ref=e213]: 给我几个高质量问法
+              - generic [ref=e214]: 生成更容易触发空间检索、空间推理和结构化回答的自然语言问题。
+              - generic [ref=e215]: 立即发起
+        - generic [ref=e216]:
+          - generic [ref=e218]:
+            - text: 直接这样问
+            - heading "更自然的提问示例" [level=4] [ref=e219]
+          - generic [ref=e220]:
+            - button "武汉大学附近有哪些咖啡店？" [ref=e221] [cursor=pointer]
+            - button "湖北大学附近有哪些地铁站？" [ref=e222] [cursor=pointer]
+            - button "武汉二中附近有哪些商超？" [ref=e223] [cursor=pointer]
+            - button "这片区适合开轻食店还是咖啡店？" [ref=e224] [cursor=pointer]
+      - generic [ref=e225]:
+        - generic [ref=e226]:
+          - textbox "例如：武汉大学附近有哪些咖啡店？这片区适合开什么店？" [ref=e227]
+          - button [disabled] [ref=e228]:
+            - img [ref=e229]
+        - generic [ref=e231]: 按 Enter 发送，Shift+Enter 换行。推荐按“地点 + 空间关系 + 需求”来提问。

@@ -1,0 +1,9 @@
+{
+  "name": "pr-review",
+  "version": "1.0.0",
+  "description": "包含安全、测试和文档的完整 PR 审查工作流",
+  "author": {
+    "name": "Anthropic"
+  },
+  "license": "MIT"
+}

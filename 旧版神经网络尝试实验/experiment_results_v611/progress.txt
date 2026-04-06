@@ -1,0 +1,17 @@
+
+V6.1 算法增强架构启动 | 对比学习 + 边特征注入
+目标: 84w+ 复杂场景高精度表征
+硬件: Windows | PyTorch: 2.12.0.dev20260312+cu128 (sm_120 优化版)
+  Architecture: Blackwell (RTX 50 series)
+  Note: Using PTX JIT compilation for sm_120 compatibility
+  FAISS-GPU: Not available (will use CPU)
+============================================================
+
+[guanggu_core] Processing...
+  Using FAISS-CPU for KNN build
+  torch.compile disabled for stability
+  Model parameters: 0.48M
+  Device: cuda
+  GPU Memory allocated: 0.02 GB
+  [Training Mode] Full Graph Training (V6 style)
+  Epoch  65 | Loss: 1.9738 | Sil: -0.0683

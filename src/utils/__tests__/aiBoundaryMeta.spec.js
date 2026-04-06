@@ -78,4 +78,16 @@ describe('aiBoundaryMeta utils', () => {
     })
     expect(reasonLines).toContain('约束 关键词 / 用地')
   })
+  it('adds encoder involvement lines when encoder stats are available', () => {
+    const lines = buildBoundaryPopupLines({
+      boundaryConfidence: 0.79,
+      confidenceModel: 'v3_l5_geometry_v1',
+      encoderPredictedCount: 12,
+      encoderHighConfidenceCount: 10,
+      vectorConstraintSource: 'road_blocks'
+    })
+
+    expect(lines.some((line) => line.includes('编码器'))).toBe(true)
+    expect(lines.some((line) => line.includes('road_blocks'))).toBe(true)
+  })
 })

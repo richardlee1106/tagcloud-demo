@@ -409,8 +409,84 @@ export function closeGrpcClient() {
   }
 }
 
+/**
+ * 空间检索 gRPC 调用
+ * 调用 Python 服务的 SpatialSearch RPC
+ *
+ * @param {Object} params - 检索参数
+ * @param {number} params.anchorLon - 锚点经度
+ * @param {number} params.anchorLat - 锚点纬度
+ * @param {number} params.radius - 检索半径（米）
+ * @param {number[]} params.queryEmbedding - 查询向量 (352 维)
+ * @param {string[]} params.categories - 类别过滤
+ * @param {number} params.targetRegion - 目标区域类型 (0-5)
+ * @param {string} params.regionFilterMode - 区域过滤模式
+ * @param {number} params.topK - 返回数量
+ * @returns {Promise<Object>} - 检索结果
+ */
+export async function spatialSearch(params) {
+  if (!isGrpcComputeEnabled()) {
+    throw new Error('gRPC compute disabled by SPATIAL_GRPC_ENABLED=false')
+  }
+
+  const grpcClient = loadGrpcClient()
+
+  return new Promise((resolve, reject) => {
+    const request = {
+      anchor_lon: params.anchorLon || 114.305,
+      anchor_lat: params.anchorLat || 30.593,
+      radius: params.radius || 1000,
+      query_embedding: params.queryEmbedding || [],
+      categories: params.categories || [],
+      target_region: params.targetRegion ?? -1,
+      region_filter_mode: params.regionFilterMode || 'boost',
+      top_k: params.topK || 20,
+      spatial_weight: params.spatialWeight || 0.6,
+      semantic_weight: params.semanticWeight || 0.4,
+      region_weight: params.regionWeight || 0.15,
+    }
+
+    grpcClient.SpatialSearch(request, (err, response) => {
+      if (err) {
+        const transportError = enrichGrpcTransportError(err, {
+          endpoint: GRPC_ENDPOINT,
+          last_stage: 'spatial_search',
+        })
+        reject(transportError)
+        return
+      }
+
+      if (!response.success) {
+        reject(new Error(response.error || 'SpatialSearch failed'))
+        return
+      }
+
+      // 转换结果
+      const results = response.results.map(r => ({
+        id: Number(r.id),
+        name: r.name,
+        category: r.category,
+        regionLabel: r.region_label,
+        lon: r.lon,
+        lat: r.lat,
+        distance_m: r.distance_m,
+        semantic_score: r.semantic_score,
+        fused_score: r.fused_score,
+      }))
+
+      resolve({
+        success: true,
+        totalCount: response.total_count,
+        durationMs: response.duration_ms,
+        results,
+      })
+    })
+  })
+}
+
 export default {
   isGrpcComputeEnabled,
   computeSpatialStream,
-  closeGrpcClient
+  closeGrpcClient,
+  spatialSearch,
 }

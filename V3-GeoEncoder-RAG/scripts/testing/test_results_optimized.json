@@ -1,0 +1,207 @@
+{
+  "timestamp": "2026-03-21T14:46:12.869263",
+  "faiss_status": "loaded (615403 POIs)",
+  "summary": {
+    "success_rate": "10/10",
+    "avg_duration_ms": 3060.458469390869
+  },
+  "results": [
+    {
+      "query": "武汉大学附近的餐厅",
+      "success": true,
+      "result_count": 10,
+      "duration_ms": 3474.6854305267334,
+      "stages": {
+        "intent_parsing": 708,
+        "geocoding": 141,
+        "hybrid_search": 85,
+        "semantic_filter": 455,
+        "answer_generation": 2084
+      },
+      "search_method": 85,
+      "intent_method": 708,
+      "top_results": [
+        "未完待续",
+        "老鄉长",
+        "茶生活"
+      ]
+    },
+    {
+      "query": "江汉路附近的咖啡店",
+      "success": true,
+      "result_count": 10,
+      "duration_ms": 4329.195499420166,
+      "stages": {
+        "intent_parsing": 655,
+        "geocoding": 1641,
+        "hybrid_search": 82,
+        "semantic_filter": 394,
+        "answer_generation": 1545
+      },
+      "search_method": 82,
+      "intent_method": 655,
+      "top_results": [
+        "让鸭老壳飞",
+        "冰糖烤梨汁",
+        "羊咩咩自助甜品店"
+      ]
+    },
+    {
+      "query": "汉口火车站附近的小吃",
+      "success": true,
+      "result_count": 10,
+      "duration_ms": 2869.687080383301,
+      "stages": {
+        "intent_parsing": 727,
+        "geocoding": 365,
+        "hybrid_search": 85,
+        "semantic_filter": 383,
+        "answer_generation": 1286
+      },
+      "search_method": 85,
+      "intent_method": 727,
+      "top_results": [
+        "添好彩港式茶餐厅",
+        "青见米分",
+        "久赞烧鸟·日料"
+      ]
+    },
+    {
+      "query": "武汉大学附近商业区的餐厅",
+      "success": true,
+      "result_count": 10,
+      "duration_ms": 2354.5303344726562,
+      "stages": {
+        "intent_parsing": 604,
+        "geocoding": 77,
+        "hybrid_search": 81,
+        "semantic_filter": 375,
+        "answer_generation": 1216
+      },
+      "search_method": 81,
+      "intent_method": 604,
+      "top_results": [
+        "未完待续",
+        "老鄉长",
+        "鹏记热干面"
+      ]
+    },
+    {
+      "query": "光谷附近的火锅",
+      "success": true,
+      "result_count": 10,
+      "duration_ms": 2417.3848628997803,
+      "stages": {
+        "intent_parsing": 637,
+        "geocoding": 153,
+        "hybrid_search": 81,
+        "semantic_filter": 388,
+        "answer_generation": 1146
+      },
+      "search_method": 81,
+      "intent_method": 637,
+      "top_results": [
+        "健康快餐店",
+        "紫崧老乡鸡",
+        "小光头串串火锅店"
+      ]
+    },
+    {
+      "query": "华中科技大学附近的餐厅",
+      "success": true,
+      "result_count": 10,
+      "duration_ms": 2967.6311016082764,
+      "stages": {
+        "intent_parsing": 643,
+        "geocoding": 151,
+        "hybrid_search": 75,
+        "semantic_filter": 399,
+        "answer_generation": 1697
+      },
+      "search_method": 75,
+      "intent_method": 643,
+      "top_results": [
+        "西烂烧烤店",
+        "甘记特色早餐",
+        "仟吉"
+      ]
+    },
+    {
+      "query": "武汉市有哪些景点推荐",
+      "success": true,
+      "result_count": 10,
+      "duration_ms": 2912.778854370117,
+      "stages": {
+        "intent_parsing": 593,
+        "hybrid_search": 45,
+        "semantic_filter": 307,
+        "answer_generation": 1940
+      },
+      "search_method": 45,
+      "intent_method": 593,
+      "top_results": [
+        "武汉园博园-黄冈园",
+        "木兰天池-滑草场",
+        "九峰动物园游乐项目"
+      ]
+    },
+    {
+      "query": "一日游推荐",
+      "success": true,
+      "result_count": 10,
+      "duration_ms": 2825.9596824645996,
+      "stages": {
+        "intent_parsing": 578,
+        "hybrid_search": 8,
+        "semantic_filter": 315,
+        "answer_generation": 1923
+      },
+      "search_method": 8,
+      "intent_method": 578,
+      "top_results": [
+        "武汉园博园-黄冈园",
+        "木兰天池-滑草场",
+        "九峰动物园游乐项目"
+      ]
+    },
+    {
+      "query": "适合约会的餐厅推荐",
+      "success": true,
+      "result_count": 10,
+      "duration_ms": 2351.500988006592,
+      "stages": {
+        "intent_parsing": 589,
+        "hybrid_search": 111,
+        "semantic_filter": 427,
+        "answer_generation": 1212
+      },
+      "search_method": 111,
+      "intent_method": 589,
+      "top_results": [
+        "深夜食堂",
+        "武昌重油烧梅",
+        "一元路四号咖啡厅"
+      ]
+    },
+    {
+      "query": "江汉路附近的酒店",
+      "success": true,
+      "result_count": 10,
+      "duration_ms": 4101.23085975647,
+      "stages": {
+        "intent_parsing": 662,
+        "geocoding": 185,
+        "hybrid_search": 55,
+        "semantic_filter": 382,
+        "answer_generation": 2794
+      },
+      "search_method": 55,
+      "intent_method": 662,
+      "top_results": [
+        "7天优品酒店(武汉江汉路地铁站步行街店)",
+        "武汉会飞的猪公寓(6号店)",
+        "武汉挥拍公寓"
+      ]
+    }
+  ]
+}

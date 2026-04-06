@@ -174,6 +174,35 @@ export function useSpatialRequestBuilder({
     ]
   }
 
+  function normalizeUserLocationForBackend(userLocation) {
+    if (!userLocation || typeof userLocation !== 'object') return null
+
+    const rawLon = Number(userLocation.lon ?? userLocation.lng ?? userLocation.longitude)
+    const rawLat = Number(userLocation.lat ?? userLocation.latitude)
+    if (!Number.isFinite(rawLon) || !Number.isFinite(rawLat)) {
+      return null
+    }
+
+    const coordSys = String(userLocation.coordSys || userLocation.coord_sys || '').trim().toLowerCase()
+    const shouldConvert = coordSys === 'gcj02'
+    const [lon, lat] = shouldConvert
+      ? toBackendLonLat(rawLon, rawLat)
+      : [rawLon, rawLat]
+
+    const accuracyM = Number(userLocation.accuracyM ?? userLocation.accuracy ?? userLocation.accuracy_m)
+    const capturedAt = String(userLocation.capturedAt || userLocation.captured_at || '').trim()
+    const source = String(userLocation.source || 'browser_geolocation').trim()
+
+    return {
+      lon,
+      lat,
+      accuracyM: Number.isFinite(accuracyM) ? accuracyM : null,
+      source,
+      capturedAt: capturedAt || new Date().toISOString(),
+      coordSys: coordSys || 'wgs84'
+    }
+  }
+
   function normalizeBoundaryWKTForBackend(boundaryWKT) {
     if (!shouldProjectToBackend) return boundaryWKT
     if (typeof boundaryWKT !== 'string' || !boundaryWKT.trim()) return boundaryWKT
@@ -282,7 +311,8 @@ export function useSpatialRequestBuilder({
     mapBounds,
     mapZoom,
     regions = [],
-    poiFeatures = []
+    poiFeatures = [],
+    userLocation = null
   }) {
     return {
       boundary: normalizeBoundaryForBackend(boundaryPolygon),
@@ -291,6 +321,7 @@ export function useSpatialRequestBuilder({
       radius: circleRadius,
       viewport: normalizeViewportForBackend(mapBounds),
       mapZoom,
+      userLocation: normalizeUserLocationForBackend(userLocation),
       analysisScale: inferAnalysisScale(mapZoom),
       interactionHints: {
         hasDrawnRegion: regions.length > 0,

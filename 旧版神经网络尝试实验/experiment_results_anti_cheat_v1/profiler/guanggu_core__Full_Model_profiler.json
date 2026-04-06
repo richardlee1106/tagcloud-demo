@@ -1,0 +1,36 @@
+{
+  "timings": {
+    "data_transfer": 0.007450500037521124,
+    "forward": 3.9499002002412453,
+    "backward": 1.6338948997436091,
+    "optimizer_step": 7.130055599845946,
+    "validation": 8.232445399975404,
+    "knn_build": 0.0,
+    "kmeans_labels": 0.0,
+    "adj_subset": 0.0,
+    "misc": 0.0
+  },
+  "counts": {
+    "data_transfer": 2,
+    "forward": 77,
+    "backward": 76,
+    "optimizer_step": 76,
+    "validation": 16,
+    "knn_build": 0,
+    "kmeans_labels": 0,
+    "adj_subset": 0,
+    "misc": 0
+  },
+  "total": 20.953746599843726,
+  "percentages": {
+    "data_transfer": 0.035556887175378415,
+    "forward": 18.850567756081883,
+    "backward": 7.7976265101716695,
+    "optimizer_step": 34.027592945593426,
+    "validation": 39.288655900977645,
+    "knn_build": 0.0,
+    "kmeans_labels": 0.0,
+    "adj_subset": 0.0,
+    "misc": 0.0
+  }
+}

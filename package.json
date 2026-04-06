@@ -4,14 +4,20 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
+    "predev:V3": "node scripts/cleanup-v3-dev.js",
+    "guard:no-rules-line-imports": "node scripts/check-no-rules-line-imports.mjs",
     "dev:frontend": "vite",
+    "dev:frontend:v3": "vite --mode v3",
+    "dev:frontend:v4": "vite --mode v4",
     "dev:backend": "cd V1-fastify-backend && npm run dev",
     "dev:all": "npx concurrently \"npm run dev:frontend\" \"npm run dev:backend\"",
     "dev:stack": "npx concurrently -n front,back -c cyan,green \"npm run dev:frontend\" \"cd V1-fastify-backend && npm run dev:stack\"",
+    "dev:V3": "npx concurrently -n front,v3 -c cyan,magenta \"npm run dev:frontend:v3\" \"cd V3-GeoEncoder-RAG && npm run dev\"",
+    "dev:v4": "node scripts/dev-v4.mjs",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "vitest run",
+    "test": "npm run guard:no-rules-line-imports && vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {

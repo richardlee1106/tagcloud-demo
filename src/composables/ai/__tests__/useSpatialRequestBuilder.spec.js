@@ -3,6 +3,37 @@ import { describe, expect, it } from 'vitest'
 import { useSpatialRequestBuilder } from '../useSpatialRequestBuilder.js'
 
 describe('useSpatialRequestBuilder', () => {
+  it('injects browser geolocation into spatialContext without reprojecting WGS84 user coordinates', () => {
+    const builder = useSpatialRequestBuilder({ contextBindingSeed: 'ctx-user-location' })
+    const spatialContext = builder.buildSpatialContext({
+      boundaryPolygon: null,
+      drawMode: '',
+      circleCenter: null,
+      circleRadius: null,
+      mapBounds: null,
+      mapZoom: 15,
+      regions: [],
+      poiFeatures: [],
+      userLocation: {
+        lon: 114.3655,
+        lat: 30.5431,
+        accuracyM: 18,
+        source: 'browser_geolocation',
+        capturedAt: '2026-04-06T10:00:00.000Z',
+        coordSys: 'wgs84'
+      }
+    })
+
+    expect(spatialContext.userLocation).toEqual({
+      lon: 114.3655,
+      lat: 30.5431,
+      accuracyM: 18,
+      source: 'browser_geolocation',
+      capturedAt: '2026-04-06T10:00:00.000Z',
+      coordSys: 'wgs84'
+    })
+  })
+
   it('always injects context_binding even when DSL gray is disabled', () => {
     const builder = useSpatialRequestBuilder({ contextBindingSeed: 'ctx-seed' })
     const meta = builder.buildDslMetaSkeleton({

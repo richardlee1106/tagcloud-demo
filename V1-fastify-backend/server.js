@@ -43,9 +43,54 @@ fastify.register(searchRoutes, { prefix: '/api/search' })
 fastify.register(categoryRoutes, { prefix: '/api/category' })
 fastify.register(opsRoutes, { prefix: '/api/ops' })
 
-// 最小健康探针：用于 docker healthcheck / k8s 探活。
+// 健康检查端点：返回详细服务状态
 fastify.get('/health', async () => {
-  return { status: 'ok', timestamp: new Date().toISOString() }
+  // 获取 FAISS 索引状态
+  let faissStatus = { loaded: false, poiCount: 0, embeddingDim: 0 }
+  try {
+    const { getIndexStatus } = await import('../V3-GeoEncoder-RAG/services/retrieval/faissIndex.js')
+    faissStatus = getIndexStatus()
+  } catch (e) {
+    // FAISS 模块不可用
+  }
+
+  // 获取数据库状态
+  let dbStatus = 'connected'
+  try {
+    const { query } = await import('./services/database.js')
+    await query('SELECT 1')
+  } catch (e) {
+    dbStatus = 'disconnected'
+  }
+
+  // 获取 LLM 状态
+  let llmStatus = 'unknown'
+  try {
+    const response = await fetch(process.env.LLM_BASE_URL || 'http://127.0.0.1:1234/v1/models', {
+      method: 'GET',
+      signal: AbortSignal.timeout(3000)
+    })
+    llmStatus = response.ok ? 'available' : 'unavailable'
+  } catch (e) {
+    llmStatus = 'unavailable'
+  }
+
+  return {
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    services: {
+      database: dbStatus,
+      llm: llmStatus,
+      faiss: faissStatus.loaded ? `loaded (${faissStatus.poiCount} POIs)` : 'not_loaded',
+    },
+    faiss: faissStatus,
+    uptime: process.uptime(),
+    memory: {
+      heapUsed: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+      heapTotal: Math.round(process.memoryUsage().heapTotal / 1024 / 1024),
+      rss: Math.round(process.memoryUsage().rss / 1024 / 1024),
+    },
+  }
 })
 
 /**
@@ -94,6 +139,22 @@ const start = async () => {
       }
       console.log('Starting inline spatial worker...')
       await startSpatialWorker()
+    }
+
+    // 启动时预加载 FAISS 索引（异步，不阻塞启动）
+    if (process.env.AUTO_LOAD_FAISS !== 'false') {
+      console.log('Pre-loading FAISS index...')
+      import('../V3-GeoEncoder-RAG/services/retrieval/faissIndex.js')
+        .then(async (module) => {
+          const start = Date.now()
+          const success = await module.loadEmbeddings()
+          if (success) {
+            console.log(`[Server] FAISS index loaded in ${Date.now() - start}ms`)
+          } else {
+            console.warn('[Server] FAISS index load failed, will use PostGIS fallback')
+          }
+        })
+        .catch(err => console.warn('[Server] FAISS module not available:', err.message))
     }
 
     const port = parseInt(process.env.PORT || '3200', 10)

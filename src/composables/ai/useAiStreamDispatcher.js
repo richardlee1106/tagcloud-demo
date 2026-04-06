@@ -116,6 +116,8 @@ export function useAiStreamDispatcher({
 
     if (currentMsg) {
       applySSEMetaToMessage(currentMsg, data)
+      if (normalized.evidenceView) currentMsg.evidenceView = normalized.evidenceView
+      if (normalized.toolCalls?.length) currentMsg.toolCalls = normalized.toolCalls
       if (normalized.boundary) currentMsg.boundary = normalized.boundary
       if (normalized.spatialClusters) currentMsg.spatialClusters = normalized.spatialClusters
       if (normalized.vernacularRegions.length > 0) currentMsg.vernacularRegions = normalized.vernacularRegions
@@ -141,6 +143,69 @@ export function useAiStreamDispatcher({
       if (currentMsg) {
         const traceId = data.trace_id || data.traceId || data.request_id || data.requestId
         if (traceId) currentMsg.traceId = String(traceId)
+        const sessionId = data.session_id || data.sessionId
+        if (sessionId) currentMsg.sessionId = String(sessionId)
+      }
+      return {}
+    }
+
+    if (type === 'job' && data && typeof data === 'object') {
+      if (currentMsg) {
+        applySSEMetaToMessage(currentMsg, data)
+        currentMsg.jobMode = data.mode || null
+      }
+      return {}
+    }
+
+    // 处理思考状态事件（V3 模型推理）
+    if (type === 'thinking') {
+      // { status: 'start'|'end', message: '...' }
+      if (currentMsg) {
+        if (data?.status === 'start') {
+          currentMsg.isThinking = true
+          currentMsg.thinkingMessage = data.message || '正在思考...'
+        } else if (data?.status === 'end') {
+          currentMsg.isThinking = false
+          if (data.message) {
+            currentMsg.thinkingMessage = data.message
+          }
+        }
+      }
+      return {}
+    }
+
+    // 处理思考内容事件（V3 模型推理过程）
+    if (type === 'reasoning') {
+      // { content: '...' }
+      if (currentMsg && data?.content) {
+        // 将思考内容存储到消息中，前端可以选择是否显示
+        if (!currentMsg.reasoningContent) {
+          currentMsg.reasoningContent = ''
+        }
+        currentMsg.reasoningContent += data.content
+      }
+      return {}
+    }
+
+    if (type === 'intent_preview' && data && typeof data === 'object') {
+      if (currentMsg) {
+        applySSEMetaToMessage(currentMsg, data)
+        currentMsg.intentPreview = {
+          rawAnchor: data.rawAnchor ?? null,
+          normalizedAnchor: data.normalizedAnchor ?? null,
+          displayAnchor: data.displayAnchor ?? data.place_name ?? null,
+          targetCategory: data.targetCategory ?? data.poi_sub_type ?? null,
+          spatialRelation: data.spatialRelation ?? null,
+          confidence: Number.isFinite(Number(data.confidence)) ? Number(data.confidence) : null,
+          needsClarification: data.needsClarification === true,
+          clarificationHint: data.clarificationHint || '',
+          isAbbreviation: data.isAbbreviation === true,
+          parserModel: data.parserModel || data.parser_model || null,
+          parserProvider: data.parserProvider || data.parser_provider || null
+        }
+        currentMsg.thinkingMessage = currentMsg.intentPreview?.displayAnchor
+          ? `已识别：${currentMsg.intentPreview.displayAnchor}${currentMsg.intentPreview.targetCategory ? ` · ${currentMsg.intentPreview.targetCategory}` : ''}`
+          : (currentMsg.thinkingMessage || '已完成问题拆解')
       }
       return {}
     }
@@ -260,6 +325,15 @@ export function useAiStreamDispatcher({
           errors: Array.isArray(data.errors) ? data.errors.slice(0, 3) : [],
           traceId: data.trace_id || data.traceId || null
         }
+        applySSEMetaToMessage(currentMsg, data)
+      }
+      return {}
+    }
+
+    if (type === 'done' && data && typeof data === 'object') {
+      if (currentMsg) {
+        currentMsg.pipelineCompleted = true
+        currentMsg.isThinking = false
         applySSEMetaToMessage(currentMsg, data)
       }
       return {}

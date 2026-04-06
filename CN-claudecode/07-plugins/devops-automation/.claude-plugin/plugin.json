@@ -1,0 +1,9 @@
+{
+  "name": "devops-automation",
+  "version": "1.0.0",
+  "description": "面向部署、监控和事件响应的完整 DevOps 自动化",
+  "author": {
+    "name": "社区"
+  },
+  "license": "MIT"
+}

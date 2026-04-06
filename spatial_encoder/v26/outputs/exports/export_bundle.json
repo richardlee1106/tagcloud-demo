@@ -1,0 +1,55 @@
+{
+  "bundle_type": "llm_consumable_spatial_embedding",
+  "manifest": {
+    "version": "v26",
+    "embedding_dim": 64,
+    "supports": [
+      "spatial_search",
+      "hybrid_retrieval",
+      "llm_context"
+    ],
+    "spatial_tokenization": {
+      "type": "h3",
+      "resolution": "configurable"
+    },
+    "agent_types": [
+      "point",
+      "line",
+      "polygon"
+    ],
+    "relation_types": [
+      "adjacency",
+      "road_topology",
+      "cooccurrence",
+      "functional_similarity",
+      "od_flow"
+    ],
+    "consumption_modes": {
+      "spatial_search": {
+        "enabled": true,
+        "target": "vector_retrieval"
+      },
+      "hybrid_retrieval": {
+        "enabled": true,
+        "target": "text_space_rag"
+      },
+      "llm_context": {
+        "enabled": true,
+        "target": "prompt_context_features"
+      }
+    },
+    "record_schema": {
+      "agent_record_fields": [
+        "agent_id",
+        "agent_type",
+        "cells",
+        "primary_cell",
+        "metadata"
+      ],
+      "cell_record_fields": [
+        "cell",
+        "weight"
+      ]
+    }
+  }
+}

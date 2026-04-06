@@ -1,0 +1,21 @@
+# Qwen3.5-2B 无思考版
+# 创建命令: ollama create qwen3.5-2b-nothink -f Modelfile-nothink
+
+FROM qwen3.5-2b:latest
+
+# 设置模板，强制直接输出答案
+TEMPLATE """{{- if .System }}{{ .System }}{{- end }}
+{{- range .Messages }}<|im_start|>{{ .Role }}
+{{ .Content }}<|im_end|>
+{{- end }}<|im_start|>assistant
+"""
+
+# 停止词
+PARAMETER stop <|im_start|>
+PARAMETER stop <|im_end|>
+PARAMETER stop HLT
+PARAMETER stop HLT/
+
+# 温度和长度
+PARAMETER temperature 0.3
+PARAMETER num_predict 1024

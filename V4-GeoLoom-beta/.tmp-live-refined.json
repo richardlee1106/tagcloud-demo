@@ -1,0 +1,70 @@
+{
+  "answer": "我还没有定位到明确锚点，请补充更具体的地点。",
+  "results": {
+    "pois": [],
+    "stats": {
+      "query_type": "nearby_poi",
+      "intent_mode": "deterministic_visible_loop",
+      "result_count": 0,
+      "anchor_name": "武汉大学",
+      "anchor_lon": null,
+      "anchor_lat": null,
+      "target_category": "咖啡",
+      "latency_ms": 8921,
+      "version": "0.1.0",
+      "trace_id": "smoke_v4_live_debug",
+      "session_id": "smoke_debug_session",
+      "provider_ready": true,
+      "tool_call_count": 1,
+      "confidence_gate": "unresolved_anchor"
+    },
+    "evidence_view": {
+      "type": "poi_list",
+      "anchor": {
+        "placeName": "",
+        "displayName": "",
+        "resolvedPlaceName": "",
+        "source": "unresolved"
+      },
+      "items": [],
+      "meta": {
+        "resultCount": 0,
+        "radiusM": 800,
+        "targetCategory": "咖啡",
+        "queryType": "nearby_poi"
+      }
+    }
+  },
+  "intent": {
+    "queryType": "nearby_poi",
+    "intentMode": "deterministic_visible_loop",
+    "placeName": "武汉大学",
+    "targetCategory": "咖啡"
+  },
+  "tool_calls": [
+    {
+      "id": "call_function_nz8bs4gzjwy2_1",
+      "skill": "postgis",
+      "action": "resolve_anchor",
+      "status": "done",
+      "payload": {
+        "anchor_text": "武汉大学"
+      },
+      "result": {
+        "anchor": {
+          "place_name": "",
+          "display_name": "",
+          "role": "primary",
+          "source": "unresolved",
+          "resolved_place_name": "",
+          "poi_id": null
+        },
+        "role": "primary"
+      },
+      "error": null,
+      "latency_ms": 1
+    }
+  ],
+  "trace_id": "smoke_v4_live_debug",
+  "schema_version": "v4.agent.v1"
+}

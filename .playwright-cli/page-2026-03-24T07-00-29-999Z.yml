@@ -1,0 +1,141 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - img [ref=e7]
+      - generic [ref=e18]:
+        - generic [ref=e19]:
+          - generic [ref=e20]: GeoLoom-RAG
+          - generic [ref=e21]: 地理认知探索
+        - generic [ref=e22]:
+          - text: v1.0
+          - generic [ref=e23]: (beta)
+    - generic [ref=e28]:
+      - generic [ref=e30] [cursor=pointer]:
+        - img [ref=e32]
+        - generic:
+          - combobox [ref=e35]
+          - generic [ref=e36]: 空间选区
+        - img [ref=e39]
+      - button [ref=e41] [cursor=pointer]:
+        - img [ref=e42]
+      - button [ref=e44] [cursor=pointer]:
+        - img [ref=e45]
+      - button [ref=e50] [cursor=pointer]:
+        - img [ref=e51]
+      - button [ref=e55] [cursor=pointer]:
+        - img [ref=e56]
+      - button [ref=e58] [cursor=pointer]:
+        - img [ref=e59]
+      - button "地图叙事" [ref=e62] [cursor=pointer]:
+        - img [ref=e63]
+        - text: 地图叙事
+  - main [ref=e65]:
+    - generic [ref=e69]:
+      - generic [ref=e75]:
+        - generic [ref=e76]:
+          - generic [ref=e77]: 实时过滤
+          - generic [ref=e78]:
+            - switch
+            - generic [ref=e82] [cursor=pointer]: 关闭
+        - generic [ref=e84]:
+          - generic [ref=e85]: 热力图
+          - generic [ref=e86]:
+            - switch
+            - generic [ref=e90] [cursor=pointer]: 关闭
+        - generic [ref=e93]:
+          - generic [ref=e94]: 标签权重
+          - generic [ref=e95]:
+            - switch
+            - generic [ref=e99] [cursor=pointer]: 关闭
+        - generic [ref=e101]:
+          - generic [ref=e102]: 显示权重
+          - generic [ref=e103]:
+            - switch [disabled]
+            - generic [ref=e107]: 关闭
+        - generic [ref=e110]:
+          - generic [ref=e111]: 全域感知
+          - generic [ref=e112]:
+            - switch [checked] [disabled]
+            - generic [ref=e116]: 开启
+        - generic [ref=e119]: GeoLoom-RAG 全域感知已启用
+      - generic:
+        - generic:
+          - generic: 边界可信度
+          - generic: 模型：v3_l5_geometry_v1
+        - generic:
+          - generic: 均值 91%
+          - generic: 最低 58%
+          - generic: 最高 95%
+        - generic:
+          - generic:
+            - generic: 高可信 ≥ 70%（3）
+          - generic:
+            - generic: 中可信 40%-69%（2）
+          - generic:
+            - generic: 低可信 < 40%（0）
+    - generic [ref=e122]:
+      - generic [ref=e124]:
+        - generic [ref=e125]:
+          - img [ref=e127]
+          - generic [ref=e129]:
+            - generic [ref=e130]: GeoAI 助手
+            - generic [ref=e131]: 在线
+        - generic [ref=e132]:
+          - button "清空" [ref=e133] [cursor=pointer]:
+            - img [ref=e134]
+          - button "保存" [ref=e136] [cursor=pointer]:
+            - img [ref=e137]
+          - button "Force recompute on next query (skip cache)" [ref=e139] [cursor=pointer]:
+            - img [ref=e140]
+          - button "收起" [ref=e143] [cursor=pointer]:
+            - img [ref=e144]
+      - generic [ref=e147]:
+        - generic [ref=e165]:
+          - img [ref=e167]
+          - generic [ref=e169]:
+            - paragraph [ref=e171]: 武汉二中附近有哪些超市？
+            - generic [ref=e172]: 15:00
+        - generic [ref=e173]:
+          - img [ref=e175]
+          - generic [ref=e177]:
+            - generic [ref=e178]:
+              - generic [ref=e179]:
+                - generic [ref=e180]:
+                  - img [ref=e182]
+                  - generic [ref=e184]: 意图理解
+                - generic [ref=e185]:
+                  - img [ref=e187]
+                  - generic [ref=e189]: 空间检索
+                - generic [ref=e190]:
+                  - img [ref=e192]
+                  - generic [ref=e194]: 空间推理
+                - generic [ref=e195]:
+                  - img [ref=e197]
+                  - generic [ref=e199]: 答案生成
+              - generic [ref=e200]: 正在生成回答...
+              - generic [ref=e201]:
+                - generic [ref=e202]: "Type: poi_search"
+                - generic [ref=e203]: "Mode: local_search"
+            - generic [ref=e204]:
+              - generic [ref=e205] [cursor=pointer]:
+                - generic [ref=e206]:
+                  - img [ref=e207]
+                  - generic [ref=e209]: 空间推理完成
+                - img [ref=e210]
+              - generic [ref=e212]: 我会围绕“武汉二中”附近展开检索，重点筛选和“商超”相关的地点，最后再整理成容易理解的回答。
+            - generic [ref=e213]:
+              - generic [ref=e214]:
+                - generic [ref=e215]: 地名标签云
+                - generic [ref=e216]:
+                  - button "粗粒聚合" [ref=e217] [cursor=pointer]
+                  - button "精细聚合" [ref=e218] [cursor=pointer]
+                  - button "渲染到地图" [ref=e219] [cursor=pointer]
+              - generic [ref=e222]:
+                - generic [ref=e223]: 9 / 20 个标签
+                - generic [ref=e224]: 微观检索
+      - generic [ref=e158]:
+        - generic [ref=e159]:
+          - textbox "询问关于选中区域 POI 的问题..." [disabled] [ref=e160]
+          - button [disabled] [ref=e161]:
+            - img [ref=e162]
+        - generic [ref=e164]: 按 Enter 发送，Shift+Enter 换行
